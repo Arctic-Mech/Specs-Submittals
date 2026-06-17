@@ -931,7 +931,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 // ── Version ──
-const APP_VERSION = 'v1.3';
+const APP_VERSION = 'v1.3.1';
 document.getElementById('versionLabel').textContent = APP_VERSION;
 
 // ── State ──
@@ -940,6 +940,7 @@ let apiKey = '';
 let jobs = [];              // all saved jobs
 let currentJob = null;      // the job being worked on
 let currentPdfUrl = null;   // blob URL of current job's spec PDF (for page links)
+let detailSectionId = null; // id of section open on the detail page
 
 // ── Job persistence (localStorage) ──
 // PDFs are stored as base64 data URLs so page links survive reloads.
@@ -1421,8 +1422,6 @@ function renderSectionCard(s) {
 }
 
 // ── Section detail page ──
-let detailSectionId = null;
-
 function openSection(id) {
   const all = [...specSections.div22, ...specSections.div23];
   const s = all.find(x => x.id === id);
