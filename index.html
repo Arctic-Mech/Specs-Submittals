@@ -787,6 +787,58 @@
   .section-card.navigable .section-header { cursor: pointer; }
   .nav-arrow { color: var(--text-muted); font-size: 13px; flex-shrink: 0; }
   .section-card.navigable:hover { border-color: var(--green-dim); }
+
+  /* ── Submittal files legend ── */
+  .submittal-files {
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .sf-title {
+    font-size: 10px; font-family: var(--mono); color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+  }
+  .sf-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+  .sf-label {
+    font-size: 11px; font-weight: 700; font-family: var(--mono);
+    color: var(--green); background: var(--green-muted);
+    padding: 2px 8px; border-radius: 4px; flex-shrink: 0; min-width: 92px;
+  }
+  .sf-name { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── Required vs Found two-column ── */
+  .req-found {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    margin-top: 8px;
+    background: var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .rf-col { background: var(--surface2); padding: 10px 12px; }
+  .rf-label {
+    font-size: 9px; font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .rf-required .rf-label { color: var(--text-dim); }
+  .rf-found .rf-label { color: var(--gold); }
+  .rf-body { font-size: 12px; line-height: 1.5; color: var(--text); }
+  .rf-required .rf-body { color: var(--text-dim); }
+
+  .found-source {
+    font-size: 11px; font-weight: 600; color: var(--green);
+    margin-bottom: 5px; font-family: var(--mono);
+  }
+  .found-text { color: var(--text); }
+  .found-text.missing-text { color: var(--red); }
+  .found-text.muted-text { color: var(--text-muted); font-style: italic; }
+
+  @media (max-width: 640px) {
+    .req-found { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -879,7 +931,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 // ── Version ──
-const APP_VERSION = 'v1.2';
+const APP_VERSION = 'v1.3';
 document.getElementById('versionLabel').textContent = APP_VERSION;
 
 // ── State ──
@@ -1202,19 +1254,19 @@ function extractSubmittals(text) {
   const submittals = [];
 
   // Find ACTION SUBMITTALS block
-  const actionMatch = text.match(/ACTION\s+SUBMITTALS?([\s\S]{0,3000}?)(?=INFORMATIONAL\s+SUBMITTALS?|CLOSEOUT\s+SUBMITTALS?|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  const actionMatch = text.match(/ACTION\s+SUBMITTALS?([\s\S]{0,4500}?)(?=INFORMATIONAL\s+SUBMITTALS?|CLOSEOUT\s+SUBMITTALS?|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
   if (actionMatch) {
     parseSubmittalBlock(actionMatch[1], 'Action Submittal', submittals);
   }
 
   // Find INFORMATIONAL SUBMITTALS block
-  const infoMatch = text.match(/INFORMATIONAL\s+SUBMITTALS?([\s\S]{0,3000}?)(?=CLOSEOUT\s+SUBMITTALS?|MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  const infoMatch = text.match(/INFORMATIONAL\s+SUBMITTALS?([\s\S]{0,4500}?)(?=CLOSEOUT\s+SUBMITTALS?|MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
   if (infoMatch) {
     parseSubmittalBlock(infoMatch[1], 'Informational Submittal', submittals);
   }
 
   // Find CLOSEOUT SUBMITTALS
-  const closeoutMatch = text.match(/CLOSEOUT\s+SUBMITTALS?([\s\S]{0,2000}?)(?=MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  const closeoutMatch = text.match(/CLOSEOUT\s+SUBMITTALS?([\s\S]{0,3000}?)(?=MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
   if (closeoutMatch) {
     parseSubmittalBlock(closeoutMatch[1], 'Closeout Submittal', submittals);
   }
@@ -1223,12 +1275,10 @@ function extractSubmittals(text) {
 }
 
 function parseSubmittalBlock(text, type, out) {
-  // PDF.js joins everything with spaces (no real newlines), so split on the
-  // lettered article markers themselves: " A. ", " B. ", etc.
+  // PDF.js joins everything with spaces (no real newlines). Split on the
+  // lettered article markers (" A. ", " B. ") but KEEP the full text after each
+  // marker up to the next marker — that's the verbatim requirement.
   const cleaned = text.replace(/\s+/g, ' ').trim();
-
-  // Insert breaks before standalone capital-letter list markers like "A.", "B."
-  // (preceded by whitespace or start, followed by a space + capital word)
   const broken = cleaned.replace(/(^|\s)([A-Z])\.\s+(?=[A-Z])/g, '\n$2. ');
   const lines = broken.split('\n').map(l => l.trim()).filter(Boolean);
 
@@ -1236,20 +1286,31 @@ function parseSubmittalBlock(text, type, out) {
     const letterMatch = line.match(/^([A-Z])\.\s+(.+)/);
     if (!letterMatch) continue;
 
-    let name = letterMatch[2].replace(/\s+/g, ' ').trim();
+    // Full verbatim requirement text (lead line + any sub-bullets that followed)
+    let requirement = letterMatch[2].replace(/\s+/g, ' ').trim();
+    // Strip page-footer noise like "22 0529 - 3"
+    requirement = requirement.replace(/\s*\d{2}\s?\d{2}\s?\d{2}(?:\.\d+)?\s*-\s*\d+\s*$/,'').trim();
 
-    // Trim at the next sub-list or page footer noise
-    name = name.replace(/\s+\d+\.\s+.*$/, '');     // drop trailing "1. ..." sub-items
-    name = name.replace(/\s*\d{2}\s?\d{2}\s?\d{2}\s*-\s*\d+.*$/, ''); // page footer
+    // Short display name = text up to the first sentence break / colon / sub-item
+    let name = requirement;
+    const cut = name.search(/(?<=\w)[:.]\s|\s\d+\.\s/);
+    if (cut > 3) name = name.slice(0, cut).trim();
     name = name.replace(/[:.]?\s*$/, '').trim();
 
-    // Keep the leading label (e.g. "Product Data", "Shop Drawings")
-    if (name.length > 3 && name.length < 160) {
-      out.push({ id: Math.random().toString(36).slice(2), name, type, status: 'needed', note: '' });
+    if (requirement.length > 3 && requirement.length < 1200 && name.length > 2) {
+      out.push({
+        id: Math.random().toString(36).slice(2),
+        name: name.slice(0, 140),
+        requirement,            // verbatim spec text
+        type,
+        status: 'needed',
+        note: '',
+        foundIn: null           // {submittalId, submittalName, found} once satisfied
+      });
     }
   }
 
-  // Deduplicate by first 30 chars
+  // Deduplicate by first 30 chars of name
   const unique = [];
   for (const item of out) {
     if (!unique.find(u => u.name.slice(0, 30).toLowerCase() === item.name.slice(0, 30).toLowerCase())) {
@@ -1330,7 +1391,7 @@ function renderSectionCard(s) {
   const missing = s.submittals.filter(x => x.status === 'missing').length;
 
   let progressText;
-  if (s.uploadedFile) {
+  if ((s.submittalFiles && s.submittalFiles.length) || s.uploadedFile) {
     const bits = [];
     if (met) bits.push(`${met} matched`);
     if (partial) bits.push(`${partial} partial`);
@@ -1394,6 +1455,9 @@ function renderSectionDetail(s) {
   const missing = s.submittals.filter(x => x.status === 'missing');
   const needed  = s.submittals.filter(x => x.status === 'needed');
 
+  const files = s.submittalFiles || [];
+  const hasUploads = files.length > 0;
+
   const pageRefHtml = s.approxPage
     ? `<a class="page-ref" onclick="openSpecAtPage(${s.approxPage})" title="Open spec PDF near this section">PDF p.${s.approxPage} ↗</a>`
     : '';
@@ -1405,19 +1469,26 @@ function renderSectionDetail(s) {
     ${needed.length ? `<div class="summary-chip needed"><span class="n">${needed.length}</span> Not checked</div>` : ''}
   `;
 
-  // Groups in priority order: what's missing first (action needed), then partial, then ready
+  // Uploaded submittals legend
+  const filesHtml = hasUploads ? `
+    <div class="submittal-files">
+      <div class="sf-title">Uploaded submittals</div>
+      ${files.map(f => `<div class="sf-row"><span class="sf-label">${escapeHtml(f.label)}</span><span class="sf-name">${escapeHtml(f.name)}</span></div>`).join('')}
+    </div>` : '';
+
+  // Groups in priority order: missing first (action needed), then partial, needed, then ready
   const groups = [];
   if (missing.length) groups.push(renderResultGroup('missing', '✕', 'Still Needed — source or request these', missing));
   if (partial.length) groups.push(renderResultGroup('partial', '!', 'Partial — incomplete, needs follow-up', partial));
-  if (needed.length)  groups.push(renderResultGroup('needed', '·', 'Not Yet Checked', needed));
-  if (matched.length) groups.push(renderResultGroup('matched', '✓', 'Ready for Approval — submittal satisfies these', matched));
+  if (needed.length && hasUploads) groups.push(renderResultGroup('needed', '·', 'Not Yet Checked', needed));
+  if (matched.length) groups.push(renderResultGroup('matched', '✓', 'Ready for Approval — satisfied by submittal', matched));
 
   let bodyContent;
-  if (!s.uploadedFile) {
+  if (!hasUploads) {
     bodyContent = `<div class="detail-empty">
       <span class="de-icon">📎</span>
       <div class="de-title">No submittal uploaded yet</div>
-      <div class="de-hint">Upload a vendor submittal below to see what's covered vs. what you still need</div>
+      <div class="de-hint">Upload vendor submittals below. The spec requirements are listed so you know what to send.</div>
     </div>
     <div class="result-group group-needed">
       <div class="group-header">
@@ -1431,10 +1502,7 @@ function renderSectionDetail(s) {
     bodyContent = groups.join('');
   }
 
-  const btnLabel = s.uploadedFile ? 'Replace Submittal' : 'Upload Submittal';
-  const uploadedHtml = s.uploadedFile
-    ? `<span class="uploaded-file">📄 <span class="file-name">${escapeHtml(s.uploadedFile)}</span></span>`
-    : '';
+  const btnLabel = hasUploads ? 'Add Another Submittal' : 'Upload Submittal';
 
   document.getElementById('sectionDetail').innerHTML = `
     <div class="detail-head">
@@ -1448,6 +1516,7 @@ function renderSectionDetail(s) {
         ${pageRefHtml}
       </div>
       <div class="detail-summary">${summaryChips}</div>
+      ${filesHtml}
     </div>
     <div class="detail-body">
       ${bodyContent}
@@ -1456,7 +1525,6 @@ function renderSectionDetail(s) {
           📎 ${btnLabel}
           <input type="file" accept=".pdf" onchange="handleSubmittalUpload('${s.id}', this)">
         </label>
-        ${uploadedHtml}
         <span id="spinner_${s.id}" style="display:none"><span class="checking-spinner"></span> Checking against spec…</span>
       </div>
     </div>
@@ -1475,11 +1543,35 @@ function renderResultGroup(type, icon, title, items) {
 }
 
 function renderResultItem(item) {
-  const noteHtml = item.note ? `<div class="result-note">${escapeHtml(item.note)}</div>` : '';
+  const reqText = item.requirement || item.name;
+
+  // "Found" column content depends on status
+  let foundHtml;
+  if (item.status === 'met' || item.status === 'partial') {
+    const src = item.foundIn;
+    const srcTag = src
+      ? `<div class="found-source">✓ ${escapeHtml(src.submittalLabel)} — ${escapeHtml(src.submittalName)}</div>`
+      : '';
+    const foundText = (src && src.found) ? escapeHtml(src.found) : (item.note ? escapeHtml(item.note) : 'Addressed in submittal');
+    foundHtml = `${srcTag}<div class="found-text">${foundText}</div>`;
+  } else if (item.status === 'missing') {
+    foundHtml = `<div class="found-text missing-text">Not found in any uploaded submittal${item.note ? ' — ' + escapeHtml(item.note) : ''}</div>`;
+  } else {
+    foundHtml = `<div class="found-text muted-text">Not checked yet</div>`;
+  }
+
   return `<div class="result-item">
-    <div class="result-name">${escapeHtml(item.name)}</div>
     <div class="result-type">${item.type}</div>
-    ${noteHtml}
+    <div class="req-found">
+      <div class="rf-col rf-required">
+        <div class="rf-label">Required (spec)</div>
+        <div class="rf-body">${escapeHtml(reqText)}</div>
+      </div>
+      <div class="rf-col rf-found">
+        <div class="rf-label">Found (submittal)</div>
+        <div class="rf-body">${foundHtml}</div>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -1494,7 +1586,7 @@ function refreshSectionView(section) {
   }
 }
 
-// ── Handle submittal upload per section ──
+// ── Handle submittal upload per section (append + gap-fill) ──
 async function handleSubmittalUpload(sectionId, input) {
   if (!input.files[0]) return;
 
@@ -1503,18 +1595,21 @@ async function handleSubmittalUpload(sectionId, input) {
   const section = all.find(s => s.id === sectionId);
   if (!section) return;
 
-  // Attach the file to the section regardless of API availability
-  section.uploadedFile = file.name;
+  // Section keeps a list of uploaded submittals
+  if (!section.submittalFiles) section.submittalFiles = [];
+  const submittalIndex = section.submittalFiles.length + 1;
+  const submittalId = 'sub_' + Date.now();
+  const submittalLabel = `Submittal ${submittalIndex}`;
+  section.submittalFiles.push({ id: submittalId, name: file.name, label: submittalLabel });
 
-  // If no API key, just record the upload and stop — user can still track it
+  // If no API key, just record the upload and stop
   if (!apiKey) {
     persistCurrentJob();
     refreshSectionView(section);
-    showToast(`Attached ${file.name} (no API key — compliance check skipped)`, '');
+    showToast(`Attached ${file.name} as ${submittalLabel} (no API key — check skipped)`, '');
     return;
   }
 
-  // Show loading state
   const spinner = document.getElementById('spinner_' + sectionId);
   const btn = document.getElementById('btn_' + sectionId);
   if (spinner) spinner.style.display = 'flex';
@@ -1522,32 +1617,47 @@ async function handleSubmittalUpload(sectionId, input) {
 
   try {
     const submittalText = await extractPdfText(file);
-    const requirementsText = section.submittals.map((item, i) =>
-      `${i + 1}. [${item.type}] ${item.name}`
-    ).join('\n');
+
+    // Only evaluate items not yet satisfied (gap-fill). First upload = all items.
+    const openItems = section.submittals.filter(i => i.status !== 'met');
+    const targetItems = openItems.length ? openItems : section.submittals;
+
+    const requirementsText = targetItems.map((item, i) =>
+      `${i + 1}. [${item.type}] ${item.requirement || item.name}`
+    ).join('\n\n');
 
     const result = await checkSubmittalVsSpec(requirementsText, submittalText, section.title);
 
     if (result && result.items) {
       result.items.forEach(r => {
-        const item = section.submittals.find(s =>
-          s.name.toLowerCase().includes(r.name.toLowerCase().slice(0, 20)) ||
-          r.name.toLowerCase().includes(s.name.toLowerCase().slice(0, 20))
+        const item = targetItems.find(s =>
+          (s.requirement || s.name).toLowerCase().includes(r.name.toLowerCase().slice(0, 20)) ||
+          r.name.toLowerCase().includes((s.name).toLowerCase().slice(0, 20))
         );
         if (item) {
+          // Don't downgrade an already-met item from an earlier submittal
+          if (item.status === 'met' && r.status !== 'met') return;
           item.status = r.status;
           item.note = r.note || '';
+          if (r.status === 'met' || r.status === 'partial') {
+            item.foundIn = {
+              submittalId,
+              submittalLabel,
+              submittalName: file.name,
+              found: r.found || r.note || ''
+            };
+          }
         }
       });
     }
 
     persistCurrentJob();
     refreshSectionView(section);
-
     updateStats();
-    showToast(`Checked ${file.name} against ${section.number}`, 'success');
+
+    const filled = (result?.items || []).filter(r => r.status === 'met').length;
+    showToast(`${submittalLabel} checked — ${filled} requirement${filled === 1 ? '' : 's'} satisfied`, 'success');
   } catch (err) {
-    // API failed — keep the attached file, just report the check failure
     persistCurrentJob();
     refreshSectionView(section);
     showToast('File attached, but check failed: ' + err.message, 'error');
@@ -1566,21 +1676,22 @@ async function checkSubmittalVsSpec(requirements, submittalText, sectionTitle) {
 
 SPECIFICATION SECTION: ${sectionTitle}
 
-REQUIRED SUBMITTALS (numbered list):
+REQUIRED SUBMITTALS (verbatim spec text, numbered):
 ${requirements}
 
 VENDOR SUBMITTAL TEXT (extracted from PDF):
-${submittalText.slice(0, 12000)}
+${submittalText.slice(0, 14000)}
 
-For each required submittal item listed above, determine if the vendor submittal satisfies it.
+For each required submittal item above, determine whether THIS vendor submittal satisfies it.
 
 Respond ONLY with valid JSON in this exact format, no other text:
 {
   "items": [
     {
-      "name": "exact name from the required list",
+      "name": "first ~8 words of the requirement, enough to identify it",
       "status": "met" | "partial" | "missing",
-      "note": "brief explanation of what was found or what is missing (max 20 words)"
+      "found": "what specifically was located in the submittal that addresses this (or empty string if nothing)",
+      "note": "brief reasoning, max 25 words"
     }
   ]
 }
@@ -1588,9 +1699,10 @@ Respond ONLY with valid JSON in this exact format, no other text:
 Rules:
 - "met" = submittal clearly satisfies the requirement
 - "partial" = submittal addresses it but is incomplete or unclear
-- "missing" = no evidence in the submittal for this requirement
+- "missing" = no evidence in this submittal for this requirement
+- "found" should quote or paraphrase the specific submittal content that matches (keep under 30 words). Empty if missing.
 - Include every item from the required list in your response
-- Keep notes concise and factual`;
+- Be factual and concise`;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
@@ -1599,7 +1711,7 @@ Rules:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+      generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
     })
   });
 
