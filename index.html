@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpecCheck — Submittal Compliance</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root {
+    --black: #0a0a0a;
+    --surface: #111111;
+    --surface2: #1a1a1a;
+    --surface3: #222222;
+    --border: #2a2a2a;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-muted: #14532d;
+    --gold: #f59e0b;
+    --gold-dim: #d97706;
+    --gold-muted: #451a03;
+    --red: #ef4444;
+    --red-muted: #450a0a;
+    --text: #e5e5e5;
+    --text-dim: #737373;
+    --text-muted: #525252;
+    --radius: 6px;
+    --mono: 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--black);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-mark {
+    width: 28px;
+    height: 28px;
+    background: var(--green);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 13px;
+    color: #000;
+    letter-spacing: -1px;
+  }
+
+  .logo-text {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text);
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 2px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .api-key-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .api-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  input.api-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 12px;
+    font-family: var(--mono);
+    padding: 5px 10px;
+    width: 220px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input.api-input:focus { border-color: var(--green); }
+
+  .api-status {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .api-status.active { background: var(--green); }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    margin: 28px 24px 0;
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    padding: 32px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--surface);
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--green); background: #0d1a12; }
+
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+
+  .upload-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    display: block;
+  }
+
+  .upload-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .upload-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    margin: 12px 24px 0;
+    display: none;
+  }
+
+  .progress-wrap.show { display: block; }
+
+  .progress-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+    font-family: var(--mono);
+  }
+
+  .progress-bar {
+    height: 3px;
+    background: var(--surface3);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--green);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s;
+  }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    margin: 16px 24px 0;
+    display: none;
+    gap: 12px;
+  }
+
+  .stats-bar.show { display: flex; }
+
+  .stat-pill {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .stat-pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .stat-pill.needed .dot { background: var(--text-muted); }
+  .stat-pill.met .dot { background: var(--green); }
+  .stat-pill.partial .dot { background: var(--gold); }
+  .stat-pill.missing .dot { background: var(--red); }
+
+  /* ── Tabs ── */
+  .tabs-wrap {
+    margin: 20px 24px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 0;
+  }
+
+  .tab-btn {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .tab-btn:hover { color: var(--text-dim); }
+  .tab-btn.active { color: var(--green); border-bottom-color: var(--green); }
+
+  .tab-count {
+    display: inline-block;
+    background: var(--surface3);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 10px;
+    margin-left: 5px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  /* ── Main content ── */
+  .content {
+    padding: 20px 24px 60px;
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Empty state ── */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+
+  .empty-state .empty-icon { font-size: 36px; margin-bottom: 12px; display: block; }
+  .empty-state .empty-title { font-size: 14px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+  .empty-state .empty-hint { font-size: 12px; }
+
+  /* ── Section cards ── */
+  .section-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .section-header:hover { background: var(--surface2); }
+
+  .section-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-number {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: var(--green-muted);
+    padding: 2px 7px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .section-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-progress {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  .chevron {
+    color: var(--text-muted);
+    font-size: 12px;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+
+  .section-card.open .chevron { transform: rotate(180deg); }
+
+  /* ── Section body ── */
+  .section-body {
+    display: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .section-card.open .section-body { display: block; }
+
+  /* ── Submittal line items ── */
+  .submittal-list {
+    padding: 4px 0;
+  }
+
+  .submittal-item {
+    padding: 8px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .submittal-item:last-child { border-bottom: none; }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 4px;
+  }
+
+  .status-needed .status-dot { background: var(--text-muted); }
+  .status-met .status-dot { background: var(--green); }
+  .status-partial .status-dot { background: var(--gold); }
+  .status-missing .status-dot { background: var(--red); }
+
+  .submittal-info { flex: 1; min-width: 0; }
+
+  .submittal-name {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  .submittal-type {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .submittal-note {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    line-height: 1.4;
+    font-style: italic;
+  }
+
+  .status-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+
+  .status-needed .status-badge {
+    background: var(--surface3);
+    color: var(--text-muted);
+  }
+  .status-met .status-badge {
+    background: var(--green-muted);
+    color: var(--green);
+  }
+  .status-partial .status-badge {
+    background: var(--gold-muted);
+    color: var(--gold);
+  }
+  .status-missing .status-badge {
+    background: var(--red-muted);
+    color: var(--red);
+  }
+
+  /* ── Upload button per section ── */
+  .section-upload-area {
+    padding: 10px 16px 12px;
+    background: var(--surface2);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .upload-btn {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .upload-btn:hover { border-color: var(--green); color: var(--green); background: #0d1a12; }
+  .upload-btn input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+
+  .upload-btn.loading {
+    pointer-events: none;
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+
+  .uploaded-file {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .uploaded-file .file-name {
+    color: var(--green-dim);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .checking-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--black); }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+
+  /* ── Notification toast ── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text);
+    z-index: 999;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: 320px;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: var(--green-dim); }
+  .toast.error { border-color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">SC</div>
+    <div>
+      <span class="logo-text">SpecCheck</span>
+      <span class="logo-sub">Submittal Compliance</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="api-key-wrap">
+      <span class="api-label">GEMINI KEY</span>
+      <div class="api-status" id="apiStatus"></div>
+      <input class="api-input" type="password" id="apiKeyInput" placeholder="AIza..." autocomplete="off">
+    </div>
+  </div>
+</header>
+
+<div class="upload-zone" id="uploadZone">
+  <input type="file" id="specFileInput" accept=".pdf">
+  <span class="upload-icon">📋</span>
+  <div class="upload-title">Upload Project Spec</div>
+  <div class="upload-hint">Drop a PDF or click to browse — Division 22 &amp; 23 will be parsed automatically</div>
+</div>
+
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-label" id="progressLabel">Extracting text…</div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+</div>
+
+<div class="stats-bar" id="statsBar">
+  <div class="stat-pill needed"><span class="dot"></span><span id="statNeeded">0</span> Needed</div>
+  <div class="stat-pill met"><span class="dot"></span><span id="statMet">0</span> Met</div>
+  <div class="stat-pill partial"><span class="dot"></span><span id="statPartial">0</span> Partial</div>
+  <div class="stat-pill missing"><span class="dot"></span><span id="statMissing">0</span> Missing</div>
+</div>
+
+<div class="tabs-wrap" id="tabsWrap" style="display:none">
+  <button class="tab-btn active" onclick="switchTab('div22')">
+    Division 22 — Plumbing <span class="tab-count" id="count22">0</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('div23')">
+    Division 23 — HVAC <span class="tab-count" id="count23">0</span>
+  </button>
+</div>
+
+<div class="content">
+  <div class="tab-panel active" id="panel-div22">
+    <div class="empty-state">
+      <span class="empty-icon">🔧</span>
+      <div class="empty-title">No spec loaded</div>
+      <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
+    </div>
+  </div>
+  <div class="tab-panel" id="panel-div23">
+    <div class="empty-state">
+      <span class="empty-icon">🌡️</span>
+      <div class="empty-title">No spec loaded</div>
+      <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── PDF.js setup ──
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ── State ──
+let specSections = { div22: [], div23: [] };
+let apiKey = '';
+
+// ── API Key ──
+const apiKeyInput = document.getElementById('apiKeyInput');
+const apiStatus = document.getElementById('apiStatus');
+
+function loadApiKey() {
+  const saved = localStorage.getItem('speccheck_gemini_key');
+  if (saved) { apiKeyInput.value = saved; apiKey = saved; apiStatus.classList.add('active'); }
+}
+
+apiKeyInput.addEventListener('input', () => {
+  apiKey = apiKeyInput.value.trim();
+  localStorage.setItem('speccheck_gemini_key', apiKey);
+  apiStatus.classList.toggle('active', apiKey.length > 10);
+});
+
+loadApiKey();
+
+// ── Drag and drop ──
+const uploadZone = document.getElementById('uploadZone');
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === 'application/pdf') processSpec(file);
+  else showToast('Please drop a PDF file', 'error');
+});
+
+document.getElementById('specFileInput').addEventListener('change', e => {
+  if (e.target.files[0]) processSpec(e.target.files[0]);
+});
+
+// ── Extract text from PDF ──
+async function extractPdfText(file, onProgress) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    fullText += pageText + '\n';
+    if (onProgress) onProgress(i / pdf.numPages);
+  }
+  return fullText;
+}
+
+// ── Parse sections from extracted text ──
+function parseSections(text) {
+  const sections = [];
+
+  // Match section headers like "SECTION 22 00 00 - TITLE" or "SECTION 22 0000 - TITLE"
+  const sectionRegex = /SECTION\s+(2[23]\s*\d{2}\s*\d{2}(?:\.\d+)?)\s*[-–]\s*([A-Z][^\n]{3,80})/gi;
+  const matches = [...text.matchAll(sectionRegex)];
+
+  // Also find positions of each match so we can extract content between them
+  const rawMatches = [];
+  let m;
+  const re2 = /SECTION\s+(2[23]\s*\d{2}\s*\d{2}(?:\.\d+)?)\s*[-–]\s*([A-Z][^\n]{3,80})/gi;
+  while ((m = re2.exec(text)) !== null) {
+    rawMatches.push({ index: m.index, number: m[1].replace(/\s+/g, ' ').trim(), title: m[2].trim(), end: m.index + m[0].length });
+  }
+
+  // Deduplicate by section number (keep first occurrence)
+  const seen = new Set();
+  const unique = rawMatches.filter(m => {
+    const key = m.number.replace(/\s/g, '');
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+
+  for (let i = 0; i < unique.length; i++) {
+    const start = unique[i].end;
+    const end = i + 1 < unique.length ? unique[i + 1].index : text.length;
+    const body = text.slice(start, Math.min(end, start + 15000));
+    const submittals = extractSubmittals(body);
+    if (submittals.length === 0) continue;
+
+    const num = unique[i].number.replace(/\s/g, '');
+    const div = num.startsWith('22') ? 'div22' : num.startsWith('23') ? 'div23' : null;
+    if (!div) continue;
+
+    sections.push({
+      id: 'sec_' + num,
+      number: unique[i].number,
+      title: cleanTitle(unique[i].title),
+      div,
+      submittals,
+      uploadedFile: null,
+      open: false
+    });
+  }
+
+  return sections;
+}
+
+function cleanTitle(t) {
+  return t.replace(/\s+/g, ' ').replace(/[^\w\s,\-–\/&()]/g, '').trim()
+    .split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+// ── Extract submittal line items from section text ──
+function extractSubmittals(text) {
+  const submittals = [];
+
+  // Find ACTION SUBMITTALS block
+  const actionMatch = text.match(/ACTION\s+SUBMITTALS?([\s\S]{0,3000}?)(?=INFORMATIONAL\s+SUBMITTALS?|CLOSEOUT\s+SUBMITTALS?|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  if (actionMatch) {
+    parseSubmittalBlock(actionMatch[1], 'Action Submittal', submittals);
+  }
+
+  // Find INFORMATIONAL SUBMITTALS block
+  const infoMatch = text.match(/INFORMATIONAL\s+SUBMITTALS?([\s\S]{0,3000}?)(?=CLOSEOUT\s+SUBMITTALS?|MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  if (infoMatch) {
+    parseSubmittalBlock(infoMatch[1], 'Informational Submittal', submittals);
+  }
+
+  // Find CLOSEOUT SUBMITTALS
+  const closeoutMatch = text.match(/CLOSEOUT\s+SUBMITTALS?([\s\S]{0,2000}?)(?=MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
+  if (closeoutMatch) {
+    parseSubmittalBlock(closeoutMatch[1], 'Closeout Submittal', submittals);
+  }
+
+  return submittals;
+}
+
+function parseSubmittalBlock(text, type, out) {
+  // Look for lettered items: A. B. C. etc
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  let current = null;
+
+  for (const line of lines) {
+    // Skip short noise lines, page footers
+    if (line.length < 5) continue;
+    if (/^\d{2}\s+\d{4}/.test(line)) continue; // page footer like "22 3300 - 1"
+
+    const letterMatch = line.match(/^([A-Z])\.\s+(.+)/);
+    if (letterMatch) {
+      if (current) out.push(current);
+      const name = letterMatch[2].replace(/\s+/g, ' ').trim();
+      if (name.length > 3 && name.length < 200) {
+        current = { id: Math.random().toString(36).slice(2), name, type, status: 'needed', note: '' };
+      } else {
+        current = null;
+      }
+    } else if (current && /^\d+\.\s+/.test(line)) {
+      // Numbered sub-item — append to current name as context
+      const sub = line.replace(/^\d+\.\s+/, '').trim();
+      if (sub.length > 3 && !current.name.includes(sub.slice(0, 20))) {
+        // Don't bloat — just store first sub-item if it adds real context
+      }
+    }
+  }
+  if (current) out.push(current);
+
+  // Deduplicate by name similarity
+  const unique = [];
+  for (const item of out) {
+    if (!unique.find(u => u.name.slice(0, 30) === item.name.slice(0, 30))) {
+      unique.push(item);
+    }
+  }
+  out.length = 0;
+  out.push(...unique);
+}
+
+// ── Main spec processing ──
+async function processSpec(file) {
+  setProgress(true, 'Reading PDF…', 5);
+  specSections = { div22: [], div23: [] };
+
+  try {
+    const text = await extractPdfText(file, p => setProgress(true, `Extracting text… page ${Math.round(p * 100)}%`, p * 80));
+    setProgress(true, 'Parsing Division 22 & 23 sections…', 85);
+
+    const all = parseSections(text);
+    all.forEach(s => specSections[s.div].push(s));
+
+    setProgress(true, 'Building checklist…', 95);
+    await sleep(200);
+    setProgress(false);
+
+    renderAll();
+    showToast(`Loaded ${all.length} sections (${specSections.div22.length} Plumbing, ${specSections.div23.length} HVAC)`, 'success');
+  } catch (err) {
+    setProgress(false);
+    showToast('Error reading PDF: ' + err.message, 'error');
+    console.error(err);
+  }
+}
+
+// ── Render everything ──
+function renderAll() {
+  document.getElementById('tabsWrap').style.display = 'flex';
+  document.getElementById('count22').textContent = specSections.div22.length;
+  document.getElementById('count23').textContent = specSections.div23.length;
+
+  renderPanel('div22');
+  renderPanel('div23');
+  updateStats();
+}
+
+function renderPanel(div) {
+  const panel = document.getElementById('panel-' + div);
+  const sections = specSections[div];
+
+  if (sections.length === 0) {
+    panel.innerHTML = `<div class="empty-state">
+      <span class="empty-icon">${div === 'div22' ? '🔧' : '🌡️'}</span>
+      <div class="empty-title">No sections found</div>
+      <div class="empty-hint">No Division ${div === 'div22' ? '22' : '23'} submittal requirements found in this spec</div>
+    </div>`;
+    return;
+  }
+
+  panel.innerHTML = sections.map(s => renderSectionCard(s)).join('');
+}
+
+function renderSectionCard(s) {
+  const total = s.submittals.length;
+  const met = s.submittals.filter(x => x.status === 'met').length;
+  const partial = s.submittals.filter(x => x.status === 'partial').length;
+  const missing = s.submittals.filter(x => x.status === 'missing').length;
+  const progressText = met > 0 || partial > 0 || missing > 0
+    ? `${met}/${total} met`
+    : `${total} required`;
+
+  const uploadedHtml = s.uploadedFile
+    ? `<span class="uploaded-file">📄 <span class="file-name">${s.uploadedFile}</span></span>`
+    : '';
+
+  const btnLabel = s.uploadedFile ? 'Replace Submittal' : 'Upload Submittal';
+
+  return `<div class="section-card ${s.open ? 'open' : ''}" id="${s.id}">
+    <div class="section-header" onclick="toggleSection('${s.id}')">
+      <div class="section-left">
+        <span class="section-number">${s.number}</span>
+        <span class="section-title">${s.title}</span>
+      </div>
+      <div class="section-right">
+        <span class="section-progress">${progressText}</span>
+        <span class="chevron">▼</span>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="submittal-list">
+        ${s.submittals.map(item => renderSubmittalItem(item)).join('')}
+      </div>
+      <div class="section-upload-area">
+        <label class="upload-btn" id="btn_${s.id}">
+          📎 ${btnLabel}
+          <input type="file" accept=".pdf" onchange="handleSubmittalUpload('${s.id}', this)">
+        </label>
+        ${uploadedHtml}
+        <span id="spinner_${s.id}" style="display:none"><span class="checking-spinner"></span> Checking against spec…</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSubmittalItem(item) {
+  const statusClass = 'status-' + item.status;
+  const badgeText = item.status.charAt(0).toUpperCase() + item.status.slice(1);
+  const noteHtml = item.note ? `<div class="submittal-note">${item.note}</div>` : '';
+  return `<div class="submittal-item ${statusClass}" id="item_${item.id}">
+    <div class="status-dot"></div>
+    <div class="submittal-info">
+      <div class="submittal-name">${item.name}</div>
+      <div class="submittal-type">${item.type}</div>
+      ${noteHtml}
+    </div>
+    <span class="status-badge">${badgeText}</span>
+  </div>`;
+}
+
+// ── Toggle section open/closed ──
+function toggleSection(id) {
+  const all = [...specSections.div22, ...specSections.div23];
+  const section = all.find(s => s.id === id);
+  if (section) section.open = !section.open;
+  const card = document.getElementById(id);
+  if (card) card.classList.toggle('open');
+}
+
+// ── Handle submittal upload per section ──
+async function handleSubmittalUpload(sectionId, input) {
+  if (!input.files[0]) return;
+  if (!apiKey) { showToast('Enter your Gemini API key first', 'error'); return; }
+
+  const file = input.files[0];
+  const all = [...specSections.div22, ...specSections.div23];
+  const section = all.find(s => s.id === sectionId);
+  if (!section) return;
+
+  // Show loading state
+  const spinner = document.getElementById('spinner_' + sectionId);
+  const btn = document.getElementById('btn_' + sectionId);
+  if (spinner) spinner.style.display = 'flex';
+  if (btn) btn.classList.add('loading');
+
+  try {
+    // Extract text from submittal PDF
+    const submittalText = await extractPdfText(file);
+
+    // Build spec requirements text for this section
+    const requirementsText = section.submittals.map((item, i) =>
+      `${i + 1}. [${item.type}] ${item.name}`
+    ).join('\n');
+
+    // Call Gemini
+    const result = await checkSubmittalVsSpec(requirementsText, submittalText, section.title);
+
+    // Apply results
+    if (result && result.items) {
+      result.items.forEach(r => {
+        const item = section.submittals.find(s =>
+          s.name.toLowerCase().includes(r.name.toLowerCase().slice(0, 20)) ||
+          r.name.toLowerCase().includes(s.name.toLowerCase().slice(0, 20))
+        );
+        if (item) {
+          item.status = r.status;
+          item.note = r.note || '';
+        }
+      });
+    }
+
+    section.uploadedFile = file.name;
+    section.open = true;
+
+    // Re-render this card
+    const card = document.getElementById(sectionId);
+    if (card) card.outerHTML = renderSectionCard(section);
+
+    updateStats();
+    showToast(`Checked ${file.name} against ${section.number}`, 'success');
+  } catch (err) {
+    showToast('Check failed: ' + err.message, 'error');
+    console.error(err);
+  } finally {
+    const sp = document.getElementById('spinner_' + sectionId);
+    const b = document.getElementById('btn_' + sectionId);
+    if (sp) sp.style.display = 'none';
+    if (b) b.classList.remove('loading');
+  }
+}
+
+// ── Gemini API call ──
+async function checkSubmittalVsSpec(requirements, submittalText, sectionTitle) {
+  const prompt = `You are a construction spec compliance expert reviewing a vendor submittal against specification section requirements.
+
+SPECIFICATION SECTION: ${sectionTitle}
+
+REQUIRED SUBMITTALS (numbered list):
+${requirements}
+
+VENDOR SUBMITTAL TEXT (extracted from PDF):
+${submittalText.slice(0, 12000)}
+
+For each required submittal item listed above, determine if the vendor submittal satisfies it.
+
+Respond ONLY with valid JSON in this exact format, no other text:
+{
+  "items": [
+    {
+      "name": "exact name from the required list",
+      "status": "met" | "partial" | "missing",
+      "note": "brief explanation of what was found or what is missing (max 20 words)"
+    }
+  ]
+}
+
+Rules:
+- "met" = submittal clearly satisfies the requirement
+- "partial" = submittal addresses it but is incomplete or unclear
+- "missing" = no evidence in the submittal for this requirement
+- Include every item from the required list in your response
+- Keep notes concise and factual`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Gemini API error ${res.status}`);
+  }
+
+  const data = await res.json();
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const clean = raw.replace(/```json|```/g, '').trim();
+  return JSON.parse(clean);
+}
+
+// ── Stats ──
+function updateStats() {
+  const all = [...specSections.div22, ...specSections.div23].flatMap(s => s.submittals);
+  const needed = all.filter(x => x.status === 'needed').length;
+  const met = all.filter(x => x.status === 'met').length;
+  const partial = all.filter(x => x.status === 'partial').length;
+  const missing = all.filter(x => x.status === 'missing').length;
+
+  document.getElementById('statNeeded').textContent = needed;
+  document.getElementById('statMet').textContent = met;
+  document.getElementById('statPartial').textContent = partial;
+  document.getElementById('statMissing').textContent = missing;
+
+  const bar = document.getElementById('statsBar');
+  if (all.length > 0) bar.classList.add('show');
+}
+
+// ── Tab switching ──
+function switchTab(div) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', i === (div === 'div22' ? 0 : 1)));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + div).classList.add('active');
+}
+
+// ── Progress ──
+function setProgress(show, label, pct) {
+  const wrap = document.getElementById('progressWrap');
+  wrap.classList.toggle('show', show);
+  if (label) document.getElementById('progressLabel').textContent = label;
+  if (pct !== undefined) document.getElementById('progressFill').style.width = pct + '%';
+}
+
+// ── Toast ──
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
