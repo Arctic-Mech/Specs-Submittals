@@ -879,7 +879,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 // ── Version ──
-const APP_VERSION = 'v1.1';
+const APP_VERSION = 'v1.2';
 document.getElementById('versionLabel').textContent = APP_VERSION;
 
 // ── State ──
@@ -943,9 +943,11 @@ loadApiKey();
 function showJobsHome() {
   document.getElementById('jobsHome').style.display = 'block';
   document.getElementById('workspace').style.display = 'none';
+  document.getElementById('sectionDetail').style.display = 'none';
   document.getElementById('backBtn').style.display = 'none';
   document.getElementById('currentJobName').textContent = '';
   currentJob = null;
+  detailSectionId = null;
   renderJobsGrid();
 }
 
@@ -1013,6 +1015,7 @@ function openJob(id) {
   }
 
   document.getElementById('jobsHome').style.display = 'none';
+  document.getElementById('sectionDetail').style.display = 'none';
   document.getElementById('workspace').style.display = 'block';
   document.getElementById('backBtn').style.display = 'inline-block';
   document.getElementById('currentJobName').textContent = job.name;
@@ -1325,22 +1328,24 @@ function renderSectionCard(s) {
   const met = s.submittals.filter(x => x.status === 'met').length;
   const partial = s.submittals.filter(x => x.status === 'partial').length;
   const missing = s.submittals.filter(x => x.status === 'missing').length;
-  const progressText = met > 0 || partial > 0 || missing > 0
-    ? `${met}/${total} met`
-    : `${total} required`;
 
-  const uploadedHtml = s.uploadedFile
-    ? `<span class="uploaded-file">📄 <span class="file-name">${s.uploadedFile}</span></span>`
-    : '';
-
-  const btnLabel = s.uploadedFile ? 'Replace Submittal' : 'Upload Submittal';
+  let progressText;
+  if (s.uploadedFile) {
+    const bits = [];
+    if (met) bits.push(`${met} matched`);
+    if (partial) bits.push(`${partial} partial`);
+    if (missing) bits.push(`${missing} missing`);
+    progressText = bits.length ? bits.join(' · ') : `${total} required`;
+  } else {
+    progressText = `${total} required`;
+  }
 
   const pageRefHtml = s.approxPage
     ? `<a class="page-ref" onclick="event.stopPropagation(); openSpecAtPage(${s.approxPage})" title="Open spec PDF near this section">PDF p.${s.approxPage} ↗</a>`
     : '';
 
-  return `<div class="section-card ${s.open ? 'open' : ''}" id="${s.id}">
-    <div class="section-header" onclick="toggleSection('${s.id}')">
+  return `<div class="section-card navigable" id="${s.id}" onclick="openSection('${s.id}')">
+    <div class="section-header">
       <div class="section-left">
         <span class="section-number">${s.number}</span>
         <span class="section-title">${s.title}</span>
@@ -1348,14 +1353,105 @@ function renderSectionCard(s) {
       <div class="section-right">
         ${pageRefHtml}
         <span class="section-progress">${progressText}</span>
-        <span class="chevron">▼</span>
+        <span class="nav-arrow">›</span>
       </div>
     </div>
-    <div class="section-body">
-      <div class="submittal-list">
-        ${s.submittals.map(item => renderSubmittalItem(item)).join('')}
+  </div>`;
+}
+
+// ── Section detail page ──
+let detailSectionId = null;
+
+function openSection(id) {
+  const all = [...specSections.div22, ...specSections.div23];
+  const s = all.find(x => x.id === id);
+  if (!s) return;
+  detailSectionId = id;
+
+  document.getElementById('workspace').style.display = 'none';
+  document.getElementById('jobsHome').style.display = 'none';
+  document.getElementById('sectionDetail').style.display = 'block';
+  document.getElementById('backBtn').style.display = 'none';
+  document.getElementById('currentJobName').textContent = currentJob ? currentJob.name : '';
+
+  renderSectionDetail(s);
+  window.scrollTo(0, 0);
+}
+
+function backToSectionList() {
+  detailSectionId = null;
+  document.getElementById('sectionDetail').style.display = 'none';
+  document.getElementById('workspace').style.display = 'block';
+  document.getElementById('backBtn').style.display = 'inline-block';
+  // re-render list so card summaries reflect any changes
+  renderAll();
+  // keep the right tab active based on the section we came from
+}
+
+function renderSectionDetail(s) {
+  const matched = s.submittals.filter(x => x.status === 'met');
+  const partial = s.submittals.filter(x => x.status === 'partial');
+  const missing = s.submittals.filter(x => x.status === 'missing');
+  const needed  = s.submittals.filter(x => x.status === 'needed');
+
+  const pageRefHtml = s.approxPage
+    ? `<a class="page-ref" onclick="openSpecAtPage(${s.approxPage})" title="Open spec PDF near this section">PDF p.${s.approxPage} ↗</a>`
+    : '';
+
+  const summaryChips = `
+    <div class="summary-chip matched"><span class="n">${matched.length}</span> Ready</div>
+    <div class="summary-chip partial"><span class="n">${partial.length}</span> Partial</div>
+    <div class="summary-chip missing"><span class="n">${missing.length}</span> Missing</div>
+    ${needed.length ? `<div class="summary-chip needed"><span class="n">${needed.length}</span> Not checked</div>` : ''}
+  `;
+
+  // Groups in priority order: what's missing first (action needed), then partial, then ready
+  const groups = [];
+  if (missing.length) groups.push(renderResultGroup('missing', '✕', 'Still Needed — source or request these', missing));
+  if (partial.length) groups.push(renderResultGroup('partial', '!', 'Partial — incomplete, needs follow-up', partial));
+  if (needed.length)  groups.push(renderResultGroup('needed', '·', 'Not Yet Checked', needed));
+  if (matched.length) groups.push(renderResultGroup('matched', '✓', 'Ready for Approval — submittal satisfies these', matched));
+
+  let bodyContent;
+  if (!s.uploadedFile) {
+    bodyContent = `<div class="detail-empty">
+      <span class="de-icon">📎</span>
+      <div class="de-title">No submittal uploaded yet</div>
+      <div class="de-hint">Upload a vendor submittal below to see what's covered vs. what you still need</div>
+    </div>
+    <div class="result-group group-needed">
+      <div class="group-header">
+        <div class="group-icon">·</div>
+        <div class="group-title">Required Submittals</div>
+        <div class="group-subtitle">${s.submittals.length} items</div>
       </div>
-      <div class="section-upload-area">
+      ${s.submittals.map(renderResultItem).join('')}
+    </div>`;
+  } else {
+    bodyContent = groups.join('');
+  }
+
+  const btnLabel = s.uploadedFile ? 'Replace Submittal' : 'Upload Submittal';
+  const uploadedHtml = s.uploadedFile
+    ? `<span class="uploaded-file">📄 <span class="file-name">${escapeHtml(s.uploadedFile)}</span></span>`
+    : '';
+
+  document.getElementById('sectionDetail').innerHTML = `
+    <div class="detail-head">
+      <div class="detail-crumb">
+        <button class="back-btn" onclick="backToSectionList()">← ${escapeHtml(currentJob ? currentJob.name : 'Sections')}</button>
+        <button class="back-btn" onclick="showJobsHome()">Jobs</button>
+      </div>
+      <div class="detail-title-row">
+        <span class="detail-number">${s.number}</span>
+        <span class="detail-title">${s.title}</span>
+        ${pageRefHtml}
+      </div>
+      <div class="detail-summary">${summaryChips}</div>
+    </div>
+    <div class="detail-body">
+      ${bodyContent}
+      <div class="detail-upload">
         <label class="upload-btn" id="btn_${s.id}">
           📎 ${btnLabel}
           <input type="file" accept=".pdf" onchange="handleSubmittalUpload('${s.id}', this)">
@@ -1364,32 +1460,38 @@ function renderSectionCard(s) {
         <span id="spinner_${s.id}" style="display:none"><span class="checking-spinner"></span> Checking against spec…</span>
       </div>
     </div>
-  </div>`;
+  `;
 }
 
-function renderSubmittalItem(item) {
-  const statusClass = 'status-' + item.status;
-  const badgeText = item.status.charAt(0).toUpperCase() + item.status.slice(1);
-  const noteHtml = item.note ? `<div class="submittal-note">${item.note}</div>` : '';
-  return `<div class="submittal-item ${statusClass}" id="item_${item.id}">
-    <div class="status-dot"></div>
-    <div class="submittal-info">
-      <div class="submittal-name">${item.name}</div>
-      <div class="submittal-type">${item.type}</div>
-      ${noteHtml}
+function renderResultGroup(type, icon, title, items) {
+  return `<div class="result-group group-${type}">
+    <div class="group-header">
+      <div class="group-icon">${icon}</div>
+      <div class="group-title">${title}</div>
+      <div class="group-subtitle">${items.length} ${items.length === 1 ? 'item' : 'items'}</div>
     </div>
-    <span class="status-badge">${badgeText}</span>
+    ${items.map(renderResultItem).join('')}
   </div>`;
 }
 
-// ── Toggle section open/closed ──
-function toggleSection(id) {
-  const all = [...specSections.div22, ...specSections.div23];
-  const section = all.find(s => s.id === id);
-  if (section) section.open = !section.open;
-  const card = document.getElementById(id);
-  if (card) card.classList.toggle('open');
-  persistCurrentJob();
+function renderResultItem(item) {
+  const noteHtml = item.note ? `<div class="result-note">${escapeHtml(item.note)}</div>` : '';
+  return `<div class="result-item">
+    <div class="result-name">${escapeHtml(item.name)}</div>
+    <div class="result-type">${item.type}</div>
+    ${noteHtml}
+  </div>`;
+}
+
+// ── Refresh whichever view is showing this section ──
+function refreshSectionView(section) {
+  if (detailSectionId === section.id &&
+      document.getElementById('sectionDetail').style.display === 'block') {
+    renderSectionDetail(section);
+  } else {
+    const card = document.getElementById(section.id);
+    if (card) card.outerHTML = renderSectionCard(section);
+  }
 }
 
 // ── Handle submittal upload per section ──
@@ -1403,13 +1505,11 @@ async function handleSubmittalUpload(sectionId, input) {
 
   // Attach the file to the section regardless of API availability
   section.uploadedFile = file.name;
-  section.open = true;
 
   // If no API key, just record the upload and stop — user can still track it
   if (!apiKey) {
     persistCurrentJob();
-    const card0 = document.getElementById(sectionId);
-    if (card0) card0.outerHTML = renderSectionCard(section);
+    refreshSectionView(section);
     showToast(`Attached ${file.name} (no API key — compliance check skipped)`, '');
     return;
   }
@@ -1442,16 +1542,14 @@ async function handleSubmittalUpload(sectionId, input) {
     }
 
     persistCurrentJob();
-    const card = document.getElementById(sectionId);
-    if (card) card.outerHTML = renderSectionCard(section);
+    refreshSectionView(section);
 
     updateStats();
     showToast(`Checked ${file.name} against ${section.number}`, 'success');
   } catch (err) {
     // API failed — keep the attached file, just report the check failure
     persistCurrentJob();
-    const card = document.getElementById(sectionId);
-    if (card) card.outerHTML = renderSectionCard(section);
+    refreshSectionView(section);
     showToast('File attached, but check failed: ' + err.message, 'error');
     console.error(err);
   } finally {
