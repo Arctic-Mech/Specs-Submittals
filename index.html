@@ -5,6 +5,55 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Submittal Register — Divisions 22 &amp; 23</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<!-- Firebase: the register lives in Firestore, the PDFs in Cloud Storage, so
+     every device on the job sees the same log. -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
+  connectFirestoreEmulator
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {
+  getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject, connectStorageEmulator
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCvUzRTKkVg6uhgJ6yQcerL8OLq3OAo36g",
+  authDomain: "specs-submittals.firebaseapp.com",
+  projectId: "specs-submittals",
+  storageBucket: "specs-submittals.firebasestorage.app",
+  messagingSenderId: "391316024345",
+  appId: "1:391316024345:web:6c117f5ab65c814ab5ce88"
+};
+
+const app = initializeApp(firebaseConfig);
+
+// Cache locally so the register opens instantly and keeps working when the
+// site wifi drops; writes queue and flush when the connection returns.
+let db;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+} catch (e) {
+  db = getFirestore(app);
+}
+const storage = getStorage(app);
+
+// Test hook: nothing defines this in production.
+if (window.__fbConnect) {
+  window.__fbConnect({ db, storage, connectFirestoreEmulator, connectStorageEmulator });
+}
+
+window.FB = {
+  db, storage,
+  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
+  ref, uploadBytesResumable, getDownloadURL, deleteObject
+};
+window.dispatchEvent(new Event('fb-ready'));
+</script>
 <style>
 :root {
   --bg:        #f6f7f9;
@@ -117,7 +166,9 @@ header {
 
 /* ── jobs home ── */
 .page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+.page-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px;
+  display: flex; align-items: center; gap: 4px; }
+.page-title .icon-btn { font-size: 13px; }
 .page-sub { color: var(--text-2); font-size: 13px; margin-top: 3px; }
 
 .jobs-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
@@ -368,6 +419,31 @@ tbody tr.sel td { background: var(--accent-sf); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.err { background: var(--red); color: #fff; }
 
+/* Sections marked Not Required sink to the bottom and read as struck out. */
+tbody tr.row-na td { opacity: .55; }
+tbody tr.row-na .c-title > span:first-child,
+tbody tr.row-na .c-num { text-decoration: line-through; }
+.drawer-head.is-na h2 { text-decoration: line-through; opacity: .6; }
+
+.banner {
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px;
+  font-size: 13px; display: flex; gap: 12px; align-items: flex-start;
+  background: var(--red-sf); color: var(--red); border: 1px solid currentColor;
+}
+.banner.info { background: var(--accent-sf); color: var(--accent); }
+.banner > div { flex: 1; }
+.banner b { display: block; margin-bottom: 3px; }
+.banner code {
+  font-family: var(--mono); font-size: 11.5px; background: var(--surface);
+  padding: 1px 5px; border-radius: 4px; color: var(--text-2);
+}
+.sync-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  display: inline-block; margin-right: 6px;
+}
+.sync-dot.off { background: var(--red); }
+.sync-dot.wait { background: var(--amber); }
+
 .storage-note { margin-top: 22px; font-size: 12px; color: var(--text-3); line-height: 1.7; }
 .storage-note b { color: var(--text-2); font-weight: 600; }
 .notice {
@@ -418,11 +494,12 @@ tbody tr.sel td { background: var(--accent-sf); }
     <div class="page-head">
       <div>
         <div class="page-title">Jobs</div>
-        <div class="page-sub">One register per project. Everything is stored in this browser.</div>
+        <div class="page-sub">One register per project, shared with everyone on this workspace.</div>
       </div>
       <div class="spacer"></div>
       <button class="btn primary" onclick="newJob()">+ New job</button>
     </div>
+    <div id="syncBanner"></div>
     <div id="legacyNotice"></div>
     <div class="jobs-grid" id="jobsGrid"></div>
     <div class="storage-note" id="storageNote"></div>
@@ -432,7 +509,11 @@ tbody tr.sel td { background: var(--accent-sf); }
   <section id="view-job" hidden>
     <div class="page-head">
       <div>
-        <div class="page-title" id="jobName"></div>
+        <div class="page-title">
+          <span id="jobName"></span>
+          <button class="icon-btn" onclick="editJob()" title="Edit job name and number"
+            style="vertical-align:3px">✎</button>
+        </div>
         <div class="page-sub" id="jobMeta"></div>
       </div>
       <div class="spacer"></div>
@@ -957,40 +1038,120 @@ function parseSpec(pages, wantedDivs) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   2. STORAGE — IndexedDB (jobs metadata + PDF blobs)
-   ═══════════════════════════════════════════════════════════════════════════ */
-const DB_NAME = 'submittal_register', DB_VER = 1;
-let _db = null;
+   2. STORAGE — Firestore for the register, Cloud Storage for the PDFs
 
-function openDb() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, DB_VER);
-    r.onupgradeneeded = () => {
-      const db = r.result;
-      if (!db.objectStoreNames.contains('jobs'))  db.createObjectStore('jobs',  { keyPath: 'id' });
-      if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs', { keyPath: 'id' });
-    };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+     jobs/{jobId}                      name, number, spec files, roll-up counts
+     jobs/{jobId}/sections/{sectionKey} one document per spec section
+
+   Sections are separate documents so two people editing different sections at
+   the same time cannot overwrite each other.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let FB = null;                 // the Firebase handles, once the module has run
+let syncState = 'wait';        // wait | live | error
+let syncMessage = '';
+
+function fbReady() {
+  return new Promise(res => {
+    if (window.FB) return res(window.FB);
+    window.addEventListener('fb-ready', () => res(window.FB), { once: true });
   });
 }
-function store(name, mode) { return _db.transaction(name, mode).objectStore(name); }
-function req(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
-const dbGet = (s, k) => req(store(s, 'readonly').get(k));
-const dbAll = (s)    => req(store(s, 'readonly').getAll());
-const dbPut = (s, v) => req(store(s, 'readwrite').put(v));
-const dbDel = (s, k) => req(store(s, 'readwrite').delete(k));
 
+const jobsCol = () => FB.collection(FB.db, 'jobs');
+const jobRef = id => FB.doc(FB.db, 'jobs', id);
+const sectionsCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'sections');
+const sectionRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'sections', String(key));
+
+/* Firestore rejects undefined; strip it rather than let a write fail. */
+function clean(v) {
+  if (Array.isArray(v)) return v.map(clean);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) { if (v[k] !== undefined) out[k] = clean(v[k]); }
+    return out;
+  }
+  return v === undefined ? null : v;
+}
+
+/* ── job documents ── */
+function jobSummary(j) {
+  const secs = sectionsOf(j);
+  const tally = {};
+  STATUSES.forEach(st => tally[st.id] = 0);
+  for (const s of secs) tally[s.status || 'not_started']++;
+  return { count: secs.length, tally };
+}
+
+async function saveJobMeta(j) {
+  const target = j || job;
+  if (!target) return;
+  target.updated = Date.now();
+  target.summary = jobSummary(target);
+  await FB.setDoc(jobRef(target.id), clean({
+    id: target.id,
+    name: target.name,
+    number: target.number || '',
+    created: target.created,
+    updated: target.updated,
+    specs: target.specs || [],
+    summary: target.summary
+  }));
+}
+
+async function saveSection(s) {
+  if (!job || !s) return;
+  await FB.setDoc(sectionRef(job.id, s.key), clean(s));
+  await saveJobMeta();
+}
+
+async function saveSections(list) {
+  if (!job || !list.length) return;
+  for (let i = 0; i < list.length; i += 400) {           // Firestore caps a batch at 500
+    const batch = FB.writeBatch(FB.db);
+    for (const s of list.slice(i, i + 400)) batch.set(sectionRef(job.id, s.key), clean(s));
+    await batch.commit();
+  }
+  await saveJobMeta();
+}
+
+async function deleteSectionDocs(jobId, keys) {
+  for (let i = 0; i < keys.length; i += 400) {
+    const batch = FB.writeBatch(FB.db);
+    for (const k of keys.slice(i, i + 400)) batch.delete(sectionRef(jobId, k));
+    await batch.commit();
+  }
+}
+
+/* ── Cloud Storage ── */
 const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-async function saveBlob(blob) {
-  const id = uid('blob');
-  await dbPut('blobs', { id, blob });
-  return id;
+function uploadFile(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const task = FB.uploadBytesResumable(FB.ref(FB.storage, path), file, {
+      contentType: file.type || 'application/pdf'
+    });
+    task.on('state_changed',
+      snap => { if (onProgress && snap.totalBytes) onProgress(snap.bytesTransferred / snap.totalBytes); },
+      reject,
+      async () => {
+        try { resolve({ path, url: await FB.getDownloadURL(task.snapshot.ref) }); }
+        catch (e) { reject(e); }
+      });
+  });
 }
-async function getBlob(id) {
-  const rec = await dbGet('blobs', id);
-  return rec ? rec.blob : null;
+
+async function deleteFile(path) {
+  if (!path) return;
+  try { await FB.deleteObject(FB.ref(FB.storage, path)); }
+  catch (e) { /* already gone, or never uploaded */ }
+}
+
+function storageError(e) {
+  const code = (e && e.code) || '';
+  if (code.includes('unauthorized')) return 'Cloud Storage refused the upload — paste the storage rules in the Firebase console.';
+  if (code.includes('retry-limit') || code.includes('canceled')) return 'The upload timed out. Check the connection and try again.';
+  if (code.includes('quota')) return 'The Cloud Storage quota for this project is used up.';
+  return 'Upload failed: ' + (e && (e.message || e.code) || e);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1003,7 +1164,8 @@ let divFilter = '22';
 let statusFilter = null;
 let query = '';
 let openKey = null;       // section open in the drawer
-const objectUrls = new Map();
+let unsubJobs = null;
+let unsubSections = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -1018,18 +1180,172 @@ function toast(msg, err) {
   t.textContent = msg;
   t.className = 'toast show' + (err ? ' err' : '');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { t.className = 'toast'; }, err ? 4200 : 2400);
+  toast._t = setTimeout(() => { t.className = 'toast'; }, err ? 5200 : 2400);
+}
+function stickyToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show';
+  clearTimeout(toast._t);
 }
 
 function sectionsOf(j) { return (j && j.sections) || []; }
 function findSection(key) { return sectionsOf(job).find(s => s.key === key); }
 
-async function persist() {
-  if (!job) return;
-  job.updated = Date.now();
-  await dbPut('jobs', job);
-  const i = jobs.findIndex(j => j.id === job.id);
-  if (i >= 0) jobs[i] = job;
+/* ── live sync ── */
+function setSync(state, message) {
+  syncState = state; syncMessage = message || '';
+  renderSyncBanner();
+}
+
+function renderSyncBanner() {
+  const host = $('syncBanner');
+  if (!host) return;
+  if (syncState !== 'error') { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="banner">
+    <div><b>Not connected to the shared register</b>${esc(syncMessage)}</div>
+  </div>`;
+}
+
+function watchJobs() {
+  if (unsubJobs) unsubJobs();
+  unsubJobs = FB.onSnapshot(jobsCol(),
+    snap => {
+      const wasEmpty = !jobs.length;
+      jobs = snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+        .sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0));
+      setSync('live');
+      if (job) {
+        // Someone else may have renamed the job or added a spec file. Sections
+        // have their own listener, so keep those.
+        const fresh = jobs.find(x => x.id === job.id);
+        if (fresh) {
+          job.name = fresh.name; job.number = fresh.number;
+          job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
+          if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
+        } else if (view === 'job') {
+          toast('This job was deleted', true);
+          go('jobs');
+        }
+      }
+      if (view === 'jobs') renderJobs();
+      if (wasEmpty) checkLocalCarryover();
+    },
+    err => {
+      setSync('error', err && err.code === 'permission-denied'
+        ? ' — Firestore refused the read. Paste the security rules in the Firebase console, then reload.'
+        : ' — ' + (err && err.message || err));
+      if (view === 'jobs') renderJobs();
+    });
+}
+
+function watchSections(jobId) {
+  if (unsubSections) { unsubSections(); unsubSections = null; }
+  unsubSections = FB.onSnapshot(sectionsCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      job.sections = snap.docs.map(d => d.data());
+      sortSections();
+      if (view === 'job') {
+        renderJob();
+        // Re-rendering while someone is typing in the drawer would eat the caret.
+        const ae = document.activeElement;
+        if (openKey && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawer();
+      }
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
+/* ── carry-over from the browser-only version ── */
+async function readLocalJobs() {
+  return new Promise(resolve => {
+    let req;
+    try { req = indexedDB.open('submittal_register'); } catch (e) { return resolve([]); }
+    req.onerror = () => resolve([]);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('jobs')) { db.close(); return resolve([]); }
+      const tx = db.transaction('jobs', 'readonly').objectStore('jobs').getAll();
+      tx.onsuccess = () => { const out = tx.result || []; db.close(); resolve(out); };
+      tx.onerror = () => { db.close(); resolve([]); };
+    };
+  });
+}
+
+async function readLocalBlob(blobId) {
+  return new Promise(resolve => {
+    let req;
+    try { req = indexedDB.open('submittal_register'); } catch (e) { return resolve(null); }
+    req.onerror = () => resolve(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('blobs')) { db.close(); return resolve(null); }
+      const g = db.transaction('blobs', 'readonly').objectStore('blobs').get(blobId);
+      g.onsuccess = () => { const r = g.result; db.close(); resolve(r ? r.blob : null); };
+      g.onerror = () => { db.close(); resolve(null); };
+    };
+  });
+}
+
+let localCarryover = [];
+async function checkLocalCarryover() {
+  if (localStorage.getItem('sr_carryover_done')) return;
+  const local = await readLocalJobs();
+  localCarryover = local.filter(j => !jobs.some(x => x.id === j.id));
+  if (localCarryover.length) renderLegacyNotice();
+}
+
+async function uploadCarryover() {
+  const list = localCarryover.slice();
+  if (!list.length) return;
+  let done = 0, files = 0;
+  const total = list.reduce((n, j) => n + 1 + sectionsOf(j).length, 0);
+  const step = msg => stickyToast(msg);
+  try {
+    for (const lj of list) {
+      const prev = job;
+      job = lj;                                    // saveSection/saveJobMeta act on `job`
+      for (const sp of (lj.specs || [])) {
+        const blob = sp.blobId ? await readLocalBlob(sp.blobId) : null;
+        if (blob) {
+          step(`Uploading ${sp.name}…`);
+          const up = await uploadFile(`jobs/${lj.id}/specs/${sp.id}`, blob);
+          sp.path = up.path; sp.url = up.url; files++;
+        }
+        delete sp.blobId;
+      }
+      for (const s of sectionsOf(lj)) {
+        for (const kind of ['submittals', 'responses']) {
+          for (const d of (s[kind] || [])) {
+            const blob = d.blobId ? await readLocalBlob(d.blobId) : null;
+            if (blob) {
+              step(`Uploading ${d.name}…`);
+              const up = await uploadFile(`jobs/${lj.id}/sections/${s.key}/${d.id}`, blob);
+              d.path = up.path; d.url = up.url; files++;
+            }
+            delete d.blobId;
+          }
+        }
+      }
+      step(`Saving ${lj.name}… (${++done} of ${list.length})`);
+      await saveSections(sectionsOf(lj));
+      await saveJobMeta(lj);
+      job = prev;
+    }
+    localStorage.setItem('sr_carryover_done', '1');
+    localCarryover = [];
+    renderLegacyNotice();
+    toast(`${list.length} job${list.length === 1 ? '' : 's'} and ${files} PDF${files === 1 ? '' : 's'} uploaded`);
+  } catch (e) {
+    console.error(e);
+    toast(storageError(e), true);
+  }
+}
+
+function dismissCarryover() {
+  localStorage.setItem('sr_carryover_done', '1');
+  localCarryover = [];
+  renderLegacyNotice();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1042,19 +1358,22 @@ function go(where, id) {
   $('jobActions').hidden = where !== 'job';
   $('crumb').hidden = where !== 'job';
   closeDrawer();
-  if (where === 'jobs') { job = null; $('crumbJob').textContent = ''; renderJobs(); }
+  if (where === 'jobs') {
+    if (unsubSections) { unsubSections(); unsubSections = null; }
+    job = null; $('crumbJob').textContent = ''; renderJobs();
+  }
   else { renderJob(); }
   window.scrollTo(0, 0);
 }
 
 async function openJob(id) {
-  const j = await dbGet('jobs', id);
+  const j = jobs.find(x => x.id === id);
   if (!j) { toast('Job not found', true); return; }
-  job = j;
-  divFilter = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
+  job = Object.assign({}, j, { sections: [] });
   statusFilter = null; query = ''; $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
   go('job');
+  watchSections(job.id);          // sections stream in and re-render
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1062,17 +1381,21 @@ async function openJob(id) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function jobTally(j) {
   const t = {}; STATUSES.forEach(s => t[s.id] = 0);
-  for (const s of sectionsOf(j)) t[s.status || 'not_started']++;
+  if (j.summary && j.summary.tally) Object.assign(t, j.summary.tally);
+  else for (const s of sectionsOf(j)) t[s.status || 'not_started']++;
   return t;
+}
+function jobCount(j) {
+  return (j.summary && typeof j.summary.count === 'number') ? j.summary.count : sectionsOf(j).length;
 }
 
 function renderJobs() {
   const grid = $('jobsGrid');
   let html = '';
   for (const j of jobs) {
-    const secs = sectionsOf(j);
+    const count = jobCount(j);
     const t = jobTally(j);
-    const total = secs.length || 1;
+    const total = count || 1;
     const bars = STATUSES.filter(s => t[s.id])
       .map(s => `<span style="width:${(t[s.id] / total * 100).toFixed(2)}%;background:${cvar(s.color)}"></span>`).join('');
     const legend = STATUSES.filter(s => t[s.id] && s.id !== 'not_started')
@@ -1080,7 +1403,7 @@ function renderJobs() {
     html += `<div class="job-card" onclick="openJob('${j.id}')">
       <button class="job-del" title="Delete job" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
       <h3>${esc(j.name)}</h3>
-      <div class="meta">${secs.length} section${secs.length === 1 ? '' : 's'}${j.number ? ' · ' + esc(j.number) : ''} · ${fmtDate(j.updated || j.created)}</div>
+      <div class="meta">${j.number ? '<b>' + esc(j.number) + '</b> · ' : ''}${count} section${count === 1 ? '' : 's'} · ${fmtDate(j.updated || j.created)}</div>
       <div class="bar">${bars || '<span style="width:100%;background:var(--surface-3)"></span>'}</div>
       <div class="legend">${legend || '<span class="muted">Nothing logged yet</span>'}</div>
     </div>`;
@@ -1091,70 +1414,137 @@ function renderJobs() {
   renderStorageNote();
 }
 
-async function renderStorageNote() {
+function renderStorageNote() {
   const host = $('storageNote');
-  let line = 'Specs, submittals and responses are kept in this browser only — nothing is uploaded anywhere.';
-  try {
-    if (navigator.storage && navigator.storage.estimate) {
-      const e = await navigator.storage.estimate();
-      if (e && e.usage != null) {
-        const pct = e.quota ? (e.usage / e.quota * 100) : 0;
-        line += ` Using <b>${fmtBytes(e.usage)}</b>${e.quota ? ' of about ' + fmtBytes(e.quota) + ' available' : ''}.`;
-        if (pct > 80) line += ' <b>Storage is nearly full</b> — delete a finished job to make room.';
-      }
-    }
-  } catch (err) { /* estimate is optional */ }
-  host.innerHTML = line + '<br>Export a CSV from any job to keep a copy of the register outside the browser.';
+  const state = syncState === 'live'
+    ? '<span class="sync-dot"></span>Synced — everyone on this workspace sees the same register, and changes appear live.'
+    : syncState === 'error'
+      ? '<span class="sync-dot off"></span>Not syncing. Changes you make now are held in this browser until the connection is fixed.'
+      : '<span class="sync-dot wait"></span>Connecting…';
+  host.innerHTML = state +
+    '<br>Specs, submittals and responses are stored in the project\'s Firebase workspace. ' +
+    'Export a CSV from any job for a copy you can keep elsewhere.';
 }
 
 function renderLegacyNotice() {
   const host = $('legacyNotice');
-  if (!localStorage.getItem('speccheck_jobs') && !localStorage.getItem('speccheck_gemini_key')) { host.innerHTML = ''; return; }
-  host.innerHTML = `<div class="notice">
-    <span>Data from the old SpecCheck version is still in this browser. It is not used by the register.</span>
-    <button class="btn sm" onclick="clearLegacy()">Clear it</button></div>`;
-}
-function clearLegacy() {
-  localStorage.removeItem('speccheck_jobs');
-  localStorage.removeItem('speccheck_gemini_key');
-  renderLegacyNotice();
-  toast('Old data cleared');
+  if (localStorage.getItem('speccheck_jobs') || localStorage.getItem('speccheck_gemini_key')) {
+    localStorage.removeItem('speccheck_jobs');
+    localStorage.removeItem('speccheck_gemini_key');
+  }
+  if (!localCarryover.length) { host.innerHTML = ''; return; }
+  const n = localCarryover.length;
+  host.innerHTML = `<div class="banner info">
+    <div><b>${n} job${n === 1 ? '' : 's'} still stored only in this browser</b>
+      ${esc(localCarryover.map(j => j.name).join(', '))} — from before this register was shared.
+      Uploading copies the log and every PDF to the shared workspace.</div>
+    <button class="btn sm" onclick="uploadCarryover()">Upload</button>
+    <button class="btn sm ghost" onclick="dismissCarryover()">Not now</button>
+  </div>`;
 }
 
-async function newJob() {
-  const name = prompt('Job name (e.g. "Adventist Health Columbia Gorge — Energy Improvements")');
-  if (!name || !name.trim()) return;
-  const j = {
-    id: uid('job'), name: name.trim(), number: '', created: Date.now(), updated: Date.now(),
-    specs: [], sections: []
-  };
-  await dbPut('jobs', j);
-  jobs.unshift(j);
-  job = j;
-  $('crumbJob').textContent = j.name;
-  go('job');
-  promptImportSpec();
+/* ── job name + number, for both new jobs and edits ── */
+function jobFormModal(existing) {
+  const j = existing || {};
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>${existing ? 'Edit job' : 'New job'}</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="fl">Job name</label>
+          <input class="input" id="jfName" value="${esc(j.name || '')}"
+            placeholder="Adventist Health Columbia Gorge — Energy Improvements" autocomplete="off">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="fl">Job number</label>
+          <input class="input" id="jfNumber" value="${esc(j.number || '')}"
+            placeholder="70-23-0002" autocomplete="off">
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closePdf()">Cancel</button>
+        <button class="btn primary" onclick="submitJobForm(${existing ? "'" + j.id + "'" : 'null'})">
+          ${existing ? 'Save' : 'Create job'}</button>
+      </div>
+    </div></div>`;
+  const name = $('jfName');
+  name.focus(); name.select();
+  for (const id of ['jfName', 'jfNumber']) {
+    $(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitJobForm(existing ? j.id : null);
+    });
+  }
+}
+
+function newJob() { jobFormModal(null); }
+function editJob() { if (job) jobFormModal(job); }
+
+async function submitJobForm(id) {
+  const name = $('jfName').value.trim();
+  const number = $('jfNumber').value.trim();
+  if (!name) { toast('A job needs a name', true); $('jfName').focus(); return; }
+  try {
+    if (id) {
+      const target = job && job.id === id ? job : jobs.find(x => x.id === id);
+      if (!target) return;
+      target.name = name; target.number = number;
+      await saveJobMeta(target);
+      if (job && job.id === id) { $('crumbJob').textContent = name; renderJob(); }
+      closePdf();
+      toast('Job updated');
+    } else {
+      const j = {
+        id: uid('job'), name, number, created: Date.now(), updated: Date.now(),
+        specs: [], sections: []
+      };
+      await saveJobMeta(j);
+      jobs.unshift(j);
+      job = Object.assign({}, j, { sections: [] });
+      $('crumbJob').textContent = name;
+      closePdf();
+      go('job');
+      watchSections(job.id);
+      promptImportSpec();
+    }
+  } catch (e) {
+    console.error(e);
+    toast(writeError(e), true);
+  }
+}
+
+function writeError(e) {
+  const code = (e && e.code) || '';
+  if (code.includes('permission-denied')) {
+    return 'Firestore refused the write — paste the security rules in the Firebase console.';
+  }
+  if (code.includes('unavailable')) return 'No connection — the change will sync when you are back online.';
+  return 'Could not save: ' + (e && (e.message || e.code) || e);
 }
 
 async function deleteJob(id) {
   const j = jobs.find(x => x.id === id);
   if (!j) return;
-  if (!confirm(`Delete "${j.name}" and every PDF stored with it?\n\nThis cannot be undone.`)) return;
-  for (const id2 of collectBlobIds(j)) { try { await dbDel('blobs', id2); } catch (e) {} }
-  await dbDel('jobs', id);
-  jobs = jobs.filter(x => x.id !== id);
-  renderJobs();
-  toast('Job deleted');
-}
-
-function collectBlobIds(j) {
-  const ids = [];
-  for (const sp of (j.specs || [])) if (sp.blobId) ids.push(sp.blobId);
-  for (const s of sectionsOf(j)) {
-    for (const d of (s.submittals || [])) if (d.blobId) ids.push(d.blobId);
-    for (const d of (s.responses || [])) if (d.blobId) ids.push(d.blobId);
+  const count = jobCount(j);
+  if (!confirm(`Delete "${j.name}"${count ? ` and its ${count} sections` : ''}, for everyone?\n\nEvery uploaded PDF goes with it. This cannot be undone.`)) return;
+  stickyToast(`Deleting ${j.name}…`);
+  try {
+    // Sections carry the file paths, so read them before dropping the documents.
+    const snap = await FB.getDocs(sectionsCol(id));
+    const secs = snap.docs.map(d => d.data());
+    for (const sp of (j.specs || [])) await deleteFile(sp.path);
+    for (const s of secs) {
+      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
+    }
+    await deleteSectionDocs(id, secs.map(s => s.key));
+    await FB.deleteDoc(jobRef(id));
+    jobs = jobs.filter(x => x.id !== id);
+    renderJobs();
+    toast('Job deleted');
+  } catch (e) {
+    console.error(e);
+    toast(writeError(e), true);
   }
-  return ids;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1162,7 +1552,7 @@ function collectBlobIds(j) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function visibleSections() {
   const q = query.trim().toLowerCase();
-  return sectionsOf(job).filter(s => {
+  return sectionsOf(job).slice().sort(sectionOrder).filter(s => {
     if (divFilter !== 'all' && s.division !== divFilter) return false;
     if (statusFilter && (s.status || 'not_started') !== statusFilter) return false;
     if (q) {
@@ -1202,9 +1592,12 @@ function renderJob() {
   $('jobName').textContent = job.name;
   const secs = sectionsOf(job);
   const specs = specsOf(job);
-  $('jobMeta').textContent = secs.length
+  const bits = [];
+  if (job.number) bits.push('Job ' + job.number);
+  bits.push(secs.length
     ? `${secs.length} spec section${secs.length === 1 ? '' : 's'} · ${specs.length} spec file${specs.length === 1 ? '' : 's'}`
-    : 'No spec imported yet';
+    : 'No spec imported yet');
+  $('jobMeta').textContent = bits.join(' · ');
   $('btnSpec').style.display = specs.length ? '' : 'none';
   renderSpecBar();
 
@@ -1269,9 +1662,9 @@ function renderTable() {
     const sf = s.specId ? specById(s.specId) : null;
     const spec = s.startPage ? `p. ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : '—';
     const specHint = sf ? `${sf.name}${s.startPage ? ', page ' + s.startPage : ''}` : 'No spec file linked';
-    html += `<tr class="${openKey === s.key ? 'sel' : ''}" onclick="openSection('${s.key}')">
+    html += `<tr class="${openKey === s.key ? 'sel ' : ''}${st.id === 'na' ? 'row-na' : ''}" onclick="openSection('${s.key}')">
       <td class="c-num">${esc(s.number)}</td>
-      <td class="c-title">${esc(s.title || '(untitled)')}
+      <td class="c-title"><span>${esc(s.title || '(untitled)')}</span>
         ${s.manual ? '<span class="flag">Added</span>' : ''}
         ${(s.inBody === false) ? '<span class="flag">Index only</span>' : ''}
         ${s.package ? `<div class="sub">${esc(s.package)}${s.vendor ? ' · ' + esc(s.vendor) : ''}</div>`
@@ -1299,9 +1692,10 @@ async function setStatus(key, value) {
   s.history.push({ ts: Date.now(), from, to: value });
   if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = new Date().toISOString().slice(0, 10);
   if ((value === 'approved' || value === 'revise_resubmit') && !s.returnedDate) s.returnedDate = new Date().toISOString().slice(0, 10);
-  await persist();
+  sortSections();
   renderJob();
   if (openKey === key) renderDrawer();
+  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1342,7 +1736,7 @@ function renderDrawer() {
   const html = `
   <div class="scrim" onclick="closeDrawer()"></div>
   <aside class="drawer" role="dialog" aria-label="Spec section">
-    <div class="drawer-head">
+    <div class="drawer-head${st.id === 'na' ? ' is-na' : ''}">
       <div style="flex:1;min-width:0">
         <div class="num">Division ${esc(s.division)} · ${esc(s.number)}</div>
         <h2>${esc(s.title || '(untitled)')}</h2>
@@ -1436,7 +1830,10 @@ async function setField(key, field, value) {
   if (!s) return;
   s[field] = value;
   clearTimeout(setField._t);
-  setField._t = setTimeout(async () => { await persist(); renderTable(); }, 350);
+  setField._t = setTimeout(async () => {
+    renderTable();
+    try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
+  }, 500);
 }
 
 /* ── uploads ── */
@@ -1467,54 +1864,62 @@ async function addFiles(key, kind, files) {
       toast(`${f.name} is not a PDF — skipped`, true);
       continue;
     }
+    const docId = uid('doc');
     try {
-      const blobId = await saveBlob(f);
+      const up = await uploadFile(`jobs/${job.id}/sections/${s.key}/${docId}`, f,
+        pct => stickyToast(`Uploading ${f.name}… ${Math.round(pct * 100)}%`));
       s[kind].push({
-        id: uid('doc'), name: f.name, size: f.size, type: f.type || 'application/pdf',
-        uploaded: Date.now(), blobId,
+        id: docId, name: f.name, size: f.size, type: f.type || 'application/pdf',
+        uploaded: Date.now(), path: up.path, url: up.url,
         rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : ''
       });
       added++;
     } catch (e) {
-      toast('Could not store ' + f.name + ' — ' + (e && e.name === 'QuotaExceededError' ? 'browser storage is full' : e), true);
+      console.error(e);
+      toast(storageError(e), true);
     }
   }
   if (!added) return;
   // Uploading the first submittal on an untouched section moves it along.
   if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
-  await persist();
   renderDrawer(); renderTable();
-  toast(added + ' file' + (added === 1 ? '' : 's') + ' added');
+  try { await saveSection(s); } catch (e) { toast(writeError(e), true); return; }
+  toast(added + ' file' + (added === 1 ? '' : 's') + ' uploaded');
 }
 async function removeDoc(key, kind, docId) {
   const s = findSection(key);
   const d = (s[kind] || []).find(x => x.id === docId);
   if (!d) return;
-  if (!confirm(`Remove "${d.name}"?`)) return;
-  if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  await deleteFile(d.path);
   s[kind] = s[kind].filter(x => x.id !== docId);
-  await persist();
   renderDrawer(); renderTable();
+  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
 }
-async function docBlobUrl(key, kind, docId) {
+function docOf(key, kind, docId) {
   const s = findSection(key);
-  const d = (s[kind] || []).find(x => x.id === docId);
-  if (!d) return null;
-  const blob = await getBlob(d.blobId);
-  if (!blob) { toast('That file is missing from storage', true); return null; }
-  return { url: URL.createObjectURL(blob), name: d.name };
+  return s ? (s[kind] || []).find(x => x.id === docId) : null;
 }
-async function viewDoc(key, kind, docId) {
-  const got = await docBlobUrl(key, kind, docId);
-  if (got) showPdf(got.url, got.name);
+function viewDoc(key, kind, docId) {
+  const d = docOf(key, kind, docId);
+  if (!d || !d.url) { toast('That file is missing from storage', true); return; }
+  showPdf(d.url, d.name);
 }
 async function downloadDoc(key, kind, docId) {
-  const got = await docBlobUrl(key, kind, docId);
-  if (!got) return;
-  const a = document.createElement('a');
-  a.href = got.url; a.download = got.name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(got.url), 30000);
+  const d = docOf(key, kind, docId);
+  if (!d || !d.url) { toast('That file is missing from storage', true); return; }
+  // A cross-origin href ignores the download attribute, so fetch it when the
+  // bucket allows it and fall back to opening the file in a tab.
+  try {
+    const res = await fetch(d.url);
+    if (!res.ok) throw new Error(res.status);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = d.name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (e) {
+    window.open(d.url, '_blank');
+  }
 }
 
 /* ── manual section management ── */
@@ -1527,14 +1932,15 @@ async function addSectionManually() {
   if (!DIVISIONS.includes(divOf(key))) { toast('Only Divisions 22 and 23 are tracked here', true); return; }
   if (findSection(key)) { toast('That section is already in the register', true); return; }
   const title = prompt('Section title:') || '';
-  job.sections.push(newSectionRecord({
+  const rec = newSectionRecord({
     key, number: prettyNum(key), division: divOf(key), title: title.trim(),
     manual: true, inBody: true, requirements: [], includes: []
-  }));
+  });
+  job.sections.push(rec);
   sortSections();
-  await persist();
   renderJob();
   openSection(key);
+  try { await saveSection(rec); } catch (e) { toast(writeError(e), true); }
 }
 async function editSection(key) {
   const s = findSection(key);
@@ -1543,23 +1949,29 @@ async function editSection(key) {
   if (title === null) return;
   s.title = title.trim();
   s.titleEdited = true;         // a later import must not overwrite this
-  await persist();
   renderDrawer(); renderTable();
+  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
 }
 async function deleteSection(key) {
   const s = findSection(key);
   if (!s) return;
   const files = (s.submittals || []).length + (s.responses || []).length;
-  if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?`)) return;
-  for (const d of (s.submittals || []).concat(s.responses || [])) {
-    if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
-  }
+  if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?\n\nThis affects everyone on this job.`)) return;
+  for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
   job.sections = job.sections.filter(x => x.key !== key);
-  await persist();
   closeDrawer(); renderJob();
+  try { await FB.deleteDoc(sectionRef(job.id, key)); await saveJobMeta(); }
+  catch (e) { toast(writeError(e), true); }
+}
+// Division first, then Not Required last inside it, then section number.
+function sectionOrder(a, b) {
+  if (a.division !== b.division) return String(a.division).localeCompare(String(b.division));
+  const na = (a.status === 'na' ? 1 : 0) - (b.status === 'na' ? 1 : 0);
+  if (na) return na;
+  return String(a.key).localeCompare(String(b.key), undefined, { numeric: true });
 }
 function sortSections() {
-  job.sections.sort((a, b) => String(a.key).localeCompare(String(b.key), undefined, { numeric: true }));
+  if (job && job.sections) job.sections.sort(sectionOrder);
 }
 function newSectionRecord(base) {
   return Object.assign({
@@ -1584,12 +1996,9 @@ function showPdf(url, name, page) {
         <div class="modal-body flush"><iframe src="${src}"></iframe></div>
       </div>
     </div>`;
-  objectUrls.set('viewer', url);
 }
 function closePdf() {
   $('modalHost').innerHTML = '';
-  const u = objectUrls.get('viewer');
-  if (u) { setTimeout(() => URL.revokeObjectURL(u), 1000); objectUrls.delete('viewer'); }
 }
 async function openSpecViewer(specId, page) {
   const specs = specsOf(job);
@@ -1606,9 +2015,8 @@ async function openSpecViewer(specId, page) {
     chooseSpecModal(specs);
     return;
   }
-  const blob = await getBlob(sp.blobId);
-  if (!blob) { toast('The spec PDF is missing from storage', true); return; }
-  showPdf(URL.createObjectURL(blob), sp.name, page);
+  if (!sp.url) { toast('The spec PDF is missing from storage', true); return; }
+  showPdf(sp.url, sp.name, page);
 }
 
 function chooseSpecModal(specs) {
@@ -1661,22 +2069,27 @@ async function removeSpec(specId, dropSections) {
   const sp = specById(specId);
   if (!sp) return;
   const owned = sectionsFromSpec(specId);
+  stickyToast(`Removing ${sp.name}…`);
+  let keptSections = [];
   if (dropSections) {
     for (const s of owned) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) {
-        if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
-      }
+      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
     }
     const gone = new Set(owned.map(s => s.key));
     job.sections = job.sections.filter(s => !gone.has(s.key));
   } else {
     for (const s of owned) { s.specId = null; s.startPage = null; s.endPage = null; }
+    keptSections = owned;
   }
-  if (sp.blobId) { try { await dbDel('blobs', sp.blobId); } catch (e) {} }
+  await deleteFile(sp.path);
   job.specs = job.specs.filter(x => x.id !== specId);
-  await persist();
   closeDrawer();
   renderJob();
+  try {
+    if (dropSections) await deleteSectionDocs(job.id, owned.map(s => s.key));
+    else await saveSections(keptSections);
+    await saveJobMeta();
+  } catch (e) { toast(writeError(e), true); return; }
   toast(dropSections ? `Removed ${sp.name} and ${owned.length} section${owned.length === 1 ? '' : 's'}`
                      : `Removed ${sp.name}`);
 }
@@ -1838,15 +2251,20 @@ async function confirmImport() {
   const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
   const relink = new Set(ticked.filter(c => c.dataset.mode === 'update').map(c => c.dataset.key));
 
-  importModal(`<div class="modal-head"><h3>Saving…</h3></div>
-    <div class="modal-body"><div class="muted">Storing the spec PDF in this browser.</div>
-    <div class="progress"><div style="width:60%"></div></div></div>`);
+  importModal(`<div class="modal-head"><h3>Uploading ${esc(file.name)}</h3></div>
+    <div class="modal-body"><div class="muted" id="upStep">Sending the spec PDF to the shared workspace…</div>
+    <div class="progress"><div id="upBar"></div></div></div>`);
 
   try {
-    const blobId = await saveBlob(file);
     const specId = uid('spec');
+    const up = await uploadFile(`jobs/${job.id}/specs/${specId}`, file, pct => {
+      const bar = $('upBar'), step = $('upStep');
+      if (bar) bar.style.width = Math.round(pct * 100) + '%';
+      if (step) step.textContent = `Uploading… ${Math.round(pct * 100)}%`;
+    });
     job.specs = job.specs || [];
-    job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size, blobId, added: Date.now() });
+    job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
+      path: up.path, url: up.url, added: Date.now() });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
     let added = 0, updated = 0;
@@ -1873,7 +2291,8 @@ async function confirmImport() {
       added++;
     }
     sortSections();
-    await persist();
+    await saveSections(sectionsOf(job).filter(x => x.specId === specId));
+    await saveJobMeta();
     if (!sectionsOf(job).some(x => x.division === divFilter)) {
       divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || divFilter;
     }
@@ -1885,9 +2304,8 @@ async function confirmImport() {
     nextImport();                        // review the next queued file, or close
   } catch (e) {
     console.error(e);
-    const full = e && (e.name === 'QuotaExceededError' || /quota/i.test(String(e.message)));
     importModal(`<div class="modal-head"><h3>Could not save</h3></div>
-      <div class="modal-body"><p>${full ? 'This browser is out of storage space for the site. Delete an old job, or use a browser profile with more room.' : esc(String(e && e.message || e))}</p></div>
+      <div class="modal-body"><p>${esc(storageError(e))}</p></div>
       <div class="modal-foot"><button class="btn" onclick="cancelImport()">Close</button></div>`);
   } finally {
     pendingImport = null;
@@ -1944,17 +2362,18 @@ document.addEventListener('keydown', e => {
 });
 
 (async function boot() {
-  try {
-    _db = await openDb();
-  } catch (e) {
-    document.querySelector('.wrap').innerHTML =
-      `<div class="empty"><h3>This browser blocked local storage</h3>
-       <p>The register keeps everything in IndexedDB. Private-browsing windows often block it.</p></div>`;
+  go('jobs');
+  const ready = await Promise.race([
+    fbReady(),
+    new Promise(res => setTimeout(() => res(null), 15000))
+  ]);
+  if (!ready) {
+    setSync('error', ' — the Firebase library did not load. Check the connection and reload.');
+    renderJobs();
     return;
   }
-  if (navigator.storage && navigator.storage.persist) { try { await navigator.storage.persist(); } catch (e) {} }
-  jobs = (await dbAll('jobs')).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
-  go('jobs');
+  FB = ready;
+  watchJobs();
 })();
 </script>
 </body>

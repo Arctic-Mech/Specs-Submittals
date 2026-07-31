@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// OPEN ACCESS — anyone who reaches the site can read, edit and delete every
+// job, section and status. There is no sign-in. Tighten this before the URL
+// goes anywhere you would not hand the whole register to.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // jobs/{jobId}                       job name, number, spec files, roll-up
+    // jobs/{jobId}/sections/{sectionKey} one document per spec section
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
