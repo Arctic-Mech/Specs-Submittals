@@ -171,6 +171,43 @@ header {
   color: var(--text-3); font-size: 15px; pointer-events: none;
 }
 
+/* ── spec files bar ── */
+.spec-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 9px 11px; margin-bottom: 14px;
+}
+.spec-bar-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-3); margin-right: 2px;
+}
+.spec-chip {
+  display: inline-flex; align-items: center; border: 1px solid var(--border);
+  background: var(--surface-2); border-radius: 999px; overflow: hidden;
+}
+.spec-chip .open {
+  display: inline-flex; align-items: center; gap: 7px; border: none; background: transparent;
+  padding: 5px 10px 5px 12px; cursor: pointer; font-size: 12.5px; max-width: 340px;
+}
+.spec-chip .open:hover { background: var(--accent-sf); color: var(--accent); }
+.spec-chip .open b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spec-chip .open .meta { color: var(--text-3); font-size: 11.5px; white-space: nowrap; }
+.spec-chip .kill {
+  border: none; border-left: 1px solid var(--border); background: transparent;
+  color: var(--text-3); cursor: pointer; padding: 5px 9px; font-size: 12px;
+}
+.spec-chip .kill:hover { background: var(--red-sf); color: var(--red); }
+
+.choice-btn {
+  display: block; width: 100%; text-align: left; border: 1px solid var(--border);
+  background: var(--surface); border-radius: 7px; padding: 11px 13px; cursor: pointer; margin-bottom: 9px;
+}
+.choice-btn:hover { border-color: var(--accent); background: var(--accent-sf); }
+.choice-btn b { display: block; font-weight: 600; font-size: 13.5px; }
+.choice-btn span { color: var(--text-2); font-size: 12.5px; }
+.choice-btn.danger:hover { border-color: var(--red); background: var(--red-sf); }
+.choice-btn.danger b { color: var(--red); }
+
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .chip {
   border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
@@ -401,6 +438,8 @@ tbody tr.sel td { background: var(--accent-sf); }
       <div class="spacer"></div>
       <button class="btn sm ghost" onclick="addSectionManually()">+ Add section</button>
     </div>
+
+    <div class="spec-bar" id="specBar" hidden></div>
 
     <div class="toolbar">
       <div class="seg" id="divSeg"></div>
@@ -1134,15 +1173,40 @@ function visibleSections() {
   });
 }
 
+/* ── spec files (a job can hold several — Div 22 and Div 23 often arrive apart) ── */
+function specsOf(j) { return (j && j.specs) || []; }
+function specById(id) { return specsOf(job).find(s => s.id === id) || null; }
+function sectionsFromSpec(id) { return sectionsOf(job).filter(s => s.specId === id); }
+
+function renderSpecBar() {
+  const bar = $('specBar');
+  const specs = specsOf(job);
+  if (!specs.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  bar.innerHTML = `<span class="spec-bar-label">Spec file${specs.length === 1 ? '' : 's'}</span>` +
+    specs.map(sp => {
+      const n = sectionsFromSpec(sp.id).length;
+      return `<span class="spec-chip">
+        <button class="open" onclick="openSpecViewer('${sp.id}')" title="Open ${esc(sp.name)}">
+          <span>📄</span><b>${esc(sp.name)}</b>
+          <span class="meta">${sp.pages ? sp.pages + ' pp · ' : ''}${n} section${n === 1 ? '' : 's'}</span>
+        </button>
+        <button class="kill" onclick="removeSpecPrompt('${sp.id}')" title="Remove this spec file">✕</button>
+      </span>`;
+    }).join('') +
+    `<button class="btn sm" onclick="promptImportSpec()">+ Add spec PDF</button>`;
+}
+
 function renderJob() {
   if (!job) return;
   $('jobName').textContent = job.name;
   const secs = sectionsOf(job);
-  const specNames = (job.specs || []).map(s => s.name).join(', ');
+  const specs = specsOf(job);
   $('jobMeta').textContent = secs.length
-    ? `${secs.length} spec sections${specNames ? ' · ' + specNames : ''}`
+    ? `${secs.length} spec section${secs.length === 1 ? '' : 's'} · ${specs.length} spec file${specs.length === 1 ? '' : 's'}`
     : 'No spec imported yet';
-  $('btnSpec').style.display = (job.specs || []).length ? '' : 'none';
+  $('btnSpec').style.display = specs.length ? '' : 'none';
+  renderSpecBar();
 
   /* division segmented control */
   const counts = {};
@@ -1180,7 +1244,8 @@ function renderTable() {
     body.innerHTML = '';
     $('jobEmpty').innerHTML = `<div class="empty" style="margin-top:14px">
       <h3>No spec imported yet</h3>
-      <p>Import the project spec PDF — Divisions 22 and 23 are split into their individual sections automatically.</p>
+      <p>Import the project spec PDF — Divisions 22 and 23 are split into their individual sections automatically.<br>
+      Import as many files as the job came in: one whole manual, or Division 22 and Division 23 separately.</p>
       <p style="margin-top:14px"><button class="btn primary" onclick="promptImportSpec()">Import spec PDF</button>
       <button class="btn" onclick="addSectionManually()">Add a section by hand</button></p></div>`;
     return;
@@ -1201,7 +1266,9 @@ function renderTable() {
     }
     const st = ST[s.status || 'not_started'];
     const nSub = (s.submittals || []).length, nRes = (s.responses || []).length;
+    const sf = s.specId ? specById(s.specId) : null;
     const spec = s.startPage ? `p. ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : '—';
+    const specHint = sf ? `${sf.name}${s.startPage ? ', page ' + s.startPage : ''}` : 'No spec file linked';
     html += `<tr class="${openKey === s.key ? 'sel' : ''}" onclick="openSection('${s.key}')">
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title">${esc(s.title || '(untitled)')}
@@ -1216,7 +1283,7 @@ function renderTable() {
         </select></td>
       <td class="num"><span class="dot-count ${nSub ? '' : 'zero'}">📄 ${nSub}</span></td>
       <td class="num"><span class="dot-count ${nRes ? '' : 'zero'}">✔ ${nRes}</span></td>
-      <td class="num hide-sm"><span class="muted">${spec}</span></td>
+      <td class="num hide-sm"><span class="muted" title="${esc(specHint)}">${spec}</span></td>
     </tr>`;
   }
   body.innerHTML = html;
@@ -1247,7 +1314,10 @@ function renderDrawer() {
   const s = findSection(openKey);
   if (!s) { closeDrawer(); return; }
   const st = ST[s.status || 'not_started'];
-  const specFile = (job.specs || []).find(sp => sp.id === s.specId) || (job.specs || [])[0];
+  // Only the file this section was actually parsed from — its page numbers mean
+  // nothing in any other file.
+  const specFile = s.specId ? specById(s.specId) : null;
+  const manySpecs = specsOf(job).length > 1;
 
   const statusButtons = STATUSES.map(o => `
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
@@ -1324,7 +1394,9 @@ function renderDrawer() {
         </h4>
         ${reqHtml}
         <div class="muted" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
-          ${s.startPage ? `Spec pages ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : 'No page reference'}
+          ${specFile && manySpecs ? esc(specFile.name) + ' · ' : ''}${
+            s.startPage ? `pages ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}`
+                        : (specsOf(job).length ? 'no page reference — import the spec that covers this section' : 'no page reference')}
           ${s.titleSource ? ` · title from ${esc(s.titleSource)}` : ''}
         </div>
       </div>
@@ -1470,6 +1542,7 @@ async function editSection(key) {
   const title = prompt('Section title:', s.title || '');
   if (title === null) return;
   s.title = title.trim();
+  s.titleEdited = true;         // a later import must not overwrite this
   await persist();
   renderDrawer(); renderTable();
 }
@@ -1519,24 +1592,131 @@ function closePdf() {
   if (u) { setTimeout(() => URL.revokeObjectURL(u), 1000); objectUrls.delete('viewer'); }
 }
 async function openSpecViewer(specId, page) {
-  const specs = (job && job.specs) || [];
-  const sp = specs.find(x => x.id === specId) || specs[0];
-  if (!sp) { toast('No spec PDF stored for this job', true); return; }
+  const specs = specsOf(job);
+  if (!specs.length) { toast('No spec PDF stored for this job', true); return; }
+
+  let sp;
+  if (specId) {
+    sp = specs.find(x => x.id === specId);
+    // Never silently open a different file at this file's page number.
+    if (!sp) { toast('That spec file is no longer in this job', true); return; }
+  } else if (specs.length === 1) {
+    sp = specs[0];
+  } else {
+    chooseSpecModal(specs);
+    return;
+  }
   const blob = await getBlob(sp.blobId);
   if (!blob) { toast('The spec PDF is missing from storage', true); return; }
   showPdf(URL.createObjectURL(blob), sp.name, page);
 }
 
+function chooseSpecModal(specs) {
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>Which spec file?</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">${specs.map(sp => {
+        const n = sectionsFromSpec(sp.id).length;
+        return `<button class="choice-btn" onclick="closePdf();openSpecViewer('${sp.id}')">
+          <b>${esc(sp.name)}</b>
+          <span>${sp.pages ? sp.pages + ' pages · ' : ''}${n} section${n === 1 ? '' : 's'} in the register</span>
+        </button>`;
+      }).join('')}</div>
+    </div></div>`;
+}
+
+/* Removing a spec file: the log built against it is worth more than the PDF,
+   so keeping the sections is the default and dropping them is opt-in. */
+function removeSpecPrompt(specId) {
+  const sp = specById(specId);
+  if (!sp) return;
+  const owned = sectionsFromSpec(specId);
+  const files = owned.reduce((n, s) => n + (s.submittals || []).length + (s.responses || []).length, 0);
+  if (!owned.length) {
+    if (confirm(`Remove "${sp.name}"?\n\nNo sections came from this file.`)) removeSpec(specId, false);
+    return;
+  }
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>Remove ${esc(sp.name)}?</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:14px">${owned.length} section${owned.length === 1 ? '' : 's'} in the register came from this file${
+          files ? `, carrying ${files} uploaded PDF${files === 1 ? '' : 's'}` : ''}.</p>
+        <button class="choice-btn" onclick="closePdf();removeSpec('${specId}', false)">
+          <b>Remove the file, keep the sections</b>
+          <span>Statuses, uploads and notes stay. The sections lose their page references until you import the spec again.</span>
+        </button>
+        <button class="choice-btn danger" onclick="closePdf();removeSpec('${specId}', true)">
+          <b>Remove the file and its ${owned.length} section${owned.length === 1 ? '' : 's'}</b>
+          <span>Deletes ${files ? `the ${files} uploaded PDF${files === 1 ? '' : 's'} and ` : ''}everything logged against them.</span>
+        </button>
+      </div>
+      <div class="modal-foot"><button class="btn" onclick="closePdf()">Cancel</button></div>
+    </div></div>`;
+}
+
+async function removeSpec(specId, dropSections) {
+  const sp = specById(specId);
+  if (!sp) return;
+  const owned = sectionsFromSpec(specId);
+  if (dropSections) {
+    for (const s of owned) {
+      for (const d of (s.submittals || []).concat(s.responses || [])) {
+        if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
+      }
+    }
+    const gone = new Set(owned.map(s => s.key));
+    job.sections = job.sections.filter(s => !gone.has(s.key));
+  } else {
+    for (const s of owned) { s.specId = null; s.startPage = null; s.endPage = null; }
+  }
+  if (sp.blobId) { try { await dbDel('blobs', sp.blobId); } catch (e) {} }
+  job.specs = job.specs.filter(x => x.id !== specId);
+  await persist();
+  closeDrawer();
+  renderJob();
+  toast(dropSections ? `Removed ${sp.name} and ${owned.length} section${owned.length === 1 ? '' : 's'}`
+                     : `Removed ${sp.name}`);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    9. SPEC IMPORT
    ═══════════════════════════════════════════════════════════════════════════ */
+/* Specs often arrive split — Division 22 in one PDF, Division 23 in another.
+   Several files can be picked at once and are reviewed one after the other. */
+let importQueue = [];
+let importTotal = 0;
+
 function promptImportSpec() {
   if (!job) return;
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'application/pdf,.pdf';
-  inp.onchange = () => { if (inp.files[0]) importSpec(inp.files[0]); };
+  inp.multiple = true;
+  inp.onchange = () => {
+    importQueue = Array.from(inp.files);
+    importTotal = importQueue.length;
+    nextImport();
+  };
   inp.click();
+}
+
+function nextImport() {
+  const file = importQueue.shift();
+  if (file) importSpec(file);
+  else { importTotal = 0; closePdf(); }
+}
+
+function cancelImport() {
+  importQueue = []; importTotal = 0; pendingImport = null;
+  closePdf();
+}
+
+function queueLabel() {
+  if (importTotal < 2) return '';
+  return ` · file ${importTotal - importQueue.length} of ${importTotal}`;
 }
 
 function importModal(inner) {
@@ -1546,7 +1726,7 @@ function importModal(inner) {
 async function importSpec(file) {
   if (!window.pdfjsLib) { toast('The PDF engine did not load — check the connection and reload', true); return; }
   importModal(`
-    <div class="modal-head"><h3>Reading ${esc(file.name)}</h3></div>
+    <div class="modal-head"><h3>Reading ${esc(file.name)}${queueLabel()}</h3></div>
     <div class="modal-body">
       <div id="impStep" class="muted">Opening the PDF…</div>
       <div class="progress"><div id="impBar"></div></div>
@@ -1581,7 +1761,7 @@ async function importSpec(file) {
       importModal(`<div class="modal-head"><h3>No Division 22 or 23 sections found</h3></div>
         <div class="modal-body"><p>Nothing in <b>${esc(file.name)}</b> looked like a Division 22 or 23 spec section.</p>
         <p class="muted" style="margin-top:10px">If the PDF is a scan, the text has to be OCR'd first. You can also add sections by hand.</p></div>
-        <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
+        <div class="modal-foot"><button class="btn" onclick="nextImport()">${importQueue.length ? 'Next file' : 'Close'}</button></div>`);
       return;
     }
     showImportReview(file, pages.length, result);
@@ -1589,7 +1769,7 @@ async function importSpec(file) {
     console.error(e);
     importModal(`<div class="modal-head"><h3>Could not read that PDF</h3></div>
       <div class="modal-body"><p class="muted">${esc(String(e && e.message || e))}</p></div>
-      <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
+      <div class="modal-foot"><button class="btn" onclick="nextImport()">${importQueue.length ? 'Next file' : 'Close'}</button></div>`);
   }
 }
 
@@ -1597,42 +1777,66 @@ let pendingImport = null;
 function showImportReview(file, pageCount, result) {
   pendingImport = { file, pageCount, result };
   const existing = new Set(sectionsOf(job).map(s => s.key));
+  const fresh = result.sections.filter(s => !existing.has(s.key));
+  const dupes = result.sections.filter(s => existing.has(s.key));
+
   let rows = '';
   for (const d of DIVISIONS) {
-    const list = result.sections.filter(s => s.division === d);
+    const list = fresh.filter(s => s.division === d);
     if (!list.length) continue;
     rows += `<div class="review-row review-head"><span class="rn">Div ${d}</span>
-      <span class="rt">${esc(DIVISION_NAMES[d])} — ${list.length} sections</span></div>`;
+      <span class="rt">${esc(DIVISION_NAMES[d])} — ${list.length} section${list.length === 1 ? '' : 's'}</span></div>`;
     for (const s of list) {
-      const dup = existing.has(s.key);
       rows += `<div class="review-row">
-        <input type="checkbox" ${dup ? '' : 'checked'} data-key="${esc(s.key)}" ${dup ? 'disabled' : ''}>
+        <input type="checkbox" checked data-key="${esc(s.key)}" data-mode="add">
         <span class="rn">${esc(s.number)}</span>
         <span class="rt">${esc(s.title || '(untitled)')}</span>
-        ${dup ? '<span class="flag">In register</span>'
-              : (s.inBody ? '' : '<span class="flag">Index only</span>')}
+        ${s.inBody ? '' : '<span class="flag">Index only</span>'}
       </div>`;
     }
   }
-  const n = result.sections.filter(s => !existing.has(s.key)).length;
+  // Same section in two files — a revised issue or an addendum. Re-pointing keeps
+  // the log (status, uploads, notes) and refreshes only what came from the PDF.
+  if (dupes.length) {
+    rows += `<div class="review-row review-head"><span class="rn">Already in</span>
+      <span class="rt">the register — tick to re-point at this file</span></div>`;
+    for (const s of dupes) {
+      const cur = sectionsOf(job).find(x => x.key === s.key);
+      const from = cur && cur.specId ? specById(cur.specId) : null;
+      rows += `<div class="review-row">
+        <input type="checkbox" data-key="${esc(s.key)}" data-mode="update">
+        <span class="rn">${esc(s.number)}</span>
+        <span class="rt">${esc(s.title || '(untitled)')}${from ? ' — now from ' + esc(from.name) : ''}</span>
+      </div>`;
+    }
+  }
+
+  const already = specsOf(job).length;
+  const dupName = specsOf(job).find(sp => sp.name === file.name);
   importModal(`
-    <div class="modal-head"><h3>Found ${result.sections.length} spec sections</h3></div>
+    <div class="modal-head"><h3>Found ${result.sections.length} spec section${result.sections.length === 1 ? '' : 's'}${queueLabel()}</h3></div>
     <div class="modal-body">
       <div class="muted">${esc(file.name)} · ${pageCount} pages · ${result.diagnostics.pagesMapped} pages matched to a section${
         result.diagnostics.tocEntries ? ' · table of contents cross-checked' : ''}</div>
-      <div class="review-list">${rows}</div>
+      ${already ? `<div class="muted" style="margin-top:5px">Adding alongside ${already} spec file${already === 1 ? '' : 's'} already in this job.</div>` : ''}
+      ${dupName ? `<div class="notice" style="margin-top:10px;margin-bottom:0">
+        <span>A file named <b>${esc(file.name)}</b> is already in this job. Importing again will store a second copy.</span></div>` : ''}
+      <div class="review-list">${rows || '<div class="review-row"><span class="rt muted">Nothing new — every section in this file is already in the register.</span></div>'}</div>
     </div>
     <div class="modal-foot">
-      <button class="btn" onclick="closePdf()">Cancel</button>
-      <button class="btn primary" onclick="confirmImport()">Add ${n} section${n === 1 ? '' : 's'}</button>
+      <button class="btn" onclick="cancelImport()">Cancel${importQueue.length ? ' all' : ''}</button>
+      <button class="btn primary" onclick="confirmImport()">${
+        fresh.length ? `Add ${fresh.length} section${fresh.length === 1 ? '' : 's'}` : 'Add spec file'}${
+        importQueue.length ? ' &amp; continue' : ''}</button>
     </div>`);
 }
 
 async function confirmImport() {
   if (!pendingImport) return;
   const { file, pageCount, result } = pendingImport;
-  const chosen = new Set(Array.from(document.querySelectorAll('.review-row input[type=checkbox]'))
-    .filter(c => c.checked && !c.disabled).map(c => c.dataset.key));
+  const ticked = Array.from(document.querySelectorAll('.review-row input[type=checkbox]')).filter(c => c.checked);
+  const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
+  const relink = new Set(ticked.filter(c => c.dataset.mode === 'update').map(c => c.dataset.key));
 
   importModal(`<div class="modal-head"><h3>Saving…</h3></div>
     <div class="modal-body"><div class="muted">Storing the spec PDF in this browser.</div>
@@ -1642,11 +1846,24 @@ async function confirmImport() {
     const blobId = await saveBlob(file);
     const specId = uid('spec');
     job.specs = job.specs || [];
-    job.specs.push({ id: specId, name: file.name, pages: pageCount, blobId, added: Date.now() });
+    job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size, blobId, added: Date.now() });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
-    let added = 0;
+    let added = 0, updated = 0;
     for (const s of result.sections) {
+      if (relink.has(s.key)) {
+        const cur = sectionsOf(job).find(x => x.key === s.key);
+        if (cur) {
+          cur.specId = specId;
+          cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
+          cur.requirements = s.requirements || []; cur.includes = s.includes || [];
+          if (!cur.titleEdited) {                       // never clobber a hand-typed title
+            cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource;
+          }
+          updated++;
+        }
+        continue;
+      }
       if (!chosen.has(s.key) || existing.has(s.key)) continue;
       job.sections.push(newSectionRecord({
         key: s.key, number: s.number, division: s.division, title: s.title, rawTitle: s.rawTitle,
@@ -1657,16 +1874,21 @@ async function confirmImport() {
     }
     sortSections();
     await persist();
-    closePdf();
-    divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || '22';
+    if (!sectionsOf(job).some(x => x.division === divFilter)) {
+      divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || divFilter;
+    }
     renderJob();
-    toast(`${added} section${added === 1 ? '' : 's'} imported`);
+    const bits = [];
+    if (added) bits.push(`${added} section${added === 1 ? '' : 's'} imported`);
+    if (updated) bits.push(`${updated} re-pointed at this file`);
+    toast(bits.length ? bits.join(' · ') : `${file.name} added`);
+    nextImport();                        // review the next queued file, or close
   } catch (e) {
     console.error(e);
     const full = e && (e.name === 'QuotaExceededError' || /quota/i.test(String(e.message)));
     importModal(`<div class="modal-head"><h3>Could not save</h3></div>
       <div class="modal-body"><p>${full ? 'This browser is out of storage space for the site. Delete an old job, or use a browser profile with more room.' : esc(String(e && e.message || e))}</p></div>
-      <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
+      <div class="modal-foot"><button class="btn" onclick="cancelImport()">Close</button></div>`);
   } finally {
     pendingImport = null;
   }
@@ -1682,12 +1904,13 @@ function csvCell(v) {
 function exportCsv() {
   if (!job) return;
   const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Submittal files', 'Response files', 'Spec pages', 'Notes'];
+    'Returned', 'Submittal files', 'Response files', 'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
     s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
     (s.submittals || []).map(d => d.name).join(' | '),
     (s.responses || []).map(d => d.name).join(' | '),
+    (s.specId && specById(s.specId) ? specById(s.specId).name : ''),
     s.startPage ? (s.startPage + (s.endPage && s.endPage !== s.startPage ? '-' + s.endPage : '')) : '',
     (s.notes || '').replace(/\s+/g, ' ')
   ]);
