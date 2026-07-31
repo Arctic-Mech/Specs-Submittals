@@ -10,8 +10,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // jobs/{jobId}                       job name, number, spec files, roll-up
-    // jobs/{jobId}/sections/{sectionKey} one document per spec section
-    // files/{fileId}                     a PDF's name, size and chunk count
+    // jobs/{jobId}/sections/{sectionKey} the log for one spec section
+    // jobs/{jobId}/specdata/{sectionKey} that section's spec text
+    // files/{fileId}                     an uploaded PDF's name, size, chunk count
     // files/{fileId}/chunks/{n}          ~600 KB of that PDF, base64 encoded
     match /{document=**} {
       allow read, write: if true;

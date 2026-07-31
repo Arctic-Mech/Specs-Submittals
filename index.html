@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Submittal Register — Divisions 22 &amp; 23</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
 <!-- Firebase: the register and the PDFs both live in Firestore, so every
      device on the job sees the same log. Cloud Storage is deliberately not
      used — it needs a billing account, Firestore does not. -->
@@ -13,8 +11,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, getDocs, getDocsFromCache, setDoc, updateDoc, deleteDoc,
-  onSnapshot, writeBatch, query, orderBy, connectFirestoreEmulator
+  collection, doc, getDoc, getDocFromServer, getDocs, getDocsFromCache, setDoc, updateDoc,
+  deleteDoc, deleteField, onSnapshot, writeBatch, query, orderBy, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -43,8 +41,8 @@ if (window.__fbConnect) window.__fbConnect({ db, connectFirestoreEmulator });
 
 window.FB = {
   db,
-  collection, doc, getDoc, getDocs, getDocsFromCache, setDoc, updateDoc, deleteDoc,
-  onSnapshot, writeBatch, query, orderBy
+  collection, doc, getDoc, getDocFromServer, getDocs, getDocsFromCache, setDoc, updateDoc,
+  deleteDoc, deleteField, onSnapshot, writeBatch, query, orderBy
 };
 window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -183,6 +181,10 @@ header {
 .bar > span { display: block; height: 100%; }
 .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--text-2); }
 .legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: 0; }
+.loading-card {
+  display: grid; place-items: center; min-height: 132px; cursor: default;
+  border-style: dashed; background: transparent;
+}
 .new-card {
   display: grid; place-content: center; justify-items: center; gap: 6px; min-height: 132px;
   border: 1px dashed var(--border-2); background: transparent; color: var(--text-2);
@@ -552,11 +554,28 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v2.0';
+const APP_VERSION = 'v2.1';
 document.getElementById('verLabel').textContent = APP_VERSION;
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* pdf.js is ~350 KB and only ever used to import a spec, so it is fetched on
+   first use rather than on every page view. */
+const PDFJS_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+let pdfjsPromise = null;
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (!pdfjsPromise) {
+    pdfjsPromise = new Promise((res, rej) => {
+      const tag = document.createElement('script');
+      tag.src = PDFJS_BASE + 'pdf.min.js';
+      tag.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'pdf.worker.min.js';
+        res(window.pdfjsLib);
+      };
+      tag.onerror = () => { pdfjsPromise = null; rej(new Error('the PDF engine could not be loaded')); };
+      document.head.appendChild(tag);
+    });
+  }
+  return pdfjsPromise;
 }
 
 /* ───────────────────────── statuses ───────────────────────── */
@@ -1055,6 +1074,7 @@ const jobsCol = () => FB.collection(FB.db, 'jobs');
 const jobRef = id => FB.doc(FB.db, 'jobs', id);
 const sectionsCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'sections');
 const sectionRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'sections', String(key));
+const specDataRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'specdata', String(key));
 
 /* Firestore rejects undefined; strip it rather than let a write fail. */
 function clean(v) {
@@ -1076,7 +1096,9 @@ function jobSummary(j) {
   for (const sp of (j.specs || [])) bytes += sp.size || 0;
   for (const s of secs) {
     tally[s.status || 'not_started']++;
-    for (const d of (s.submittals || []).concat(s.responses || [])) bytes += d.size || 0;
+    for (const d of (s.submittals || []).concat(s.responses || [])) {
+      if (!isLink(d)) bytes += d.size || 0;
+    }
   }
   return { count: secs.length, tally, bytes };
 }
@@ -1098,6 +1120,7 @@ async function saveJobMeta(j) {
     id: target.id,
     name: target.name,
     number: target.number || '',
+    folderUrl: target.folderUrl || '',
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -1109,9 +1132,33 @@ async function saveSection(s) {
   if (!job || !s) return;
   markPending(s.key);
   try {
-    await FB.setDoc(sectionRef(job.id, s.key), clean(s));
+    await FB.setDoc(sectionRef(job.id, s.key), clean(logFields(s)));
     await saveJobMeta();
   } finally { pendingSections.delete(s.key); }
+}
+
+/* Write just what changed. A full setDoc of a section re-sends every field to
+   every connected browser, which for the heaviest sections is tens of KB. */
+async function patchSection(key, fields) {
+  if (!job) return;
+  markPending(key);
+  try {
+    await FB.updateDoc(sectionRef(job.id, key), clean(fields));
+    await saveJobMeta();
+  } catch (e) {
+    if (String((e && e.code) || '').includes('not-found')) {
+      const s = findSection(key);
+      if (s) { await FB.setDoc(sectionRef(job.id, key), clean(logFields(s))); await saveJobMeta(); }
+    } else throw e;
+  } finally { pendingSections.delete(key); }
+}
+
+/* The spec text lives in its own document, so it never rides along on a save. */
+const SPEC_FIELDS = ['requirements', 'includes'];
+function logFields(s) {
+  const out = {};
+  for (const k of Object.keys(s)) if (!SPEC_FIELDS.includes(k)) out[k] = s[k];
+  return out;
 }
 
 async function saveSections(list) {
@@ -1120,7 +1167,7 @@ async function saveSections(list) {
   try {
     for (let i = 0; i < list.length; i += 400) {         // Firestore caps a batch at 500
       const batch = FB.writeBatch(FB.db);
-      for (const s of list.slice(i, i + 400)) batch.set(sectionRef(job.id, s.key), clean(s));
+      for (const s of list.slice(i, i + 400)) batch.set(sectionRef(job.id, s.key), clean(logFields(s)));
       await batch.commit();
     }
     await saveJobMeta();
@@ -1130,8 +1177,82 @@ async function saveSections(list) {
 async function deleteSectionDocs(jobId, keys) {
   for (let i = 0; i < keys.length; i += 400) {
     const batch = FB.writeBatch(FB.db);
-    for (const k of keys.slice(i, i + 400)) batch.delete(sectionRef(jobId, k));
+    for (const k of keys.slice(i, i + 400)) {
+      batch.delete(sectionRef(jobId, k));
+      batch.delete(specDataRef(jobId, k));
+    }
     await batch.commit();
+  }
+  for (const k of keys) specDataCache.delete(jobId + ':' + k);
+}
+
+/* ── the spec text for a section, fetched only when its panel opens ── */
+const specDataCache = new Map();          // `${jobId}:${key}` -> { requirements, includes }
+
+async function saveSpecData(jobId, list) {
+  for (let i = 0; i < list.length; i += 400) {
+    const batch = FB.writeBatch(FB.db);
+    for (const s of list.slice(i, i + 400)) {
+      batch.set(specDataRef(jobId, s.key), clean({
+        key: s.key, requirements: s.requirements || [], includes: s.includes || []
+      }));
+    }
+    await batch.commit();
+  }
+  for (const s of list) {
+    specDataCache.set(jobId + ':' + s.key,
+      { requirements: s.requirements || [], includes: s.includes || [] });
+  }
+}
+
+async function specDataFor(key) {
+  const s = findSection(key);
+  // Written inline by an earlier version, or still in memory straight from an
+  // import — either way there is nothing to fetch.
+  if (s && (Array.isArray(s.requirements) || Array.isArray(s.includes))) {
+    return { requirements: s.requirements || [], includes: s.includes || [] };
+  }
+  const id = job.id + ':' + key;
+  if (specDataCache.has(id)) return specDataCache.get(id);
+  let data = { requirements: [], includes: [] };
+  try {
+    const snap = await FB.getDoc(specDataRef(job.id, key));
+    if (snap.exists()) {
+      const d = snap.data();
+      data = { requirements: d.requirements || [], includes: d.includes || [] };
+    }
+  } catch (e) { /* offline: fall through to an empty block */ }
+  specDataCache.set(id, data);
+  return data;
+}
+
+/* Sections written by an earlier version carry their spec text inline, which is
+   what makes opening a job heavy. Copy it out, confirm the copy landed on the
+   server, and only then drop the inline fields. Nothing is removed until its
+   replacement is verified, so an interrupted run leaves the data intact. */
+const specDataMigrated = new Set();
+async function migrateSpecData(jobId, sections) {
+  if (specDataMigrated.has(jobId)) return;
+  const stale = sections.filter(s =>
+    (Array.isArray(s.requirements) && s.requirements.length) ||
+    (Array.isArray(s.includes) && s.includes.length));
+  if (!stale.length) { specDataMigrated.add(jobId); return; }
+  specDataMigrated.add(jobId);
+  try {
+    await saveSpecData(jobId, stale);
+    for (const s of stale) {
+      const check = await FB.getDocFromServer(specDataRef(jobId, s.key));
+      const ok = check.exists() &&
+        (check.data().requirements || []).length === (s.requirements || []).length &&
+        (check.data().includes || []).length === (s.includes || []).length;
+      if (!ok) continue;                       // leave this one exactly as it was
+      await FB.updateDoc(sectionRef(jobId, s.key), {
+        requirements: FB.deleteField(), includes: FB.deleteField()
+      });
+    }
+  } catch (e) {
+    console.warn('spec text left in place:', e);
+    specDataMigrated.delete(jobId);           // try again next time
   }
 }
 
@@ -1251,6 +1372,10 @@ function storageError(e) {
 function usedBytes() {
   return jobs.reduce((n, j) => n + ((j.summary && j.summary.bytes) || 0), 0);
 }
+function headroomNote() {
+  return fmtBytes(Math.max(0, FREE_TIER_BYTES - usedBytes())) + ' of storage left — links use none of it';
+}
+const BIG_UPLOAD = 25 * 1024 * 1024;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    3. STATE
@@ -1264,6 +1389,7 @@ let query = '';
 let openKey = null;       // section open in the drawer
 let unsubJobs = null;
 let unsubSections = null;
+let jobsLoaded = false;      // false until the first snapshot lands
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -1312,6 +1438,7 @@ function watchJobs() {
       const wasEmpty = !jobs.length;
       jobs = snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
         .sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0));
+      jobsLoaded = true;
       setSync('live');
       if (job) {
         // Someone else may have renamed the job or added a spec file. Sections
@@ -1320,7 +1447,7 @@ function watchJobs() {
         if (fresh) {
           const stale = (fresh.updated || 0) < (job.updated || 0);
           if (!jobEditDepth && !stale) {
-            job.name = fresh.name; job.number = fresh.number;
+            job.name = fresh.name; job.number = fresh.number; job.folderUrl = fresh.folderUrl;
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -1333,6 +1460,7 @@ function watchJobs() {
       if (wasEmpty) checkLocalCarryover();
     },
     err => {
+      jobsLoaded = true;
       setSync('error', err && err.code === 'permission-denied'
         ? ' — Firestore refused the read. Paste firestore.rules into the Firebase console under Firestore Database → Rules, then reload.'
         : ' — ' + (err && err.message || err));
@@ -1355,6 +1483,7 @@ function watchSections(jobId) {
       // A section added locally but not yet written must survive too.
       for (const y of local) if (!seen.has(y.key) && pendingSections.has(y.key)) job.sections.push(y);
       sortSections();
+      migrateSpecData(jobId, job.sections);
       if (view === 'job') {
         renderJob();
         // Re-rendering while someone is typing in the drawer would eat the caret.
@@ -1366,10 +1495,23 @@ function watchSections(jobId) {
 }
 
 /* ── carry-over from the browser-only version ── */
+const LOCAL_DB = 'submittal_register';
+
+/* Opening a database that does not exist creates an empty one, so ask first
+   where the browser supports it. Most people never had local data. */
+async function localDbExists() {
+  try {
+    if (!indexedDB.databases) return true;            // Firefox: just try the open
+    const list = await indexedDB.databases();
+    return list.some(d => d && d.name === LOCAL_DB);
+  } catch (e) { return true; }
+}
+
 async function readLocalJobs() {
+  if (!(await localDbExists())) return [];
   return new Promise(resolve => {
     let req;
-    try { req = indexedDB.open('submittal_register'); } catch (e) { return resolve([]); }
+    try { req = indexedDB.open(LOCAL_DB); } catch (e) { return resolve([]); }
     req.onerror = () => resolve([]);
     req.onsuccess = () => {
       const db = req.result;
@@ -1382,9 +1524,10 @@ async function readLocalJobs() {
 }
 
 async function readLocalBlob(blobId) {
+  if (!(await localDbExists())) return null;
   return new Promise(resolve => {
     let req;
-    try { req = indexedDB.open('submittal_register'); } catch (e) { return resolve(null); }
+    try { req = indexedDB.open(LOCAL_DB); } catch (e) { return resolve(null); }
     req.onerror = () => resolve(null);
     req.onsuccess = () => {
       const db = req.result;
@@ -1502,6 +1645,12 @@ function jobCount(j) {
 
 function renderJobs() {
   const grid = $('jobsGrid');
+  if (!jobsLoaded) {
+    grid.innerHTML = `<div class="job-card loading-card"><span class="muted">Loading jobs…</span></div>`;
+    renderLegacyNotice();
+    renderStorageNote();
+    return;
+  }
   let html = '';
   for (const j of jobs) {
     const count = jobCount(j);
@@ -1572,10 +1721,15 @@ function jobFormModal(existing) {
           <input class="input" id="jfName" value="${esc(j.name || '')}"
             placeholder="Adventist Health Columbia Gorge — Energy Improvements" autocomplete="off">
         </div>
-        <div class="field" style="margin-bottom:0">
+        <div class="field">
           <label class="fl">Job number</label>
           <input class="input" id="jfNumber" value="${esc(j.number || '')}"
             placeholder="70-23-0002" autocomplete="off">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="fl">ShareFile folder (optional)</label>
+          <input class="input" id="jfFolder" value="${esc(j.folderUrl || '')}"
+            placeholder="https://yourcompany.sharefile.com/..." autocomplete="off">
         </div>
       </div>
       <div class="modal-foot">
@@ -1586,7 +1740,7 @@ function jobFormModal(existing) {
     </div></div>`;
   const name = $('jfName');
   name.focus(); name.select();
-  for (const id of ['jfName', 'jfNumber']) {
+  for (const id of ['jfName', 'jfNumber', 'jfFolder']) {
     $(id).addEventListener('keydown', e => {
       if (e.key === 'Enter') submitJobForm(existing ? j.id : null);
     });
@@ -1599,12 +1753,15 @@ function editJob() { if (job) jobFormModal(job); }
 async function submitJobForm(id) {
   const name = $('jfName').value.trim();
   const number = $('jfNumber').value.trim();
+  const rawFolder = $('jfFolder').value.trim();
+  const folderUrl = rawFolder ? normaliseUrl(rawFolder) : '';
   if (!name) { toast('A job needs a name', true); $('jfName').focus(); return; }
+  if (rawFolder && !folderUrl) { toast('That ShareFile folder does not look like a link', true); $('jfFolder').focus(); return; }
   try {
     if (id) {
       const target = job && job.id === id ? job : jobs.find(x => x.id === id);
       if (!target) return;
-      target.name = name; target.number = number;
+      target.name = name; target.number = number; target.folderUrl = folderUrl;
       beginJobEdit();
       try { await saveJobMeta(target); } finally { endJobEdit(); }
       if (job && job.id === id) { $('crumbJob').textContent = name; renderJob(); }
@@ -1612,7 +1769,7 @@ async function submitJobForm(id) {
       toast('Job updated');
     } else {
       const j = {
-        id: uid('job'), name, number, created: Date.now(), updated: Date.now(),
+        id: uid('job'), name, number, folderUrl, created: Date.now(), updated: Date.now(),
         specs: [], sections: []
       };
       await saveJobMeta(j);
@@ -1652,7 +1809,9 @@ async function deleteJob(id) {
     const secs = snap.docs.map(d => d.data());
     for (const sp of (j.specs || [])) await deleteStoredFile(sp.fileId);
     for (const s of secs) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
+      for (const d of (s.submittals || []).concat(s.responses || [])) {
+        if (!isLink(d)) await deleteStoredFile(d.fileId);
+      }
     }
     await deleteSectionDocs(id, secs.map(s => s.key));
     await FB.deleteDoc(jobRef(id));
@@ -1702,7 +1861,9 @@ function renderSpecBar() {
         <button class="kill" onclick="removeSpecPrompt('${sp.id}')" title="Remove this spec file">✕</button>
       </span>`;
     }).join('') +
-    `<button class="btn sm" onclick="promptImportSpec()">+ Add spec PDF</button>`;
+    `<button class="btn sm" onclick="promptImportSpec()">+ Add spec PDF</button>` +
+    (job.folderUrl ? `<button class="btn sm" onclick="window.open('${esc(job.folderUrl)}','_blank','noopener')"
+       title="Open this job's ShareFile folder">🔗 ShareFile</button>` : '');
 }
 
 function renderJob() {
@@ -1814,7 +1975,12 @@ async function setStatus(key, value) {
   sortSections();
   renderJob();
   if (openKey === key) renderDrawer();
-  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
+  try {
+    await patchSection(key, {
+      status: s.status, history: s.history || [],
+      submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || ''
+    });
+  } catch (e) { toast(writeError(e), true); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1836,8 +2002,8 @@ function renderDrawer() {
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
       onclick="setStatus('${s.key}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
 
-  const reqHtml = (s.requirements && s.requirements.length)
-    ? s.requirements.map(g => `<div class="req-group">
+  const renderReqs = reqs => (reqs && reqs.length)
+    ? reqs.map(g => `<div class="req-group">
         <div class="req-kind">${esc(g.kind)} — ${esc(g.article)} ${esc(g.name)}</div>
         ${g.items.map(it => {
           const detail = it.detail != null ? it.detail : it.text;
@@ -1848,9 +2014,9 @@ function renderDrawer() {
       </div>`).join('')
     : `<div class="muted">This section has no separate submittals article in the spec.</div>`;
 
-  const incHtml = (s.includes && s.includes.length)
-    ? `<div class="sec"><h4>Section includes</h4><div class="muted" style="color:var(--text-2)">${
-        s.includes.map(i => '• ' + esc(i)).join('<br>')}</div></div>` : '';
+  const renderIncludes = inc => (inc && inc.length)
+    ? `<h4 style="margin-top:14px">Section includes</h4><div class="muted" style="color:var(--text-2)">${
+        inc.map(i => '• ' + esc(i)).join('<br>')}</div>` : '';
 
   const html = `
   <div class="scrim" onclick="closeDrawer()"></div>
@@ -1871,15 +2037,21 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Submittals <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></h4>
+        <h4>Submittals <span style="display:flex;gap:6px">
+          <button class="btn sm" onclick="linkModal('${s.key}','submittals',null)">+ ShareFile link</button>
+          <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></span></h4>
         <div id="listSub">${fileList(s, 'submittals')}</div>
-        <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">Drop submittal PDFs here</div>
+        <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">
+          Drop submittal PDFs here<br><span class="muted">${esc(headroomNote())}</span></div>
       </div>
 
       <div class="sec">
-        <h4>Submittal responses <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ Upload PDF</button></h4>
+        <h4>Submittal responses <span style="display:flex;gap:6px">
+          <button class="btn sm" onclick="linkModal('${s.key}','responses',null)">+ ShareFile link</button>
+          <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ Upload PDF</button></span></h4>
         <div id="listRes">${fileList(s, 'responses')}</div>
-        <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">Drop the returned / stamped PDFs here</div>
+        <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">
+          Drop the returned / stamped PDFs here</div>
       </div>
 
       <div class="sec">
@@ -1899,13 +2071,11 @@ function renderDrawer() {
             placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea></div>
       </div>
 
-      ${incHtml}
-
       <div class="sec">
         <h4>What the spec asks for
           ${s.startPage && specFile ? `<button class="btn sm" onclick="openSpecViewer('${specFile.id}',${s.startPage})">Open spec · p. ${s.startPage}</button>` : ''}
         </h4>
-        ${reqHtml}
+        <div id="reqBlock"><div class="muted">Loading the spec text…</div></div>
         <div class="muted" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
           ${specFile && manySpecs ? esc(specFile.name) + ' · ' : ''}${
             s.startPage ? `pages ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}`
@@ -1928,12 +2098,35 @@ function renderDrawer() {
   $('drawerHost').innerHTML = html;
   wireDrop($('dropSub'), s.key, 'submittals');
   wireDrop($('dropRes'), s.key, 'responses');
+
+  // The spec text is a separate document so that opening a job stays light.
+  specDataFor(s.key).then(data => {
+    const host = $('reqBlock');
+    if (!host || openKey !== s.key) return;      // moved on while it loaded
+    host.innerHTML = renderReqs(data.requirements) + renderIncludes(data.includes);
+  }).catch(() => {
+    const host = $('reqBlock');
+    if (host) host.innerHTML = '<div class="muted">Could not load the spec text.</div>';
+  });
+}
+
+const isLink = d => d && d.type === 'link';
+function linkHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return 'link'; }
 }
 
 function fileList(s, kind) {
   const files = s[kind] || [];
-  if (!files.length) return `<div class="muted" style="margin-bottom:8px">Nothing uploaded yet.</div>`;
-  return files.map(f => `<div class="file-row">
+  if (!files.length) return `<div class="muted" style="margin-bottom:8px">Nothing added yet.</div>`;
+  return files.map(f => isLink(f) ? `<div class="file-row">
+      <span class="fi">🔗</span>
+      <span class="fn"><b title="${esc(f.url)}">${esc(f.name)}</b>
+        <small>${esc(linkHost(f.url))} · ${fmtDate(f.added)}${f.note ? ' · ' + esc(f.note) : ''}</small></span>
+      ${f.rev ? `<span class="rev-tag">${esc(f.rev)}</span>` : ''}
+      <button class="btn sm" onclick="openDocLink('${s.key}','${kind}','${f.id}')">Open</button>
+      <button class="btn sm ghost" onclick="linkModal('${s.key}','${kind}','${f.id}')" title="Edit">✎</button>
+      <button class="btn sm ghost" onclick="removeDoc('${s.key}','${kind}','${f.id}')" title="Remove">✕</button>
+    </div>` : `<div class="file-row">
       <span class="fi">${kind === 'responses' ? '✔' : '📄'}</span>
       <span class="fn"><b title="${esc(f.name)}">${esc(f.name)}</b>
         <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}</small></span>
@@ -1944,6 +2137,121 @@ function fileList(s, kind) {
     </div>`).join('');
 }
 
+/* ── ShareFile (or any) links ─────────────────────────────────────────────
+   Big vendor packages stay where the company already keeps them. The register
+   holds a label and a URL, which can point at one file or a whole folder. */
+function normaliseUrl(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return null;
+  const withScheme = /^https?:\/\//i.test(t) ? t : 'https://' + t;
+  try {
+    const u = new URL(withScheme);
+    return /^https?:$/.test(u.protocol) && u.hostname.includes('.') ? u.href : null;
+  } catch (e) { return null; }
+}
+
+function linkModal(key, kind, docId) {
+  const s = findSection(key);
+  if (!s) return;
+  const existing = docId ? (s[kind] || []).find(x => x.id === docId) : null;
+  const what = kind === 'responses' ? 'response' : 'submittal';
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>${existing ? 'Edit link' : 'Link a ' + what}</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="fl">Link</label>
+          <input class="input" id="lkUrl" value="${esc(existing ? existing.url : '')}"
+            placeholder="https://yourcompany.sharefile.com/..." autocomplete="off">
+          <div class="muted" style="margin-top:5px">Paste the ShareFile link for the file or folder.
+            It opens in a new tab and uses none of the storage allowance.</div>
+        </div>
+        <div class="field">
+          <label class="fl">Label</label>
+          <input class="input" id="lkName" value="${esc(existing ? existing.name : '')}"
+            placeholder="e.g. Valve submittal package" autocomplete="off">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="fl">Note (optional)</label>
+          <input class="input" id="lkNote" value="${esc(existing && existing.note || '')}" autocomplete="off">
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closePdf()">Cancel</button>
+        <button class="btn primary" onclick="saveLink('${key}','${kind}',${existing ? "'" + existing.id + "'" : 'null'})">
+          ${existing ? 'Save' : 'Add link'}</button>
+      </div>
+    </div></div>`;
+  const first = $('lkUrl');
+  first.focus(); first.select();
+  for (const id of ['lkUrl', 'lkName', 'lkNote']) {
+    $(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') saveLink(key, kind, existing ? existing.id : null);
+    });
+  }
+}
+
+async function saveLink(key, kind, docId) {
+  const s = findSection(key);
+  if (!s) return;
+  const url = normaliseUrl($('lkUrl').value);
+  if (!url) { toast('That does not look like a link — paste the full ShareFile address', true); $('lkUrl').focus(); return; }
+  const name = $('lkName').value.trim() || decodeURIComponent(url.split('/').filter(Boolean).pop() || 'ShareFile link');
+  const note = $('lkNote').value.trim();
+
+  markPending(key);
+  s[kind] = s[kind] || [];
+  const existing = docId ? s[kind].find(x => x.id === docId) : null;
+  if (existing) {
+    Object.assign(existing, { name, url, note });
+  } else {
+    s[kind].push({ id: uid('doc'), type: 'link', name, url, note, added: Date.now(),
+      rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' });
+    if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
+  }
+  closePdf();
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { [kind]: s[kind], status: s.status }); }
+  catch (e) { toast(writeError(e), true); return; }
+  toast(existing ? 'Link updated' : 'Link added');
+}
+
+function bigUploadPrompt(key, kind, files, bytes) {
+  const names = files.map(f => f.name).join(', ');
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>That is ${esc(fmtBytes(bytes))}</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:14px">${esc(names)}</p>
+        <button class="choice-btn" onclick="closePdf();linkModal('${key}','${kind}',null)">
+          <b>Link it from ShareFile instead</b>
+          <span>Put the file in ShareFile and paste the link here. Uses none of the
+            ${esc(fmtBytes(FREE_TIER_BYTES))} allowance, and everyone opens it from where it already lives.</span>
+        </button>
+        <button class="choice-btn" onclick="closePdf();forceUpload('${key}','${kind}')">
+          <b>Upload it anyway</b>
+          <span>Stores it here so it views inline. ${esc(headroomNote())}.</span>
+        </button>
+      </div>
+    </div></div>`;
+  bigUploadPrompt._pending = { key, kind, files };
+}
+
+function forceUpload(key, kind) {
+  const p = bigUploadPrompt._pending;
+  if (!p || p.key !== key || p.kind !== kind) return;
+  bigUploadPrompt._pending = null;
+  addFiles._forced = true;
+  addFiles(key, kind, p.files);
+}
+
+function openDocLink(key, kind, docId) {
+  const d = docOf(key, kind, docId);
+  if (d && d.url) window.open(d.url, '_blank', 'noopener');
+}
+
 async function setField(key, field, value) {
   const s = findSection(key);
   if (!s) return;
@@ -1952,7 +2260,7 @@ async function setField(key, field, value) {
   clearTimeout(setField._t);
   setField._t = setTimeout(async () => {
     renderTable();
-    try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
+    try { await patchSection(key, { [field]: value }); } catch (e) { toast(writeError(e), true); }
   }, 500);
 }
 
@@ -1980,9 +2288,16 @@ async function addFiles(key, kind, files) {
   markPending(key);                 // uploads take a while; hold the section
   const incoming = files.reduce((n, f) => n + f.size, 0);
   if (usedBytes() + incoming > FREE_TIER_BYTES) {
-    toast('That would go past the free Firestore allowance — delete a finished job first', true);
+    toast('That would go past the free Firestore allowance — link it from ShareFile instead', true);
     return;
   }
+  // A big package is exactly what ShareFile is for; offer that before spending
+  // a chunk of the allowance on it.
+  if (incoming > BIG_UPLOAD && !addFiles._forced) {
+    bigUploadPrompt(key, kind, files, incoming);
+    return;
+  }
+  addFiles._forced = false;
   s[kind] = s[kind] || [];
   let added = 0;
   for (const f of files) {
@@ -2009,7 +2324,8 @@ async function addFiles(key, kind, files) {
   // Uploading the first submittal on an untouched section moves it along.
   if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
   renderDrawer(); renderTable();
-  try { await saveSection(s); } catch (e) { toast(writeError(e), true); return; }
+  try { await patchSection(key, { [kind]: s[kind], status: s.status }); }
+  catch (e) { toast(writeError(e), true); return; }
   toast(added + ' file' + (added === 1 ? '' : 's') + ' uploaded');
 }
 async function removeDoc(key, kind, docId) {
@@ -2018,10 +2334,10 @@ async function removeDoc(key, kind, docId) {
   if (!d) return;
   if (!confirm(`Remove "${d.name}" for everyone?`)) return;
   markPending(key);
-  await deleteStoredFile(d.fileId);
+  if (!isLink(d)) await deleteStoredFile(d.fileId);
   s[kind] = s[kind].filter(x => x.id !== docId);
   renderDrawer(); renderTable();
-  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
+  try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
 }
 function docOf(key, kind, docId) {
   const s = findSection(key);
@@ -2077,14 +2393,17 @@ async function editSection(key) {
   s.title = title.trim();
   s.titleEdited = true;         // a later import must not overwrite this
   renderDrawer(); renderTable();
-  try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
+  try { await patchSection(key, { title: s.title, titleEdited: true }); }
+  catch (e) { toast(writeError(e), true); }
 }
 async function deleteSection(key) {
   const s = findSection(key);
   if (!s) return;
   const files = (s.submittals || []).length + (s.responses || []).length;
   if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?\n\nThis affects everyone on this job.`)) return;
-  for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
+  for (const d of (s.submittals || []).concat(s.responses || [])) {
+    if (!isLink(d)) await deleteStoredFile(d.fileId);
+  }
   job.sections = job.sections.filter(x => x.key !== key);
   closeDrawer(); renderJob();
   try { await FB.deleteDoc(sectionRef(job.id, key)); await saveJobMeta(); }
@@ -2205,7 +2524,9 @@ async function removeSpec(specId, dropSections) {
   let keptSections = [];
   if (dropSections) {
     for (const s of owned) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
+      for (const d of (s.submittals || []).concat(s.responses || [])) {
+        if (!isLink(d)) await deleteStoredFile(d.fileId);
+      }
     }
     const gone = new Set(owned.map(s => s.key));
     job.sections = job.sections.filter(s => !gone.has(s.key));
@@ -2270,13 +2591,20 @@ function importModal(inner) {
 }
 
 async function importSpec(file) {
-  if (!window.pdfjsLib) { toast('The PDF engine did not load — check the connection and reload', true); return; }
   importModal(`
     <div class="modal-head"><h3>Reading ${esc(file.name)}${queueLabel()}</h3></div>
     <div class="modal-body">
-      <div id="impStep" class="muted">Opening the PDF…</div>
+      <div id="impStep" class="muted">Loading the PDF engine…</div>
       <div class="progress"><div id="impBar"></div></div>
     </div>`);
+  try {
+    await loadPdfJs();
+  } catch (e) {
+    importModal(`<div class="modal-head"><h3>Could not read that PDF</h3></div>
+      <div class="modal-body"><p class="muted">${esc(String(e.message || e))} — check the connection and try again.</p></div>
+      <div class="modal-foot"><button class="btn" onclick="cancelImport()">Close</button></div>`);
+    return;
+  }
 
   const step = (t, pct) => {
     const a = $('impStep'), b = $('impBar');
@@ -2401,6 +2729,7 @@ async function confirmImport() {
       fileId, added: Date.now() });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
+    const relinked = [];
     let added = 0, updated = 0;
     for (const s of result.sections) {
       if (relink.has(s.key)) {
@@ -2409,6 +2738,7 @@ async function confirmImport() {
           cur.specId = specId;
           cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
           cur.requirements = s.requirements || []; cur.includes = s.includes || [];
+          relinked.push(cur);
           if (!cur.titleEdited) {                       // never clobber a hand-typed title
             cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource;
           }
@@ -2425,7 +2755,9 @@ async function confirmImport() {
       added++;
     }
     sortSections();
-    await saveSections(sectionsOf(job).filter(x => x.specId === specId));
+    const mine = sectionsOf(job).filter(x => x.specId === specId);
+    await saveSpecData(job.id, mine.concat(relinked));   // spec text first, then the log rows
+    await saveSections(mine);
     await saveJobMeta();
     if (!sectionsOf(job).some(x => x.division === divFilter)) {
       divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || divFilter;
@@ -2457,12 +2789,13 @@ function csvCell(v) {
 function exportCsv() {
   if (!job) return;
   const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Submittal files', 'Response files', 'Spec file', 'Spec pages', 'Notes'];
+    'Returned', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
     s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
     (s.submittals || []).map(d => d.name).join(' | '),
     (s.responses || []).map(d => d.name).join(' | '),
+    (s.submittals || []).concat(s.responses || []).filter(isLink).map(d => d.url).join(' | '),
     (s.specId && specById(s.specId) ? specById(s.specId).name : ''),
     s.startPage ? (s.startPage + (s.endPage && s.endPage !== s.startPage ? '-' + s.endPage : '')) : '',
     (s.notes || '').replace(/\s+/g, ' ')

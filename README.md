@@ -8,10 +8,11 @@ The whole app is `index.html`. There is no build step.
 
 ## Firebase setup
 
-The register lives in Firestore, and so do the PDFs. Cloud Storage would be the
-natural home for them, but it needs a billing account — Firestore does not, so
-files are split into chunk documents instead. Nothing here costs anything on
-the free Spark plan.
+The register lives in Firestore, and so do any uploaded PDFs. Cloud Storage
+would be the natural home for the files, but it needs a billing account —
+Firestore does not, so uploads are split across chunk documents instead. Bigger
+documents are better linked from ShareFile than uploaded. Nothing here costs
+anything on the free Spark plan.
 
 1. **Firestore** — Firebase console → Build → Firestore Database → Create
    database. Any location; the rules below replace whatever mode you pick.
@@ -37,30 +38,59 @@ rules it is the only thing between the register and the public. Add Anonymous
 or Google sign-in and swap `if true` for `if request.auth != null` when the URL
 starts being shared.
 
+## Documents: upload or link
+
+A submittal or a response can be either an uploaded PDF or a link to where the
+file already lives — ShareFile, or anything else with a URL. A link can point at
+one file or at a whole folder.
+
+Uploads view inline and are good for the small things: a stamped response, a
+two-page letter. Links are for the big vendor packages, and they use none of the
+storage allowance. Each section's panel offers both, and a job can carry a link
+to its ShareFile folder, shown as a button beside the spec files.
+
+ShareFile's own API is not used and cannot be: its OAuth needs a server-side
+client secret and its endpoints send no CORS headers, so a static page is
+blocked. A link needs none of that.
+
 ## Data
 
 ```
-jobs/{jobId}                        name, number, spec files, status roll-up
-jobs/{jobId}/sections/{sectionKey}  one document per spec section
-files/{fileId}                      a PDF's name, size and chunk count
+jobs/{jobId}                        name, number, ShareFile folder, spec files, roll-up
+jobs/{jobId}/sections/{sectionKey}  the log: status, vendor, dates, notes, documents
+jobs/{jobId}/specdata/{sectionKey}  the spec text for that section
+files/{fileId}                      an uploaded PDF's name, size and chunk count
 files/{fileId}/chunks/{n}           ~600 KB of that PDF, base64 encoded
 ```
 
 Sections are separate documents so two people editing different sections at the
 same time cannot overwrite each other.
 
-A Firestore document holds just under 1 MiB, so each PDF is base64 encoded and
-split across chunk documents of 600 KB. Chunks are written once and never
-change, which means reads are served from the SDK's local cache and cost
+The spec text — the submittal requirements and the scope list — sits in its own
+document rather than on the section. It never changes and is only needed when a
+section's panel is open, so keeping it out of the section keeps the register
+light: across the sample manual that is 197 KB of text against 12 KB of actual
+log data. Sections are also written field by field, so ticking a status sends
+the status, not the whole record.
+
+A Firestore document holds just under 1 MiB, so each uploaded PDF is base64
+encoded and split across chunk documents of 600 KB. Chunks are written once and
+never change, which means reads are served from the SDK's local cache and cost
 nothing after the first time.
+
+Anything written by an earlier version still works. Sections that carry their
+spec text inline are moved across the first time the job is opened: the copy is
+written and read back from the server before the inline fields are removed, so
+an interrupted run leaves the data exactly as it was.
 
 ### The free-tier ceiling
 
-Firestore's free plan stores **1 GiB total**. The jobs page shows how much of
-that the PDFs are using and warns past 70%. Uploads that would cross the line
-are refused rather than half-written. Roughly, that is one spec manual plus a
-few hundred megabytes of submittals — delete finished jobs to make room, or
-move to Blaze and switch back to Cloud Storage when it stops being enough.
+Firestore's free plan stores **1 GiB total**, and only uploads count against it.
+The jobs page shows what is used and warns past 70%, each upload area shows the
+headroom, an upload over 25 MB offers the link route first, and anything that
+would cross the line is refused rather than half-written. Keeping submittal
+packages in ShareFile and linking them is what keeps this comfortable — spec
+PDFs stay uploaded because the page jumper needs the bytes.
 
 ## Local development
 
