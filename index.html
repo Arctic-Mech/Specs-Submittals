@@ -3,1771 +3,1736 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SpecCheck — Submittal Compliance</title>
+<title>Submittal Register — Divisions 22 &amp; 23</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
-  :root {
-    --black: #0a0a0a;
-    --surface: #111111;
-    --surface2: #1a1a1a;
-    --surface3: #222222;
-    --border: #2a2a2a;
-    --green: #22c55e;
-    --green-dim: #16a34a;
-    --green-muted: #14532d;
-    --gold: #f59e0b;
-    --gold-dim: #d97706;
-    --gold-muted: #451a03;
-    --red: #ef4444;
-    --red-muted: #450a0a;
-    --text: #e5e5e5;
-    --text-dim: #737373;
-    --text-muted: #525252;
-    --radius: 6px;
-    --mono: 'Courier New', monospace;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    background: var(--black);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
-    min-height: 100vh;
-  }
-
-  /* ── Header ── */
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 0 24px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 52px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .logo-mark {
-    width: 28px;
-    height: 28px;
-    background: var(--green);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 900;
-    font-size: 13px;
-    color: #000;
-    letter-spacing: -1px;
-  }
-
-  .logo-text {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: var(--text);
-  }
-
-  .logo-sub {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-weight: 400;
-    margin-left: 2px;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .api-key-wrap {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .api-label {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--mono);
-  }
-
-  input.api-input {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    font-size: 12px;
-    font-family: var(--mono);
-    padding: 5px 10px;
-    width: 220px;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-
-  input.api-input:focus { border-color: var(--green); }
-
-  .api-status {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    flex-shrink: 0;
-  }
-  .api-status.active { background: var(--green); }
-
-  /* ── Upload zone ── */
-  .upload-zone {
-    margin: 28px 24px 0;
-    border: 1.5px dashed var(--border);
-    border-radius: 10px;
-    padding: 32px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    background: var(--surface);
-    position: relative;
-  }
-
-  .upload-zone:hover, .upload-zone.drag { border-color: var(--green); background: #0d1a12; }
-
-  .upload-zone input[type=file] {
-    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-  }
-
-  .upload-icon {
-    font-size: 28px;
-    margin-bottom: 8px;
-    display: block;
-  }
-
-  .upload-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 4px;
-  }
-
-  .upload-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  /* ── Progress bar ── */
-  .progress-wrap {
-    margin: 12px 24px 0;
-    display: none;
-  }
-
-  .progress-wrap.show { display: block; }
-
-  .progress-label {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-bottom: 5px;
-    font-family: var(--mono);
-  }
-
-  .progress-bar {
-    height: 3px;
-    background: var(--surface3);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--green);
-    border-radius: 2px;
-    width: 0%;
-    transition: width 0.3s;
-  }
-
-  /* ── Stats bar ── */
-  .stats-bar {
-    margin: 16px 24px 0;
-    display: none;
-    gap: 12px;
-  }
-
-  .stats-bar.show { display: flex; }
-
-  .stat-pill {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 11px;
-    color: var(--text-dim);
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .stat-pill .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .stat-pill.needed .dot { background: var(--text-muted); }
-  .stat-pill.met .dot { background: var(--green); }
-  .stat-pill.partial .dot { background: var(--gold); }
-  .stat-pill.missing .dot { background: var(--red); }
-
-  /* ── Tabs ── */
-  .tabs-wrap {
-    margin: 20px 24px 0;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 0;
-  }
-
-  .tab-btn {
-    padding: 10px 20px;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    letter-spacing: 0.3px;
-    transition: color 0.15s, border-color 0.15s;
-    margin-bottom: -1px;
-  }
-
-  .tab-btn:hover { color: var(--text-dim); }
-  .tab-btn.active { color: var(--green); border-bottom-color: var(--green); }
-
-  .tab-count {
-    display: inline-block;
-    background: var(--surface3);
-    border-radius: 10px;
-    padding: 1px 6px;
-    font-size: 10px;
-    margin-left: 5px;
-    color: var(--text-muted);
-    font-weight: 500;
-  }
-
-  /* ── Main content ── */
-  .content {
-    padding: 20px 24px 60px;
-  }
-
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
-
-  /* ── Empty state ── */
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-muted);
-  }
-
-  .empty-state .empty-icon { font-size: 36px; margin-bottom: 12px; display: block; }
-  .empty-state .empty-title { font-size: 14px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
-  .empty-state .empty-hint { font-size: 12px; }
-
-  /* ── Section cards ── */
-  .section-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-
-  .section-header {
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s;
-  }
-
-  .section-header:hover { background: var(--surface2); }
-
-  .section-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .section-number {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--green);
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    background: var(--green-muted);
-    padding: 2px 7px;
-    border-radius: 4px;
-    flex-shrink: 0;
-  }
-
-  .section-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .section-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .section-progress {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--mono);
-  }
-
-  .chevron {
-    color: var(--text-muted);
-    font-size: 12px;
-    transition: transform 0.2s;
-    flex-shrink: 0;
-  }
-
-  .section-card.open .chevron { transform: rotate(180deg); }
-
-  /* ── Section body ── */
-  .section-body {
-    display: none;
-    border-top: 1px solid var(--border);
-  }
-
-  .section-card.open .section-body { display: block; }
-
-  /* ── Submittal line items ── */
-  .submittal-list {
-    padding: 4px 0;
-  }
-
-  .submittal-item {
-    padding: 8px 16px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .submittal-item:last-child { border-bottom: none; }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    margin-top: 4px;
-  }
-
-  .status-needed .status-dot { background: var(--text-muted); }
-  .status-met .status-dot { background: var(--green); }
-  .status-partial .status-dot { background: var(--gold); }
-  .status-missing .status-dot { background: var(--red); }
-
-  .submittal-info { flex: 1; min-width: 0; }
-
-  .submittal-name {
-    font-size: 13px;
-    color: var(--text);
-    font-weight: 500;
-    line-height: 1.4;
-  }
-
-  .submittal-type {
-    font-size: 10px;
-    font-family: var(--mono);
-    color: var(--text-muted);
-    margin-top: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .submittal-note {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 4px;
-    line-height: 1.4;
-    font-style: italic;
-  }
-
-  .status-badge {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    font-family: var(--mono);
-    margin-top: 2px;
-  }
-
-  .status-needed .status-badge {
-    background: var(--surface3);
-    color: var(--text-muted);
-  }
-  .status-met .status-badge {
-    background: var(--green-muted);
-    color: var(--green);
-  }
-  .status-partial .status-badge {
-    background: var(--gold-muted);
-    color: var(--gold);
-  }
-  .status-missing .status-badge {
-    background: var(--red-muted);
-    color: var(--red);
-  }
-
-  /* ── Upload button per section ── */
-  .section-upload-area {
-    padding: 10px 16px 12px;
-    background: var(--surface2);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .upload-btn {
-    background: var(--surface3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-dim);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 6px 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .upload-btn:hover { border-color: var(--green); color: var(--green); background: #0d1a12; }
-  .upload-btn input[type=file] {
-    position: absolute; inset: 0; opacity: 0; cursor: pointer;
-  }
-
-  .upload-btn.loading {
-    pointer-events: none;
-    color: var(--text-muted);
-    border-color: var(--border);
-  }
-
-  .uploaded-file {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--mono);
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .uploaded-file .file-name {
-    color: var(--green-dim);
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .checking-spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--border);
-    border-top-color: var(--gold);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    flex-shrink: 0;
-  }
-
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: var(--black); }
-  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
-
-  /* ── Notification toast ── */
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 16px;
-    font-size: 13px;
-    color: var(--text);
-    z-index: 999;
-    opacity: 0;
-    transform: translateY(10px);
-    transition: opacity 0.2s, transform 0.2s;
-    max-width: 320px;
-    pointer-events: none;
-  }
-  .toast.show { opacity: 1; transform: translateY(0); }
-  .toast.success { border-color: var(--green-dim); }
-  .toast.error { border-color: var(--red); }
-
-  /* ── Back button + current job ── */
-  .back-btn {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-dim);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 5px 12px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  .back-btn:hover { border-color: var(--green); color: var(--green); }
-
-  .current-job {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--gold);
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* ── Jobs home ── */
-  .jobs-hero { padding: 40px 24px 20px; }
-  .jobs-title { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; }
-  .jobs-subtitle { font-size: 13px; color: var(--text-dim); max-width: 520px; line-height: 1.5; }
-
-  .jobs-grid {
-    padding: 8px 24px 60px;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 14px;
-  }
-
-  .job-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px;
-    cursor: pointer;
-    transition: border-color 0.15s, transform 0.1s;
-    position: relative;
-    min-height: 120px;
-    display: flex;
-    flex-direction: column;
-  }
-  .job-card:hover { border-color: var(--green); transform: translateY(-1px); }
-
-  .job-card.new-job {
-    border-style: dashed;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: var(--text-muted);
-  }
-  .job-card.new-job:hover { color: var(--green); }
-  .job-card.new-job .plus { font-size: 28px; margin-bottom: 6px; }
-  .job-card.new-job .new-label { font-size: 13px; font-weight: 600; }
-
-  .job-name {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 6px;
-    line-height: 1.3;
-  }
-  .job-meta {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--mono);
-    margin-bottom: 12px;
-  }
-  .job-stats {
-    margin-top: auto;
-    display: flex;
-    gap: 10px;
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-  .job-stats .js { display: flex; align-items: center; gap: 4px; }
-  .job-stats .js .d { width: 6px; height: 6px; border-radius: 50%; }
-  .job-stats .js.met .d { background: var(--green); }
-  .job-stats .js.partial .d { background: var(--gold); }
-  .job-stats .js.needed .d { background: var(--text-muted); }
-
-  .job-delete {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    font-size: 14px;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
-  }
-  .job-card:hover .job-delete { opacity: 1; }
-  .job-delete:hover { color: var(--red); background: var(--red-muted); }
-
-  /* ── Page reference link ── */
-  .page-ref {
-    font-size: 10px;
-    font-family: var(--mono);
-    color: var(--gold);
-    background: var(--gold-muted);
-    padding: 2px 7px;
-    border-radius: 4px;
-    cursor: pointer;
-    text-decoration: none;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .page-ref:hover { background: var(--gold-dim); color: #000; }
-
-  /* ── Section detail page ── */
-  .detail-head {
-    padding: 28px 24px 18px;
-    border-bottom: 1px solid var(--border);
-  }
-  .detail-crumb {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-  .detail-title-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .detail-number {
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--green);
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    background: var(--green-muted);
-    padding: 4px 10px;
-    border-radius: 5px;
-    flex-shrink: 0;
-  }
-  .detail-title {
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: -0.4px;
-    line-height: 1.2;
-    flex: 1;
-    min-width: 200px;
-  }
-  .detail-summary {
-    display: flex;
-    gap: 8px;
-    margin-top: 14px;
-    flex-wrap: wrap;
-  }
-  .summary-chip {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-    border: 1px solid var(--border);
-  }
-  .summary-chip .n { font-family: var(--mono); font-weight: 700; }
-  .summary-chip.matched { background: var(--green-muted); color: var(--green); border-color: var(--green-dim); }
-  .summary-chip.partial { background: var(--gold-muted); color: var(--gold); border-color: var(--gold-dim); }
-  .summary-chip.missing { background: var(--red-muted); color: var(--red); border-color: var(--red); }
-  .summary-chip.needed  { background: var(--surface3); color: var(--text-dim); }
-
-  .detail-body { padding: 22px 24px 60px; }
-
-  .result-group { margin-bottom: 26px; }
-  .result-group:last-child { margin-bottom: 0; }
-
-  .group-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  .group-icon {
-    width: 22px; height: 22px;
-    border-radius: 5px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 800;
-    flex-shrink: 0;
-  }
-  .group-matched .group-icon { background: var(--green-muted); color: var(--green); }
-  .group-partial .group-icon { background: var(--gold-muted); color: var(--gold); }
-  .group-missing .group-icon { background: var(--red-muted); color: var(--red); }
-  .group-needed  .group-icon { background: var(--surface3); color: var(--text-dim); }
-
-  .group-title { font-size: 14px; font-weight: 700; }
-  .group-subtitle { font-size: 11px; color: var(--text-muted); margin-left: auto; font-family: var(--mono); }
-
-  .result-item {
-    padding: 12px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
-  .result-item:last-child { margin-bottom: 0; }
-  .result-name { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.4; }
-  .result-type {
-    font-size: 10px; font-family: var(--mono); color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.5px; margin-top: 3px;
-  }
-  .result-note {
-    font-size: 12px; color: var(--text-dim); margin-top: 8px; line-height: 1.5;
-    padding-top: 8px; border-top: 1px solid var(--border);
-  }
-  .result-group.group-matched .result-item { border-left: 2px solid var(--green); }
-  .result-group.group-partial .result-item { border-left: 2px solid var(--gold); }
-  .result-group.group-missing .result-item { border-left: 2px solid var(--red); }
-  .result-group.group-needed  .result-item { border-left: 2px solid var(--text-muted); }
-
-  .detail-upload {
-    margin-top: 24px;
-    padding: 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .detail-empty {
-    text-align: center;
-    padding: 40px 20px;
-    color: var(--text-muted);
-    border: 1.5px dashed var(--border);
-    border-radius: 10px;
-  }
-  .detail-empty .de-icon { font-size: 28px; display: block; margin-bottom: 8px; }
-  .detail-empty .de-title { font-size: 14px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
-  .detail-empty .de-hint { font-size: 12px; }
-
-  /* Make section cards in the list look clickable / navigable */
-  .section-card.navigable .section-header { cursor: pointer; }
-  .nav-arrow { color: var(--text-muted); font-size: 13px; flex-shrink: 0; }
-  .section-card.navigable:hover { border-color: var(--green-dim); }
-
-  /* ── Submittal files legend ── */
-  .submittal-files {
-    margin-top: 16px;
-    padding: 12px 14px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .sf-title {
-    font-size: 10px; font-family: var(--mono); color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
-  }
-  .sf-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
-  .sf-label {
-    font-size: 11px; font-weight: 700; font-family: var(--mono);
-    color: var(--green); background: var(--green-muted);
-    padding: 2px 8px; border-radius: 4px; flex-shrink: 0; min-width: 92px;
-  }
-  .sf-name { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  /* ── Required vs Found two-column ── */
-  .req-found {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px;
-    margin-top: 8px;
-    background: var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .rf-col { background: var(--surface2); padding: 10px 12px; }
-  .rf-label {
-    font-size: 9px; font-family: var(--mono); text-transform: uppercase;
-    letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 6px;
-  }
-  .rf-required .rf-label { color: var(--text-dim); }
-  .rf-found .rf-label { color: var(--gold); }
-  .rf-body { font-size: 12px; line-height: 1.5; color: var(--text); }
-  .rf-required .rf-body { color: var(--text-dim); }
-
-  .found-source {
-    font-size: 11px; font-weight: 600; color: var(--green);
-    margin-bottom: 5px; font-family: var(--mono);
-  }
-  .found-text { color: var(--text); }
-  .found-text.missing-text { color: var(--red); }
-  .found-text.muted-text { color: var(--text-muted); font-style: italic; }
-
-  @media (max-width: 640px) {
-    .req-found { grid-template-columns: 1fr; }
-  }
+:root {
+  --bg:        #f6f7f9;
+  --surface:   #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e7eaef;
+  --border:    #dde1e7;
+  --border-2:  #c9cfd8;
+  --text:      #16191d;
+  --text-2:    #5b626d;
+  --text-3:    #8a919c;
+  --accent:    #1f6feb;
+  --accent-sf: #e8f0fe;
+  --grey:      #8a919c;   --grey-sf:  #eceef1;
+  --amber:     #b45309;   --amber-sf: #fdf0dc;
+  --blue:      #1f6feb;   --blue-sf:  #e6effd;
+  --green:     #157347;   --green-sf: #e2f4ea;
+  --red:       #c0392f;   --red-sf:   #fdeae8;
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06);
+  --shadow-lg: 0 12px 40px rgba(16,24,40,.18);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+html[data-theme="dark"] {
+  --bg:        #0f1216;
+  --surface:   #171b21;
+  --surface-2: #1e232b;
+  --surface-3: #272d36;
+  --border:    #2a303a;
+  --border-2:  #3a424e;
+  --text:      #e6e9ee;
+  --text-2:    #a3abb8;
+  --text-3:    #7b8492;
+  --accent:    #4d94ff;
+  --accent-sf: #16243a;
+  --grey:      #98a1af;   --grey-sf:  #232931;
+  --amber:     #f0b429;   --amber-sf: #2e2410;
+  --blue:      #4d94ff;   --blue-sf:  #12233c;
+  --green:     #3fbf7f;   --green-sf: #10281d;
+  --red:       #f87171;   --red-sf:   #2e1616;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.55);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+
+/* ── buttons ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 6px; padding: 7px 13px; cursor: pointer;
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn.danger { color: var(--red); border-color: var(--border-2); }
+.btn.danger:hover { background: var(--red-sf); border-color: var(--red); }
+.btn.sm { padding: 4px 9px; font-size: 12px; }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+.input, select.input, textarea.input {
+  width: 100%; background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none;
+}
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-sf); }
+textarea.input { resize: vertical; min-height: 68px; line-height: 1.5; }
+label.fl { display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; }
+
+/* ── top bar ── */
+header {
+  height: 56px; background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 14px; padding: 0 18px;
+  position: sticky; top: 0; z-index: 60;
+}
+.brand { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.brand-mark {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-weight: 800; font-size: 12px; letter-spacing: -.5px;
+}
+.brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.2px; }
+.brand-sub { font-size: 11px; color: var(--text-3); }
+.crumb { color: var(--text-3); }
+.job-title { font-weight: 600; font-size: 14px; }
+.spacer { flex: 1; }
+/* `hidden` must win, so the display lives in a class rather than inline. */
+.job-actions { display: flex; gap: 8px; align-items: center; }
+.job-actions[hidden] { display: none; }
+.icon-btn {
+  width: 32px; height: 32px; border-radius: 6px; border: 1px solid transparent;
+  background: transparent; cursor: pointer; display: grid; place-items: center;
+  color: var(--text-2); font-size: 15px;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+
+.wrap { max-width: 1220px; margin: 0 auto; padding: 24px 18px 80px; }
+
+/* ── jobs home ── */
+.page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.page-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+.page-sub { color: var(--text-2); font-size: 13px; margin-top: 3px; }
+
+.jobs-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.job-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; cursor: pointer; position: relative; transition: border-color .12s, box-shadow .12s;
+}
+.job-card:hover { border-color: var(--border-2); box-shadow: var(--shadow); }
+.job-card h3 { font-size: 15px; font-weight: 650; margin-bottom: 2px; padding-right: 24px; }
+.job-card .meta { font-size: 12px; color: var(--text-3); margin-bottom: 12px; }
+.job-del {
+  position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 5px;
+  border: none; background: transparent; color: var(--text-3); cursor: pointer; opacity: 0; font-size: 14px;
+}
+.job-card:hover .job-del { opacity: 1; }
+.job-del:hover { background: var(--red-sf); color: var(--red); }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-3); display: flex; overflow: hidden; }
+.bar > span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--text-2); }
+.legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: 0; }
+.new-card {
+  display: grid; place-content: center; justify-items: center; gap: 6px; min-height: 132px;
+  border: 1px dashed var(--border-2); background: transparent; color: var(--text-2);
+}
+.new-card:hover { border-color: var(--accent); color: var(--accent); background: var(--surface); }
+.new-card .plus { font-size: 24px; line-height: 1; }
+
+.empty {
+  text-align: center; padding: 64px 20px; color: var(--text-3);
+  border: 1px dashed var(--border-2); border-radius: var(--radius); background: var(--surface);
+}
+.empty h3 { font-size: 15px; color: var(--text); margin-bottom: 6px; font-weight: 600; }
+
+/* ── job workspace ── */
+.toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.seg { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 2px; }
+.seg button {
+  border: none; background: transparent; padding: 5px 12px; border-radius: 5px;
+  cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-2);
+}
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-weight: 600; }
+.seg button .n { color: var(--text-3); font-size: 11.5px; margin-left: 5px; }
+
+.search { position: relative; flex: 1; min-width: 180px; max-width: 340px; }
+.search input { padding-left: 30px; }
+.search::before {
+  content: "⌕"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--text-3); font-size: 15px; pointer-events: none;
+}
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+  padding: 4px 11px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-2);
+}
+.chip:hover { border-color: var(--border-2); }
+.chip.on { border-color: currentColor; }
+.chip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.chip .n { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ── table ── */
+/* No overflow:hidden here — it would turn the card into a scroll container and
+   silently break the sticky column headers. */
+.table-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; }
+thead th:first-child { border-top-left-radius: var(--radius); }
+thead th:last-child { border-top-right-radius: var(--radius); }
+tbody tr:last-child td:first-child { border-bottom-left-radius: var(--radius); }
+tbody tr:last-child td:last-child { border-bottom-right-radius: var(--radius); }
+thead th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-3); font-weight: 600; padding: 9px 12px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 56px; z-index: 10;
+}
+tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--surface-2); }
+tbody tr.sel td { background: var(--accent-sf); }
+.c-num { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--text-2); }
+.c-title { font-weight: 500; }
+.c-title .sub { font-size: 11.5px; color: var(--text-3); font-weight: 400; }
+.divhead td {
+  background: var(--surface-3) !important; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); padding: 7px 12px;
+}
+.num { text-align: center; font-variant-numeric: tabular-nums; }
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; white-space: nowrap;
+}
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.dot-count { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font-size: 12.5px; }
+.dot-count.zero { color: var(--text-3); opacity: .55; }
+.st-select {
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 12.5px;
+  background: var(--surface); cursor: pointer; max-width: 172px; font-weight: 500;
+}
+.flag {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 3px; background: var(--amber-sf); color: var(--amber); margin-left: 6px;
+}
+
+/* ── drawer ── */
+.scrim { position: fixed; inset: 0; background: rgba(15,18,22,.42); z-index: 90; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100%);
+  background: var(--bg); z-index: 91; display: flex; flex-direction: column;
+  box-shadow: var(--shadow-lg); animation: slide .18s ease-out;
+}
+@keyframes slide { from { transform: translateX(24px); opacity: .4 } to { transform: none; opacity: 1 } }
+.drawer-head {
+  padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.drawer-head .num { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); text-align: left; }
+.drawer-head h2 { font-size: 16px; font-weight: 650; letter-spacing: -.2px; margin-top: 2px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 16px 18px 60px; }
+.sec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+.sec h4 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3);
+  font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+.status-opt {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--border);
+  border-radius: 7px; padding: 9px 11px; cursor: pointer; font-size: 13px; font-weight: 500;
+  background: var(--surface); text-align: left;
+}
+.status-opt:hover { border-color: var(--border-2); }
+.status-opt.on { border-color: currentColor; }
+.status-opt i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+.status-opt span { color: var(--text); }
+.status-opt.on span { color: currentColor; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.field { margin-bottom: 11px; }
+
+.drop {
+  border: 1px dashed var(--border-2); border-radius: 7px; padding: 14px; text-align: center;
+  color: var(--text-2); font-size: 12.5px; cursor: pointer; background: var(--surface-2);
+}
+.drop:hover, .drop.over { border-color: var(--accent); color: var(--accent); background: var(--accent-sf); }
+
+.file-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border);
+  border-radius: 7px; margin-bottom: 7px; background: var(--surface-2);
+}
+.file-row .fi { font-size: 17px; flex: none; }
+.file-row .fn { flex: 1; min-width: 0; }
+.file-row .fn b { display: block; font-weight: 550; font-size: 13px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.file-row .fn small { color: var(--text-3); font-size: 11.5px; }
+.rev-tag {
+  font-family: var(--mono); font-size: 11px; background: var(--surface-3); color: var(--text-2);
+  border-radius: 4px; padding: 1px 5px; flex: none;
+}
+
+.req-group { margin-bottom: 12px; }
+.req-group:last-child { margin-bottom: 0; }
+.req-kind {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 6px;
+}
+.req-item { display: flex; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.req-item:first-of-type { border-top: none; }
+.req-item .rl { font-weight: 600; flex: none; max-width: 46%; }
+.req-item .rt { color: var(--text-2); font-size: 12.5px; }
+.muted { color: var(--text-3); font-size: 12.5px; }
+
+/* ── modal ── */
+.modal-scrim { position: fixed; inset: 0; background: rgba(15,18,22,.55); z-index: 100;
+  display: grid; place-items: center; padding: 20px; }
+.modal {
+  background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg);
+  width: min(620px, 100%); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.modal.wide { width: min(1100px, 100%); height: 90vh; }
+.modal-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex;
+  align-items: center; gap: 12px; }
+.modal-head h3 { font-size: 15px; font-weight: 650; flex: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.modal-body { padding: 18px; overflow-y: auto; flex: 1; }
+.modal-body.flush { padding: 0; background: var(--surface-2); }
+.modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex;
+  justify-content: flex-end; gap: 8px; }
+.modal-body iframe { width: 100%; height: 100%; border: none; background: var(--surface-2); }
+
+.progress { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 10px; }
+.progress > div { height: 100%; background: var(--accent); width: 0; transition: width .15s; }
+
+.review-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 7px; margin-top: 12px; }
+.review-row { display: flex; align-items: center; gap: 9px; padding: 7px 11px;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.review-row:last-child { border-bottom: none; }
+.review-row .rn { font-family: var(--mono); font-size: 12px; color: var(--text-2); width: 88px; flex: none; }
+.review-row .rt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-head { background: var(--surface-2); font-weight: 700; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); }
+
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(16px);
+  background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; opacity: 0; pointer-events: none; transition: .18s; z-index: 200;
+  box-shadow: var(--shadow-lg); max-width: 90vw; text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.err { background: var(--red); color: #fff; }
+
+.storage-note { margin-top: 22px; font-size: 12px; color: var(--text-3); line-height: 1.7; }
+.storage-note b { color: var(--text-2); font-weight: 600; }
+.notice {
+  background: var(--amber-sf); color: var(--amber); border: 1px solid currentColor;
+  border-radius: 7px; padding: 10px 13px; font-size: 12.5px; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.notice span { flex: 1; }
+
+@media (max-width: 720px) {
+  .wrap { padding: 16px 12px 60px; }
+  thead th { top: 56px; }
+  .hide-sm { display: none; }
+  .grid2, .status-grid { grid-template-columns: 1fr; }
+}
+@media print {
+  header, .toolbar, .chips, .btn, .icon-btn, .scrim, .drawer, .modal-scrim { display: none !important; }
+  body { background: #fff; }
+  .table-card { border: none; }
+  thead th { position: static; }
+}
 </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">
-    <div class="logo-mark">SC</div>
+  <div class="brand" onclick="go('jobs')">
+    <div class="brand-mark">SR</div>
     <div>
-      <span class="logo-text">SpecCheck</span>
-      <span class="logo-sub">Submittal Compliance · <span id="versionLabel">v1.1</span></span>
+      <div class="brand-name">Submittal Register</div>
+      <div class="brand-sub">Divisions 22 &amp; 23 · <span id="verLabel"></span></div>
     </div>
   </div>
-  <div class="header-right">
-    <button class="back-btn" id="backBtn" onclick="showJobsHome()" style="display:none">← Jobs</button>
-    <span class="current-job" id="currentJobName"></span>
-    <div class="api-key-wrap">
-      <span class="api-label">GEMINI KEY</span>
-      <div class="api-status" id="apiStatus"></div>
-      <input class="api-input" type="password" id="apiKeyInput" placeholder="AIza..." autocomplete="off">
-    </div>
+  <span class="crumb" id="crumb" hidden>›</span>
+  <span class="job-title" id="crumbJob"></span>
+  <div class="spacer"></div>
+  <div id="jobActions" class="job-actions" hidden>
+    <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 Spec</button>
+    <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ CSV</button>
+    <button class="btn" onclick="promptImportSpec()">Import spec</button>
   </div>
+  <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Light / dark">◐</button>
 </header>
 
-<!-- ═══ JOBS HOME ═══ -->
-<div id="jobsHome">
-  <div class="jobs-hero">
-    <h1 class="jobs-title">Your Jobs</h1>
-    <p class="jobs-subtitle">Pick a job to work on, or start a new one. Each job keeps its own spec and submittal checklist.</p>
-  </div>
-  <div class="jobs-grid" id="jobsGrid"></div>
-</div>
-
-<!-- ═══ WORKSPACE ═══ -->
-<div id="workspace" style="display:none">
-<div class="upload-zone" id="uploadZone">
-  <input type="file" id="specFileInput" accept=".pdf">
-  <span class="upload-icon">📋</span>
-  <div class="upload-title">Upload Project Spec</div>
-  <div class="upload-hint">Drop a PDF or click to browse — Division 22 &amp; 23 will be parsed automatically</div>
-</div>
-
-<div class="progress-wrap" id="progressWrap">
-  <div class="progress-label" id="progressLabel">Extracting text…</div>
-  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-</div>
-
-<div class="stats-bar" id="statsBar">
-  <div class="stat-pill needed"><span class="dot"></span><span id="statNeeded">0</span> Needed</div>
-  <div class="stat-pill met"><span class="dot"></span><span id="statMet">0</span> Met</div>
-  <div class="stat-pill partial"><span class="dot"></span><span id="statPartial">0</span> Partial</div>
-  <div class="stat-pill missing"><span class="dot"></span><span id="statMissing">0</span> Missing</div>
-</div>
-
-<div class="tabs-wrap" id="tabsWrap" style="display:none">
-  <button class="tab-btn active" onclick="switchTab('div22')">
-    Division 22 — Plumbing <span class="tab-count" id="count22">0</span>
-  </button>
-  <button class="tab-btn" onclick="switchTab('div23')">
-    Division 23 — HVAC <span class="tab-count" id="count23">0</span>
-  </button>
-</div>
-
-<div class="content">
-  <div class="tab-panel active" id="panel-div22">
-    <div class="empty-state">
-      <span class="empty-icon">🔧</span>
-      <div class="empty-title">No spec loaded</div>
-      <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
+<main class="wrap">
+  <!-- JOBS -->
+  <section id="view-jobs">
+    <div class="page-head">
+      <div>
+        <div class="page-title">Jobs</div>
+        <div class="page-sub">One register per project. Everything is stored in this browser.</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn primary" onclick="newJob()">+ New job</button>
     </div>
-  </div>
-  <div class="tab-panel" id="panel-div23">
-    <div class="empty-state">
-      <span class="empty-icon">🌡️</span>
-      <div class="empty-title">No spec loaded</div>
-      <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
+    <div id="legacyNotice"></div>
+    <div class="jobs-grid" id="jobsGrid"></div>
+    <div class="storage-note" id="storageNote"></div>
+  </section>
+
+  <!-- JOB -->
+  <section id="view-job" hidden>
+    <div class="page-head">
+      <div>
+        <div class="page-title" id="jobName"></div>
+        <div class="page-sub" id="jobMeta"></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn sm ghost" onclick="addSectionManually()">+ Add section</button>
     </div>
-  </div>
-</div>
-</div>
-<!-- ═══ END WORKSPACE ═══ -->
 
-<!-- ═══ SECTION DETAIL ═══ -->
-<div id="sectionDetail" style="display:none"></div>
-<!-- ═══ END SECTION DETAIL ═══ -->
+    <div class="toolbar">
+      <div class="seg" id="divSeg"></div>
+      <div class="search"><input class="input" id="searchBox" placeholder="Search section number or title…" autocomplete="off"></div>
+      <div class="spacer"></div>
+      <span class="muted" id="countLabel"></span>
+    </div>
 
+    <div class="chips" id="statusChips"></div>
+    <div class="table-card"><table>
+      <thead><tr>
+        <th style="width:104px">Section</th>
+        <th>Title</th>
+        <th style="width:186px">Status</th>
+        <th style="width:96px" class="num">Submittal</th>
+        <th style="width:96px" class="num">Response</th>
+        <th style="width:92px" class="num hide-sm">Spec</th>
+      </tr></thead>
+      <tbody id="secBody"></tbody>
+    </table></div>
+    <div id="jobEmpty"></div>
+  </section>
+</main>
+
+<div id="drawerHost"></div>
+<div id="modalHost"></div>
 <div class="toast" id="toast"></div>
 
 <script>
-// ── PDF.js setup ──
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+"use strict";
+/* ═══════════════════════════════════════════════════════════════════════════
+   SUBMITTAL REGISTER
+   A local-first log for Division 22 / 23 spec sections, submittals and
+   submittal responses. No server, no API keys — the PDFs and the log live in
+   this browser (IndexedDB).
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-// ── Version ──
-const APP_VERSION = 'v1.3.1';
-document.getElementById('versionLabel').textContent = APP_VERSION;
-
-// ── State ──
-let specSections = { div22: [], div23: [] };
-let apiKey = '';
-let jobs = [];              // all saved jobs
-let currentJob = null;      // the job being worked on
-let currentPdfUrl = null;   // blob URL of current job's spec PDF (for page links)
-let detailSectionId = null; // id of section open on the detail page
-
-// ── Job persistence (localStorage) ──
-// PDFs are stored as base64 data URLs so page links survive reloads.
-function loadJobs() {
-  try {
-    jobs = JSON.parse(localStorage.getItem('speccheck_jobs') || '[]');
-  } catch { jobs = []; }
+const APP_VERSION = 'v2.0';
+document.getElementById('verLabel').textContent = APP_VERSION;
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
-function saveJobs() {
-  // Persist everything EXCEPT the transient blob URL
-  const toSave = jobs.map(j => ({
-    id: j.id,
-    name: j.name,
-    created: j.created,
-    pdfData: j.pdfData || null,
-    pageCount: j.pageCount || 0,
-    sections: j.sections || { div22: [], div23: [] }
-  }));
-  try {
-    localStorage.setItem('speccheck_jobs', JSON.stringify(toSave));
-  } catch (e) {
-    showToast('Could not save — storage may be full (large PDF)', 'error');
+/* ───────────────────────── statuses ───────────────────────── */
+const STATUSES = [
+  { id: 'not_started',     label: 'Not Started',        short: 'Not Started',    color: 'grey'  },
+  { id: 'waiting_vendor',  label: 'Waiting on Vendor',  short: 'Waiting',        color: 'amber' },
+  { id: 'submitted_gc',    label: 'Submitted to GC',    short: 'Submitted',      color: 'blue'  },
+  { id: 'approved',        label: 'Approved',           short: 'Approved',       color: 'green' },
+  { id: 'revise_resubmit', label: 'Revise & Resubmit',  short: 'Revise',         color: 'red'   },
+  { id: 'na',              label: 'Not Required',       short: 'N/A',            color: 'grey'  }
+];
+const ST = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+const cvar = c => `var(--${c})`;
+const csf  = c => `var(--${c}-sf)`;
+
+const DIVISION_NAMES = { '22': 'Plumbing', '23': 'HVAC' };
+const DIVISIONS = ['22', '23'];
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. SPEC PARSER
+   Three independent signals are read out of the PDF and cross-checked:
+     A. running page headers/footers  "DUCT INSULATION 23 07 13 - 4"
+     B. body headings                 "SECTION 23 07 13 - DUCT INSULATION"
+     C. the table of contents         "Section 23 0713 Duct Insulation"
+   Signal A states which section every page belongs to, which is what lets the
+   parser throw out cross references such as "…comply with Section 23 21 13."
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- line reconstruction: pdf.js gives positioned runs, not lines --- */
+function pageItemsToLines(items) {
+  const rows = [];
+  for (const it of items) {
+    if (!it.str || !it.str.trim()) continue;
+    const x = it.transform[4], y = it.transform[5];
+    const h = Math.abs(it.transform[3]) || 10;
+    let row = null;
+    for (const r of rows) if (Math.abs(r.y - y) <= Math.max(1.2, h * 0.2)) { row = r; break; }
+    if (!row) { row = { y, items: [] }; rows.push(row); }
+    row.items.push({ x, w: it.width || 0, s: it.str });
   }
+  rows.sort((a, b) => b.y - a.y);
+  const lines = [];
+  for (const r of rows) {
+    r.items.sort((a, b) => a.x - b.x || b.w - a.w);
+    const kept = [];
+    for (const it of r.items) {
+      // Drop runs drawn on top of an already-placed run: PDFs sometimes stack a
+      // stray running-title layer over the real heading.
+      let covered = false;
+      for (const k of kept) {
+        const ov = Math.min(it.x + it.w, k.x + k.w) - Math.max(it.x, k.x);
+        if (ov > 0 && (it.w === 0 || ov / Math.max(it.w, 0.01) > 0.6)) { covered = true; break; }
+      }
+      if (!covered) kept.push(it);
+    }
+    let line = '', prevEnd = null;
+    for (const it of kept) {
+      if (prevEnd !== null && it.x - prevEnd > 1.2) line += ' ';
+      line += it.s;
+      prevEnd = it.x + it.w;
+    }
+    line = line.replace(/\s+/g, ' ').trim();
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
-function persistCurrentJob() {
-  if (!currentJob) return;
-  currentJob.sections = specSections;
-  const idx = jobs.findIndex(j => j.id === currentJob.id);
-  if (idx >= 0) jobs[idx] = currentJob;
-  saveJobs();
+/* --- section-number helpers --- */
+const NUM_RE = '(\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\s?\\.\\s?\\d{1,3})?)';
+function normNum(raw) {
+  const m = String(raw).replace(/[\s ]/g, '').match(/^(\d{6})(\.\d{1,3})?$/);
+  return m ? m[1] + (m[2] || '') : null;
+}
+function prettyNum(key) {
+  if (!key) return '';
+  const [base, dec] = String(key).split('.');
+  return base.slice(0, 2) + ' ' + base.slice(2, 4) + ' ' + base.slice(4, 6) + (dec ? '.' + dec : '');
+}
+const divOf = key => key ? String(key).slice(0, 2) : null;
+
+/* --- title helpers --- */
+const ACRONYMS = new Set(('HVAC AC DC VAV VFD VFC VRF AHU RTU FCU ERV HRV DDC BAS BMS EMS PVC CPVC ABS ' +
+  'HDPE PEX PP FRP GRP CPE ASME ASTM ASHRAE NFPA UL AWWA ANSI NSF IEEE NEMA SMACNA AMCA TAB LPG LP RO DI ' +
+  'UV BTU CFM GPM PSI HEPA IAQ DX HW CHW DHW O&M I/O USA US TV CO2 CO VRV MERV').split(' '));
+const SMALL = new Set(('a an and as at but by for from in into nor of off on onto or over per the to up ' +
+  'via with within').split(' '));
+
+function smartTitleCase(str) {
+  if (!str) return '';
+  if (/[a-z]/.test(str)) return str.trim();          // already cased — leave alone
+  const toks = str.toLowerCase().split(/(\s+)/);
+  const total = toks.filter(t => t.trim()).length;
+  let i = -1;
+  return toks.map(tok => {
+    if (!tok.trim()) return tok;
+    i++;
+    const idx = i;
+    return tok.split(/([-\/&,()])/).map(part => {
+      if (!/[a-z]/i.test(part)) return part;
+      const up = part.toUpperCase();
+      if (ACRONYMS.has(up)) return up;
+      if (idx !== 0 && idx !== total - 1 && SMALL.has(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    }).join('');
+  }).join('');
+}
+const titleKey = s => String(s || '').toUpperCase().replace(/&/g, ' AND ').replace(/[^A-Z0-9]+/g, ' ').trim();
+function titleSim(a, b) {
+  const A = titleKey(a).split(' ').filter(Boolean), B = titleKey(b).split(' ').filter(Boolean);
+  if (!A.length || !B.length) return 0;
+  const bag = new Map();
+  for (const t of B) bag.set(t, (bag.get(t) || 0) + 1);
+  let hit = 0;
+  for (const t of A) if (bag.get(t)) { hit++; bag.set(t, bag.get(t) - 1); }
+  return (2 * hit) / (A.length + B.length);
+}
+function stripEchoTail(t) {
+  if (!t) return t;
+  const w = t.split(' ');
+  for (let take = Math.floor(w.length / 2); take >= 2; take--) {
+    const tail = w.slice(w.length - take).join(' '), head = w.slice(0, w.length - take).join(' ');
+    if (titleKey(head).includes(titleKey(tail))) return head;
+  }
+  return t;
+}
+function cleanTitle(t) {
+  if (!t) return '';
+  return stripEchoTail(String(t).replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—:.,"'“”]+/, '').replace(/[\s\-–—:.,"'“”]+$/, '')
+    .replace(/\s*\.{3,}\s*\d*$/, '').trim()).trim();
 }
 
-// ── API Key ──
-const apiKeyInput = document.getElementById('apiKeyInput');
-const apiStatus = document.getElementById('apiStatus');
+/* --- structural line tests --- */
+const PART_RE = /^PART\s+\d/i;
+const ART_RE  = /^\d{1,2}\.\d{1,2}\b/;
+const ITEM_RE = /^[A-Z]\.\s+/;
+const SUB_RE  = /^\d{1,2}\.\s+/;
+const END_RE  = new RegExp('^END\\s+OF\\s+SECTION(?:\\s+' + NUM_RE + ')?\\s*$', 'i');
+const isStructural = l => PART_RE.test(l) || ART_RE.test(l) || END_RE.test(l) || ITEM_RE.test(l);
 
-function loadApiKey() {
-  const saved = localStorage.getItem('speccheck_gemini_key');
-  if (saved) { apiKeyInput.value = saved; apiKey = saved; apiStatus.classList.add('active'); }
+/* --- signal A: running headers / footers --- */
+const RUN_RE = new RegExp('^\\s*(?:(.*?)[\\s.]+)?' + NUM_RE + '\\s*[-–—]\\s*(\\d{1,3})\\s*$');
+function scanRunningTitles(pages) {
+  const map = new Map();
+  for (const page of pages) {
+    const L = page.lines, zone = [];
+    for (let i = 0; i < Math.min(4, L.length); i++) zone.push(L[i]);
+    for (let i = Math.max(0, L.length - 4); i < L.length; i++) zone.push(L[i]);
+    const cands = [];
+    for (const raw of zone) {
+      const m = RUN_RE.exec((raw || '').trim());
+      if (!m) continue;
+      const key = normNum(m[2]);
+      if (!key) continue;
+      const title = cleanTitle(m[1] || '');
+      if (title.length > 90 || /[;,]$/.test(title)) continue;   // that was a sentence
+      cands.push({ key, title, seq: parseInt(m[3], 10) });
+    }
+    if (cands.length) map.set(page.num, cands.find(c => c.title) || cands[0]);
+  }
+  return map;
 }
 
-apiKeyInput.addEventListener('input', () => {
-  apiKey = apiKeyInput.value.trim();
-  localStorage.setItem('speccheck_gemini_key', apiKey);
-  apiStatus.classList.toggle('active', apiKey.length > 10);
-});
+/* --- signal B: body headings --- */
+const HEAD_RE = new RegExp('SECTION\\s+' + NUM_RE + '\\s*[-–—:]?\\s*(.*)$', 'i');
+function scanHeaders(pages) {
+  const out = [];
+  for (const page of pages) {
+    for (let i = 0; i < page.lines.length; i++) {
+      const line = page.lines[i].trim();
+      if (!/SECTION/i.test(line) || /^END\s+OF\s+SECTION/i.test(line)) continue;
+      const m = HEAD_RE.exec(line);
+      if (!m) continue;
+      const key = normNum(m[1]);
+      if (!key) continue;
 
-loadApiKey();
+      // Anything before "SECTION" must be a stray layer, never prose.
+      const pre = line.slice(0, m.index).trim();
+      if (pre && (pre.length > 60 || /[a-z]/.test(pre))) continue;
 
-// ── Jobs home rendering & navigation ──
-function showJobsHome() {
-  document.getElementById('jobsHome').style.display = 'block';
-  document.getElementById('workspace').style.display = 'none';
-  document.getElementById('sectionDetail').style.display = 'none';
-  document.getElementById('backBtn').style.display = 'none';
-  document.getElementById('currentJobName').textContent = '';
-  currentJob = null;
-  detailSectionId = null;
-  renderJobsGrid();
+      let title = cleanTitle(m[2]);
+      // Title wrapped onto the next line: "...FOR PLUMBING PIPING AND" / "EQUIPMENT"
+      const next = (page.lines[i + 1] || '').trim();
+      if (next && !isStructural(next) && next.length <= 70 &&
+          !/[a-z]/.test(next.replace(/\(s\)/g, '')) && /[A-Z]/.test(next) &&
+          (!title || /\b(AND|OR|FOR|OF|THE|WITH|&|,|-)$/i.test(title) || title.length < 12)) {
+        title = cleanTitle(title + ' ' + next);
+      }
+
+      let followedByPart = false;
+      for (let j = i + 1; j < Math.min(i + 6, page.lines.length); j++) {
+        const l = page.lines[j].trim();
+        if (PART_RE.test(l) || ART_RE.test(l)) { followedByPart = true; break; }
+      }
+      const shouty = /^SECTION\b/.test(line.slice(m.index));   // headings shout, references don't
+      const hasTitle = title.length >= 4;
+      // Cross references quote a section then carry on in prose: "Section 23 33 00
+      // for dampers, sound-control devices…". A heading never opens that way, and
+      // it sits at the top of its page or shouts its title in capitals.
+      const leadsIntoProse = /^(for|and|or|to|of|in|on|with|as|the|that|which|shall|where|when)\b/i.test(title);
+      const capsTitle = hasTitle && !/[a-z]/.test(title.replace(/\(s\)/g, ''));
+      const looksPlaced = i <= 4 || capsTitle || !hasTitle;
+      out.push({ key, title, page: page.num, line: i,
+        confirmed: ((shouty && (hasTitle || followedByPart)) || (hasTitle && followedByPart))
+          && !leadsIntoProse && looksPlaced });
+    }
+  }
+  return out;
 }
 
-function renderJobsGrid() {
-  const grid = document.getElementById('jobsGrid');
-  let html = '';
+/* --- signal C: table of contents --- */
+const TOC_RE = new RegExp('^(?:Section|SECTION)\\s+' + NUM_RE + '[\\s.\\-–—:]+(.+)$');
+const TOC_BARE_RE = new RegExp('^' + NUM_RE + '[\\s.\\-–—:]{2,}(.+)$');
+function scanToc(pages, firstBodyPage) {
+  const out = new Map();
+  const limit = firstBodyPage ? Math.min(firstBodyPage - 1, 60) : 60;
+  for (const page of pages) {
+    if (page.num > limit) break;
+    const rows = [];
+    for (const raw of page.lines) {
+      const m = TOC_RE.exec(raw.trim());
+      if (m) rows.push(m);
+    }
+    const looksLikeIndex = rows.length >= 2 || page.lines.some(l => /TABLE\s+OF\s+CONTENTS/i.test(l));
+    if (looksLikeIndex) {
+      for (const raw of page.lines) {
+        const line = raw.trim();
+        if (TOC_RE.test(line)) continue;
+        const m = TOC_BARE_RE.exec(line);
+        if (m) rows.push(m);
+      }
+    }
+    for (const m of rows) {
+      const key = normNum(m[1]);
+      if (!key) continue;
+      const title = cleanTitle(m[2]).replace(/\s*\d{1,4}$/, '');
+      if (!title || title.length < 3) continue;
+      if (/^(comply|refer|see|as specified|and )/i.test(title)) continue;
+      if (!out.has(key)) out.set(key, { key, title, page: page.num });
+    }
+  }
+  return out;
+}
 
-  for (const job of jobs) {
-    const all = [...(job.sections?.div22 || []), ...(job.sections?.div23 || [])];
-    const items = all.flatMap(s => s.submittals || []);
-    const met = items.filter(i => i.status === 'met').length;
-    const partial = items.filter(i => i.status === 'partial').length;
-    const needed = items.filter(i => i.status === 'needed').length;
-    const date = new Date(job.created).toLocaleDateString();
-    const secCount = all.length;
+/* --- submittal requirements (reference list, straight from PART 1) --- */
+const SUB_ART_RE = /^(\d{1,2}\.\d{1,2})\s+(.*\bSUBMITTALS?\b.*)$/i;
+function classifyArticle(name) {
+  const n = name.toUpperCase();
+  if (n.includes('ACTION')) return 'Action';
+  if (n.includes('INFORMATIONAL')) return 'Informational';
+  if (n.includes('CLOSEOUT')) return 'Closeout';
+  if (n.includes('MAINTENANCE')) return 'Maintenance Material';
+  if (n.includes('TRAINING')) return 'Training';
+  return 'Submittals';
+}
+function extractRequirements(lines) {
+  const groups = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = SUB_ART_RE.exec(lines[i].trim());
+    if (!m) continue;
+    const heading = m[2];
+    const group = { article: m[1], name: cleanTitle(heading.replace(/:.*$/, '')), kind: classifyArticle(heading), items: [] };
+    // "1.03 SUBMITTALS: Comply with Section 01 30 00."
+    const inline = heading.match(/:\s*(.+)$/);
+    if (inline && inline[1].trim().length > 3) group.items.push({ label: '', text: inline[1].trim() });
+    let cur = null;
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j].trim();
+      if (!line) continue;
+      if (ART_RE.test(line) || PART_RE.test(line) || END_RE.test(line)) break;
+      if (ITEM_RE.test(line)) { cur = { label: '', text: line.replace(ITEM_RE, '').trim() }; group.items.push(cur); }
+      else if (cur) cur.text += (SUB_RE.test(line) ? '  ' : ' ') + line;
+    }
+    for (const it of group.items) {
+      it.text = it.text.replace(/\s+/g, ' ').trim();
+      const lead = it.text.match(/^([^:.]{2,70})[:.]\s*/);
+      it.label = cleanTitle(lead ? lead[1] : it.text.slice(0, 60));
+      it.detail = lead ? it.text.slice(lead[0].length).trim() : '';
+    }
+    if (group.items.length) groups.push(group);
+  }
+  return groups;
+}
 
-    html += `<div class="job-card" onclick="openJob('${job.id}')">
-      <button class="job-delete" onclick="event.stopPropagation(); deleteJob('${job.id}')" title="Delete job">✕</button>
-      <div class="job-name">${escapeHtml(job.name)}</div>
-      <div class="job-meta">${secCount} sections · ${date}</div>
-      <div class="job-stats">
-        <span class="js met"><span class="d"></span>${met}</span>
-        <span class="js partial"><span class="d"></span>${partial}</span>
-        <span class="js needed"><span class="d"></span>${needed}</span>
-      </div>
-    </div>`;
+/* --- "Section Includes:" scope list --- */
+function extractIncludes(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length && out.length < 14; i++) {
+    if (!/^\d{1,2}\.\d{1,2}\s+SUMMARY\b/i.test(lines[i].trim())) continue;
+    for (let j = i + 1; j < Math.min(i + 40, lines.length); j++) {
+      const line = lines[j].trim();
+      if (ART_RE.test(line) || PART_RE.test(line)) break;
+      if (SUB_RE.test(line)) {
+        const t = cleanTitle(line.replace(SUB_RE, ''));
+        if (t.length > 2 && t.length < 140) out.push(t);
+      }
+    }
+    break;
+  }
+  return out;
+}
+
+/* --- repeated page furniture (project banner, sheet stamps, …) ---
+   Whatever line sits at the top or bottom of most pages is boilerplate, not
+   spec text. Found by counting rather than by name, so it works on any job. */
+function findBoilerplate(pages) {
+  const seen = new Map();
+  for (const page of pages) {
+    const L = page.lines, n = L.length;
+    for (let i = 0; i < n; i++) {          // every line, so a mid-page use disqualifies
+      const t = L[i].trim();
+      if (!t || t.length > 140) continue;
+      if (isStructural(t) || HEAD_RE.test(t) || RUN_RE.test(t)) continue;
+      if (/[.;:]$/.test(t)) continue;      // a sentence, not a page banner
+      let rec = seen.get(t);
+      if (!rec) seen.set(t, rec = { n: 0, top: 0, bot: 0 });
+      rec.n++;
+      rec.top = Math.max(rec.top, i);
+      rec.bot = Math.max(rec.bot, n - 1 - i);
+    }
+  }
+  // Real furniture keeps the same slot on every page. A paragraph line that
+  // happens to land near a page edge does not, so it survives.
+  const out = new Set();
+  for (const [line, r] of seen) if (r.n >= 3 && (r.top <= 1 || r.bot <= 1)) out.add(line);
+  return out;
+}
+
+/* --- main parse --- */
+function parseSpec(pages, wantedDivs) {
+  const wanted = new Set(wantedDivs || DIVISIONS);
+  const running = scanRunningTitles(pages);
+
+  // A heading found on a page that the running titles assign to another
+  // section is a cross reference inside the prose — drop it.
+  const headers = scanHeaders(pages).filter(h => {
+    const r = running.get(h.page);
+    return !r || r.key === h.key;
+  });
+
+  const bodyHeaders = headers.filter(h => h.confirmed && wanted.has(divOf(h.key)));
+  const firstBodyPage = bodyHeaders.length ? Math.min.apply(null, bodyHeaders.map(h => h.page)) : null;
+  const toc = scanToc(pages, firstBodyPage);
+
+  const pagesByKey = new Map(), runTitles = new Map();
+  for (const [pnum, info] of running) {
+    if (!wanted.has(divOf(info.key))) continue;
+    if (!pagesByKey.has(info.key)) pagesByKey.set(info.key, []);
+    pagesByKey.get(info.key).push(pnum);
+    if (info.title) {
+      if (!runTitles.has(info.key)) runTitles.set(info.key, new Map());
+      const bag = runTitles.get(info.key);
+      bag.set(info.title, (bag.get(info.title) || 0) + 1);
+    }
   }
 
-  html += `<div class="job-card new-job" onclick="createJob()">
-    <span class="plus">+</span>
-    <span class="new-label">New Job</span>
-  </div>`;
-
-  grid.innerHTML = html;
-}
-
-function createJob() {
-  const name = prompt('Job name (e.g. "Adventist Health Columbia Gorge"):');
-  if (!name || !name.trim()) return;
-  const job = {
-    id: 'job_' + Date.now(),
-    name: name.trim(),
-    created: Date.now(),
-    pdfData: null,
-    pageCount: 0,
-    sections: { div22: [], div23: [] }
+  const cand = new Map();
+  const bump = (key, src, data) => {
+    if (!wanted.has(divOf(key))) return;
+    if (!cand.has(key)) cand.set(key, { key, headers: [], toc: null, pages: [] });
+    const c = cand.get(key);
+    if (src === 'header') c.headers.push(data);
+    if (src === 'toc') c.toc = data;
+    if (src === 'running') c.pages = data;
   };
-  jobs.unshift(job);
-  saveJobs();
-  openJob(job.id);
-}
+  for (const h of headers) if (h.confirmed) bump(h.key, 'header', h);
+  for (const [key, t] of toc) bump(key, 'toc', t);
+  for (const [key, pgs] of pagesByKey) bump(key, 'running', pgs.sort((a, b) => a - b));
 
-function openJob(id) {
-  const job = jobs.find(j => j.id === id);
-  if (!job) return;
-  currentJob = job;
-  specSections = job.sections && (job.sections.div22 || job.sections.div23)
-    ? job.sections : { div22: [], div23: [] };
-
-  // Restore PDF blob URL for page links
-  if (currentPdfUrl) { URL.revokeObjectURL(currentPdfUrl); currentPdfUrl = null; }
-  if (job.pdfData) {
-    currentPdfUrl = dataUrlToBlobUrl(job.pdfData);
-    window.__pdfPageCount = job.pageCount || 1;
-  }
-
-  document.getElementById('jobsHome').style.display = 'none';
-  document.getElementById('sectionDetail').style.display = 'none';
-  document.getElementById('workspace').style.display = 'block';
-  document.getElementById('backBtn').style.display = 'inline-block';
-  document.getElementById('currentJobName').textContent = job.name;
-
-  const hasSections = specSections.div22.length || specSections.div23.length;
-  if (hasSections) {
-    renderAll();
-  } else {
-    // fresh job — reset workspace
-    document.getElementById('tabsWrap').style.display = 'none';
-    document.getElementById('statsBar').classList.remove('show');
-    resetPanels();
-  }
-}
-
-function deleteJob(id) {
-  const job = jobs.find(j => j.id === id);
-  if (!job) return;
-  if (!confirm(`Delete "${job.name}"? This cannot be undone.`)) return;
-  jobs = jobs.filter(j => j.id !== id);
-  saveJobs();
-  renderJobsGrid();
-}
-
-function resetPanels() {
-  document.getElementById('panel-div22').innerHTML = `<div class="empty-state">
-    <span class="empty-icon">🔧</span>
-    <div class="empty-title">No spec loaded</div>
-    <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
-  </div>`;
-  document.getElementById('panel-div23').innerHTML = `<div class="empty-state">
-    <span class="empty-icon">🌡️</span>
-    <div class="empty-title">No spec loaded</div>
-    <div class="empty-hint">Upload a project spec PDF above to generate your submittal checklist</div>
-  </div>`;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function dataUrlToBlobUrl(dataUrl) {
-  const [meta, b64] = dataUrl.split(',');
-  const mime = (meta.match(/:(.*?);/) || [])[1] || 'application/pdf';
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return URL.createObjectURL(new Blob([arr], { type: mime }));
-}
-
-function fileToDataUrl(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
-}
-
-// ── Open spec PDF at a specific page ──
-function openSpecAtPage(page) {
-  if (!currentPdfUrl) { showToast('Spec PDF not available for this job', 'error'); return; }
-  window.open(currentPdfUrl + '#page=' + page, '_blank');
-}
-
-// Init
-loadJobs();
-showJobsHome();
-
-// ── Drag and drop ──
-const uploadZone = document.getElementById('uploadZone');
-uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
-uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
-uploadZone.addEventListener('drop', e => {
-  e.preventDefault();
-  uploadZone.classList.remove('drag');
-  const file = e.dataTransfer.files[0];
-  if (file && file.type === 'application/pdf') processSpec(file);
-  else showToast('Please drop a PDF file', 'error');
-});
-
-document.getElementById('specFileInput').addEventListener('change', e => {
-  if (e.target.files[0]) processSpec(e.target.files[0]);
-});
-
-// ── Extract text from PDF ──
-async function extractPdfText(file, onProgress, storePageCount) {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  if (storePageCount) window.__pdfPageCount = pdf.numPages;
-  let fullText = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items.map(item => item.str).join(' ');
-    fullText += pageText + '\n';
-    if (onProgress) onProgress(i / pdf.numPages);
-  }
-  return fullText;
-}
-
-// ── Parse sections from extracted text ──
-function parseSections(text) {
   const sections = [];
+  for (const c of cand.values()) {
+    const hdr = c.headers.find(h => h.confirmed) || c.headers[0] || null;
+    const inBody = !!(hdr || c.pages.length);
+    if (!inBody && !c.toc) continue;
 
-  // Find positions of each section header. Capture a generous chunk after the
-  // dash; cleanTitle() trims it back to the real title (PDF.js gives no real
-  // newlines, so we cut at structural keywords instead).
-  const rawMatches = [];
-  let m;
-  const re2 = /SECTION\s+(2[23]\s*\d{2}\s*\d{2}(?:\.\d+)?)\s*[-–]\s*([A-Z].{3,120})/gi;
-  while ((m = re2.exec(text)) !== null) {
-    rawMatches.push({ index: m.index, number: m[1].replace(/\s+/g, ' ').trim(), rawTitle: m[2], end: m.index + m[0].length });
-  }
+    /* title vote across the three signals */
+    let runTitle = null;
+    if (runTitles.has(c.key)) runTitle = Array.from(runTitles.get(c.key).entries())
+      .sort((a, b) => b[1] - a[1])[0][0];
+    const opts = [];
+    if (hdr && hdr.title) opts.push({ src: 'heading', text: hdr.title });
+    if (runTitle) opts.push({ src: 'page header', text: runTitle });
+    if (c.toc) opts.push({ src: 'contents', text: c.toc.title });
+    let title = '', titleSrc = 'none';
+    if (opts.length) {
+      const weight = { 'page header': 1.02, 'heading': 1.0, 'contents': 0.98 };
+      let best = null;
+      for (const o of opts) {
+        let s = 0;
+        for (const p of opts) if (p !== o) s += titleSim(o.text, p.text);
+        s = (opts.length > 1 ? s / (opts.length - 1) : 0.5) * weight[o.src];
+        if (!best || s > best.s) best = { s, o };
+      }
+      title = best.o.text; titleSrc = best.o.src;
+    }
 
-  // Deduplicate by section number (keep first occurrence)
-  const seen = new Set();
-  const unique = rawMatches.filter(mm => {
-    const key = mm.number.replace(/\s/g, '');
-    if (seen.has(key)) return false;
-    seen.add(key); return true;
-  });
-
-  for (let i = 0; i < unique.length; i++) {
-    const start = unique[i].end;
-    const end = i + 1 < unique.length ? unique[i + 1].index : text.length;
-    const body = text.slice(start, Math.min(end, start + 15000));
-    const submittals = extractSubmittals(body);
-    if (submittals.length === 0) continue;
-
-    const num = unique[i].number.replace(/\s/g, '');
-    const div = num.startsWith('22') ? 'div22' : num.startsWith('23') ? 'div23' : null;
-    if (!div) continue;
-
-    // Approx page number from character offset (PDF.js text has no form feeds)
-    const charsPerPage = text.length / (window.__pdfPageCount || 1);
-    const approxPage = Math.max(1, Math.round(unique[i].index / charsPerPage) + 1);
+    /* page range — longest near-consecutive run, preferring the heading's page */
+    let startPage = null, endPage = null;
+    if (c.pages.length) {
+      const runs = [[c.pages[0]]];
+      for (let i = 1; i < c.pages.length; i++) {
+        if (c.pages[i] - c.pages[i - 1] <= 3) runs[runs.length - 1].push(c.pages[i]);
+        else runs.push([c.pages[i]]);
+      }
+      const pick = (hdr && runs.find(r => hdr.page >= r[0] - 1 && hdr.page <= r[r.length - 1]))
+        || runs.slice().sort((a, b) => b.length - a.length)[0];
+      startPage = pick[0]; endPage = pick[pick.length - 1];
+    }
+    if (hdr) startPage = Math.min(startPage == null ? hdr.page : startPage, hdr.page);
 
     sections.push({
-      id: 'sec_' + num,
-      number: unique[i].number,
-      title: cleanTitle(unique[i].rawTitle),
-      div,
-      submittals,
-      uploadedFile: null,
-      open: false,
-      approxPage
+      key: c.key, number: prettyNum(c.key), division: divOf(c.key),
+      title: smartTitleCase(title), rawTitle: title, titleSource: titleSrc,
+      startPage, endPage, inBody, inToc: !!c.toc,
+      confidence: (hdr && hdr.confirmed ? 1 : 0) + (c.pages.length ? 1 : 0) + (c.toc ? 1 : 0)
     });
   }
+  sections.sort((a, b) => String(a.key).localeCompare(String(b.key), undefined, { numeric: true }));
 
-  return sections;
-}
-
-function cleanTitle(raw) {
-  // raw may contain the title plus bleed-over body text. Cut at the first
-  // structural keyword that marks the end of the title.
-  let t = raw.replace(/\s+/g, ' ').trim();
-
-  const stopPatterns = [
-    /\bPART\s+\d/i,
-    /\b\d\.\d{1,2}\b/,
-    /\bGENERAL\b/i,
-    /\bRELATED\s+DOCUMENT/i,
-    /\bSUMMARY\b/i,
-    /\bAdventist\b/i,
-    /\bProject\s*#/i,
-    /\bENERGY\s+IMPROVEMENTS\b/i
-  ];
-  let cutAt = t.length;
-  for (const p of stopPatterns) {
-    const mm = t.match(p);
-    if (mm && mm.index !== undefined && mm.index < cutAt && mm.index > 2) cutAt = mm.index;
-  }
-  t = t.slice(0, cutAt).trim().replace(/[-–\s]+$/, '').trim();
-
-  return t.replace(/[^\w\s,\-–\/&().]/g, '')
-    .split(' ').filter(Boolean)
-    .map(w => w.length <= 3 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-}
-
-// ── Extract submittal line items from section text ──
-function extractSubmittals(text) {
-  const submittals = [];
-
-  // Find ACTION SUBMITTALS block
-  const actionMatch = text.match(/ACTION\s+SUBMITTALS?([\s\S]{0,4500}?)(?=INFORMATIONAL\s+SUBMITTALS?|CLOSEOUT\s+SUBMITTALS?|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
-  if (actionMatch) {
-    parseSubmittalBlock(actionMatch[1], 'Action Submittal', submittals);
-  }
-
-  // Find INFORMATIONAL SUBMITTALS block
-  const infoMatch = text.match(/INFORMATIONAL\s+SUBMITTALS?([\s\S]{0,4500}?)(?=CLOSEOUT\s+SUBMITTALS?|MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
-  if (infoMatch) {
-    parseSubmittalBlock(infoMatch[1], 'Informational Submittal', submittals);
-  }
-
-  // Find CLOSEOUT SUBMITTALS
-  const closeoutMatch = text.match(/CLOSEOUT\s+SUBMITTALS?([\s\S]{0,3000}?)(?=MAINTENANCE\s+MATERIAL|QUALITY\s+ASSURANCE|PART\s+2|$)/i);
-  if (closeoutMatch) {
-    parseSubmittalBlock(closeoutMatch[1], 'Closeout Submittal', submittals);
-  }
-
-  return submittals;
-}
-
-function parseSubmittalBlock(text, type, out) {
-  // PDF.js joins everything with spaces (no real newlines). Split on the
-  // lettered article markers (" A. ", " B. ") but KEEP the full text after each
-  // marker up to the next marker — that's the verbatim requirement.
-  const cleaned = text.replace(/\s+/g, ' ').trim();
-  const broken = cleaned.replace(/(^|\s)([A-Z])\.\s+(?=[A-Z])/g, '\n$2. ');
-  const lines = broken.split('\n').map(l => l.trim()).filter(Boolean);
-
-  for (const line of lines) {
-    const letterMatch = line.match(/^([A-Z])\.\s+(.+)/);
-    if (!letterMatch) continue;
-
-    // Full verbatim requirement text (lead line + any sub-bullets that followed)
-    let requirement = letterMatch[2].replace(/\s+/g, ' ').trim();
-    // Strip page-footer noise like "22 0529 - 3"
-    requirement = requirement.replace(/\s*\d{2}\s?\d{2}\s?\d{2}(?:\.\d+)?\s*-\s*\d+\s*$/,'').trim();
-
-    // Short display name = text up to the first sentence break / colon / sub-item
-    let name = requirement;
-    const cut = name.search(/(?<=\w)[:.]\s|\s\d+\.\s/);
-    if (cut > 3) name = name.slice(0, cut).trim();
-    name = name.replace(/[:.]?\s*$/, '').trim();
-
-    if (requirement.length > 3 && requirement.length < 1200 && name.length > 2) {
-      out.push({
-        id: Math.random().toString(36).slice(2),
-        name: name.slice(0, 140),
-        requirement,            // verbatim spec text
-        type,
-        status: 'needed',
-        note: '',
-        foundIn: null           // {submittalId, submittalName, found} once satisfied
-      });
+  /* body-derived extras */
+  const byNum = new Map(pages.map(p => [p.num, p]));
+  const boiler = findBoilerplate(pages);
+  const headingPages = Array.from(new Set(headers.filter(h => h.confirmed).map(h => h.page)))
+    .sort((a, b) => a - b);
+  for (let i = 0; i < sections.length; i++) {
+    const s = sections[i];
+    s.requirements = []; s.includes = [];
+    if (!s.inBody || s.startPage == null) continue;
+    let to = s.endPage;
+    if (to == null) {
+      // No running footers to bound the section — stop where the next heading
+      // starts, in any division, so the last tracked section does not swallow
+      // the rest of the manual.
+      const nxt = sections.slice(i + 1).find(x => x.inBody && x.startPage != null);
+      const nextAny = headingPages.find(p => p > s.startPage);
+      to = (pages[pages.length - 1] || {}).num;
+      if (nxt) to = Math.min(to, nxt.startPage - 1);
+      if (nextAny) to = Math.min(to, nextAny - 1);
+      to = Math.max(s.startPage, to);
+      s.endPage = to;
     }
-  }
-
-  // Deduplicate by first 30 chars of name
-  const unique = [];
-  for (const item of out) {
-    if (!unique.find(u => u.name.slice(0, 30).toLowerCase() === item.name.slice(0, 30).toLowerCase())) {
-      unique.push(item);
+    const lines = [];
+    for (let p = s.startPage; p <= to; p++) {
+      const pg = byNum.get(p);
+      if (!pg) continue;
+      const n = pg.lines.length;
+      for (let li = 0; li < n; li++) {
+        const t = pg.lines[li].trim();
+        if (!t) continue;
+        const inZone = li < 3 || li >= n - 3;
+        if (inZone && boiler.has(t)) continue;                      // page furniture
+        if (t.length < 120 && RUN_RE.test(t)) continue;             // running header/footer
+        if (/^Page\s+\d+\s+of\s+\d+$/i.test(t)) continue;
+        lines.push(t);
+      }
     }
-  }
-  out.length = 0;
-  out.push(...unique);
-}
-
-// ── Main spec processing ──
-async function processSpec(file) {
-  if (!currentJob) { showToast('Open or create a job first', 'error'); return; }
-  setProgress(true, 'Reading PDF…', 5);
-  specSections = { div22: [], div23: [] };
-
-  try {
-    const text = await extractPdfText(file, p => setProgress(true, `Extracting text… page ${Math.round(p * 100)}%`, p * 80), true);
-    setProgress(true, 'Parsing Division 22 & 23 sections…', 85);
-
-    const all = parseSections(text);
-    all.forEach(s => specSections[s.div].push(s));
-
-    setProgress(true, 'Saving spec to job…', 92);
-    // Store the PDF in the job for page links + reload persistence
-    const dataUrl = await fileToDataUrl(file);
-    currentJob.pdfData = dataUrl;
-    currentJob.pageCount = window.__pdfPageCount || 0;
-    currentJob.sections = specSections;
-    if (currentPdfUrl) URL.revokeObjectURL(currentPdfUrl);
-    currentPdfUrl = dataUrlToBlobUrl(dataUrl);
-    persistCurrentJob();
-
-    setProgress(true, 'Building checklist…', 97);
-    await sleep(150);
-    setProgress(false);
-
-    renderAll();
-    showToast(`Loaded ${all.length} sections (${specSections.div22.length} Plumbing, ${specSections.div23.length} HVAC)`, 'success');
-  } catch (err) {
-    setProgress(false);
-    showToast('Error reading PDF: ' + err.message, 'error');
-    console.error(err);
-  }
-}
-
-// ── Render everything ──
-function renderAll() {
-  document.getElementById('tabsWrap').style.display = 'flex';
-  document.getElementById('count22').textContent = specSections.div22.length;
-  document.getElementById('count23').textContent = specSections.div23.length;
-
-  renderPanel('div22');
-  renderPanel('div23');
-  updateStats();
-}
-
-function renderPanel(div) {
-  const panel = document.getElementById('panel-' + div);
-  const sections = specSections[div];
-
-  if (sections.length === 0) {
-    panel.innerHTML = `<div class="empty-state">
-      <span class="empty-icon">${div === 'div22' ? '🔧' : '🌡️'}</span>
-      <div class="empty-title">No sections found</div>
-      <div class="empty-hint">No Division ${div === 'div22' ? '22' : '23'} submittal requirements found in this spec</div>
-    </div>`;
-    return;
+    const hi = lines.findIndex(l => {
+      const m = HEAD_RE.exec(l);
+      return m && normNum(m[1]) === s.key;
+    });
+    if (hi > 0) lines.splice(0, hi);
+    s.requirements = extractRequirements(lines);
+    s.includes = extractIncludes(lines);
   }
 
-  panel.innerHTML = sections.map(s => renderSectionCard(s)).join('');
+  return {
+    sections,
+    diagnostics: {
+      totalPages: pages.length, headings: headers.length,
+      tocEntries: toc.size, pagesMapped: running.size, sections: sections.length
+    }
+  };
 }
 
-function renderSectionCard(s) {
-  const total = s.submittals.length;
-  const met = s.submittals.filter(x => x.status === 'met').length;
-  const partial = s.submittals.filter(x => x.status === 'partial').length;
-  const missing = s.submittals.filter(x => x.status === 'missing').length;
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. STORAGE — IndexedDB (jobs metadata + PDF blobs)
+   ═══════════════════════════════════════════════════════════════════════════ */
+const DB_NAME = 'submittal_register', DB_VER = 1;
+let _db = null;
 
-  let progressText;
-  if ((s.submittalFiles && s.submittalFiles.length) || s.uploadedFile) {
-    const bits = [];
-    if (met) bits.push(`${met} matched`);
-    if (partial) bits.push(`${partial} partial`);
-    if (missing) bits.push(`${missing} missing`);
-    progressText = bits.length ? bits.join(' · ') : `${total} required`;
-  } else {
-    progressText = `${total} required`;
-  }
+function openDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains('jobs'))  db.createObjectStore('jobs',  { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs', { keyPath: 'id' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function store(name, mode) { return _db.transaction(name, mode).objectStore(name); }
+function req(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+const dbGet = (s, k) => req(store(s, 'readonly').get(k));
+const dbAll = (s)    => req(store(s, 'readonly').getAll());
+const dbPut = (s, v) => req(store(s, 'readwrite').put(v));
+const dbDel = (s, k) => req(store(s, 'readwrite').delete(k));
 
-  const pageRefHtml = s.approxPage
-    ? `<a class="page-ref" onclick="event.stopPropagation(); openSpecAtPage(${s.approxPage})" title="Open spec PDF near this section">PDF p.${s.approxPage} ↗</a>`
-    : '';
+const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-  return `<div class="section-card navigable" id="${s.id}" onclick="openSection('${s.id}')">
-    <div class="section-header">
-      <div class="section-left">
-        <span class="section-number">${s.number}</span>
-        <span class="section-title">${s.title}</span>
-      </div>
-      <div class="section-right">
-        ${pageRefHtml}
-        <span class="section-progress">${progressText}</span>
-        <span class="nav-arrow">›</span>
-      </div>
-    </div>
-  </div>`;
+async function saveBlob(blob) {
+  const id = uid('blob');
+  await dbPut('blobs', { id, blob });
+  return id;
+}
+async function getBlob(id) {
+  const rec = await dbGet('blobs', id);
+  return rec ? rec.blob : null;
 }
 
-// ── Section detail page ──
-function openSection(id) {
-  const all = [...specSections.div22, ...specSections.div23];
-  const s = all.find(x => x.id === id);
-  if (!s) return;
-  detailSectionId = id;
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. STATE
+   ═══════════════════════════════════════════════════════════════════════════ */
+let jobs = [];            // job metadata, newest first
+let job = null;           // open job
+let view = 'jobs';
+let divFilter = '22';
+let statusFilter = null;
+let query = '';
+let openKey = null;       // section open in the drawer
+const objectUrls = new Map();
 
-  document.getElementById('workspace').style.display = 'none';
-  document.getElementById('jobsHome').style.display = 'none';
-  document.getElementById('sectionDetail').style.display = 'block';
-  document.getElementById('backBtn').style.display = 'none';
-  document.getElementById('currentJobName').textContent = currentJob ? currentJob.name : '';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtBytes = n => n < 1024 ? n + ' B'
+  : n < 1048576 ? (n / 1024).toFixed(0) + ' KB'
+  : (n / 1048576).toFixed(1) + ' MB';
+const fmtDate = ts => ts ? new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
 
-  renderSectionDetail(s);
+function toast(msg, err) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.className = 'toast'; }, err ? 4200 : 2400);
+}
+
+function sectionsOf(j) { return (j && j.sections) || []; }
+function findSection(key) { return sectionsOf(job).find(s => s.key === key); }
+
+async function persist() {
+  if (!job) return;
+  job.updated = Date.now();
+  await dbPut('jobs', job);
+  const i = jobs.findIndex(j => j.id === job.id);
+  if (i >= 0) jobs[i] = job;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. NAVIGATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+function go(where, id) {
+  view = where;
+  $('view-jobs').hidden = where !== 'jobs';
+  $('view-job').hidden  = where !== 'job';
+  $('jobActions').hidden = where !== 'job';
+  $('crumb').hidden = where !== 'job';
+  closeDrawer();
+  if (where === 'jobs') { job = null; $('crumbJob').textContent = ''; renderJobs(); }
+  else { renderJob(); }
   window.scrollTo(0, 0);
 }
 
-function backToSectionList() {
-  detailSectionId = null;
-  document.getElementById('sectionDetail').style.display = 'none';
-  document.getElementById('workspace').style.display = 'block';
-  document.getElementById('backBtn').style.display = 'inline-block';
-  // re-render list so card summaries reflect any changes
-  renderAll();
-  // keep the right tab active based on the section we came from
+async function openJob(id) {
+  const j = await dbGet('jobs', id);
+  if (!j) { toast('Job not found', true); return; }
+  job = j;
+  divFilter = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
+  statusFilter = null; query = ''; $('searchBox').value = '';
+  $('crumbJob').textContent = j.name;
+  go('job');
 }
 
-function renderSectionDetail(s) {
-  const matched = s.submittals.filter(x => x.status === 'met');
-  const partial = s.submittals.filter(x => x.status === 'partial');
-  const missing = s.submittals.filter(x => x.status === 'missing');
-  const needed  = s.submittals.filter(x => x.status === 'needed');
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. JOBS HOME
+   ═══════════════════════════════════════════════════════════════════════════ */
+function jobTally(j) {
+  const t = {}; STATUSES.forEach(s => t[s.id] = 0);
+  for (const s of sectionsOf(j)) t[s.status || 'not_started']++;
+  return t;
+}
 
-  const files = s.submittalFiles || [];
-  const hasUploads = files.length > 0;
-
-  const pageRefHtml = s.approxPage
-    ? `<a class="page-ref" onclick="openSpecAtPage(${s.approxPage})" title="Open spec PDF near this section">PDF p.${s.approxPage} ↗</a>`
-    : '';
-
-  const summaryChips = `
-    <div class="summary-chip matched"><span class="n">${matched.length}</span> Ready</div>
-    <div class="summary-chip partial"><span class="n">${partial.length}</span> Partial</div>
-    <div class="summary-chip missing"><span class="n">${missing.length}</span> Missing</div>
-    ${needed.length ? `<div class="summary-chip needed"><span class="n">${needed.length}</span> Not checked</div>` : ''}
-  `;
-
-  // Uploaded submittals legend
-  const filesHtml = hasUploads ? `
-    <div class="submittal-files">
-      <div class="sf-title">Uploaded submittals</div>
-      ${files.map(f => `<div class="sf-row"><span class="sf-label">${escapeHtml(f.label)}</span><span class="sf-name">${escapeHtml(f.name)}</span></div>`).join('')}
-    </div>` : '';
-
-  // Groups in priority order: missing first (action needed), then partial, needed, then ready
-  const groups = [];
-  if (missing.length) groups.push(renderResultGroup('missing', '✕', 'Still Needed — source or request these', missing));
-  if (partial.length) groups.push(renderResultGroup('partial', '!', 'Partial — incomplete, needs follow-up', partial));
-  if (needed.length && hasUploads) groups.push(renderResultGroup('needed', '·', 'Not Yet Checked', needed));
-  if (matched.length) groups.push(renderResultGroup('matched', '✓', 'Ready for Approval — satisfied by submittal', matched));
-
-  let bodyContent;
-  if (!hasUploads) {
-    bodyContent = `<div class="detail-empty">
-      <span class="de-icon">📎</span>
-      <div class="de-title">No submittal uploaded yet</div>
-      <div class="de-hint">Upload vendor submittals below. The spec requirements are listed so you know what to send.</div>
-    </div>
-    <div class="result-group group-needed">
-      <div class="group-header">
-        <div class="group-icon">·</div>
-        <div class="group-title">Required Submittals</div>
-        <div class="group-subtitle">${s.submittals.length} items</div>
-      </div>
-      ${s.submittals.map(renderResultItem).join('')}
+function renderJobs() {
+  const grid = $('jobsGrid');
+  let html = '';
+  for (const j of jobs) {
+    const secs = sectionsOf(j);
+    const t = jobTally(j);
+    const total = secs.length || 1;
+    const bars = STATUSES.filter(s => t[s.id])
+      .map(s => `<span style="width:${(t[s.id] / total * 100).toFixed(2)}%;background:${cvar(s.color)}"></span>`).join('');
+    const legend = STATUSES.filter(s => t[s.id] && s.id !== 'not_started')
+      .map(s => `<span><i style="background:${cvar(s.color)}"></i>${t[s.id]} ${esc(s.short)}</span>`).join('');
+    html += `<div class="job-card" onclick="openJob('${j.id}')">
+      <button class="job-del" title="Delete job" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
+      <h3>${esc(j.name)}</h3>
+      <div class="meta">${secs.length} section${secs.length === 1 ? '' : 's'}${j.number ? ' · ' + esc(j.number) : ''} · ${fmtDate(j.updated || j.created)}</div>
+      <div class="bar">${bars || '<span style="width:100%;background:var(--surface-3)"></span>'}</div>
+      <div class="legend">${legend || '<span class="muted">Nothing logged yet</span>'}</div>
     </div>`;
-  } else {
-    bodyContent = groups.join('');
   }
-
-  const btnLabel = hasUploads ? 'Add Another Submittal' : 'Upload Submittal';
-
-  document.getElementById('sectionDetail').innerHTML = `
-    <div class="detail-head">
-      <div class="detail-crumb">
-        <button class="back-btn" onclick="backToSectionList()">← ${escapeHtml(currentJob ? currentJob.name : 'Sections')}</button>
-        <button class="back-btn" onclick="showJobsHome()">Jobs</button>
-      </div>
-      <div class="detail-title-row">
-        <span class="detail-number">${s.number}</span>
-        <span class="detail-title">${s.title}</span>
-        ${pageRefHtml}
-      </div>
-      <div class="detail-summary">${summaryChips}</div>
-      ${filesHtml}
-    </div>
-    <div class="detail-body">
-      ${bodyContent}
-      <div class="detail-upload">
-        <label class="upload-btn" id="btn_${s.id}">
-          📎 ${btnLabel}
-          <input type="file" accept=".pdf" onchange="handleSubmittalUpload('${s.id}', this)">
-        </label>
-        <span id="spinner_${s.id}" style="display:none"><span class="checking-spinner"></span> Checking against spec…</span>
-      </div>
-    </div>
-  `;
+  html += `<div class="job-card new-card" onclick="newJob()"><span class="plus">+</span><span>New job</span></div>`;
+  grid.innerHTML = html;
+  renderLegacyNotice();
+  renderStorageNote();
 }
 
-function renderResultGroup(type, icon, title, items) {
-  return `<div class="result-group group-${type}">
-    <div class="group-header">
-      <div class="group-icon">${icon}</div>
-      <div class="group-title">${title}</div>
-      <div class="group-subtitle">${items.length} ${items.length === 1 ? 'item' : 'items'}</div>
-    </div>
-    ${items.map(renderResultItem).join('')}
-  </div>`;
+async function renderStorageNote() {
+  const host = $('storageNote');
+  let line = 'Specs, submittals and responses are kept in this browser only — nothing is uploaded anywhere.';
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const e = await navigator.storage.estimate();
+      if (e && e.usage != null) {
+        const pct = e.quota ? (e.usage / e.quota * 100) : 0;
+        line += ` Using <b>${fmtBytes(e.usage)}</b>${e.quota ? ' of about ' + fmtBytes(e.quota) + ' available' : ''}.`;
+        if (pct > 80) line += ' <b>Storage is nearly full</b> — delete a finished job to make room.';
+      }
+    }
+  } catch (err) { /* estimate is optional */ }
+  host.innerHTML = line + '<br>Export a CSV from any job to keep a copy of the register outside the browser.';
 }
 
-function renderResultItem(item) {
-  const reqText = item.requirement || item.name;
+function renderLegacyNotice() {
+  const host = $('legacyNotice');
+  if (!localStorage.getItem('speccheck_jobs') && !localStorage.getItem('speccheck_gemini_key')) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="notice">
+    <span>Data from the old SpecCheck version is still in this browser. It is not used by the register.</span>
+    <button class="btn sm" onclick="clearLegacy()">Clear it</button></div>`;
+}
+function clearLegacy() {
+  localStorage.removeItem('speccheck_jobs');
+  localStorage.removeItem('speccheck_gemini_key');
+  renderLegacyNotice();
+  toast('Old data cleared');
+}
 
-  // "Found" column content depends on status
-  let foundHtml;
-  if (item.status === 'met' || item.status === 'partial') {
-    const src = item.foundIn;
-    const srcTag = src
-      ? `<div class="found-source">✓ ${escapeHtml(src.submittalLabel)} — ${escapeHtml(src.submittalName)}</div>`
-      : '';
-    const foundText = (src && src.found) ? escapeHtml(src.found) : (item.note ? escapeHtml(item.note) : 'Addressed in submittal');
-    foundHtml = `${srcTag}<div class="found-text">${foundText}</div>`;
-  } else if (item.status === 'missing') {
-    foundHtml = `<div class="found-text missing-text">Not found in any uploaded submittal${item.note ? ' — ' + escapeHtml(item.note) : ''}</div>`;
-  } else {
-    foundHtml = `<div class="found-text muted-text">Not checked yet</div>`;
+async function newJob() {
+  const name = prompt('Job name (e.g. "Adventist Health Columbia Gorge — Energy Improvements")');
+  if (!name || !name.trim()) return;
+  const j = {
+    id: uid('job'), name: name.trim(), number: '', created: Date.now(), updated: Date.now(),
+    specs: [], sections: []
+  };
+  await dbPut('jobs', j);
+  jobs.unshift(j);
+  job = j;
+  $('crumbJob').textContent = j.name;
+  go('job');
+  promptImportSpec();
+}
+
+async function deleteJob(id) {
+  const j = jobs.find(x => x.id === id);
+  if (!j) return;
+  if (!confirm(`Delete "${j.name}" and every PDF stored with it?\n\nThis cannot be undone.`)) return;
+  for (const id2 of collectBlobIds(j)) { try { await dbDel('blobs', id2); } catch (e) {} }
+  await dbDel('jobs', id);
+  jobs = jobs.filter(x => x.id !== id);
+  renderJobs();
+  toast('Job deleted');
+}
+
+function collectBlobIds(j) {
+  const ids = [];
+  for (const sp of (j.specs || [])) if (sp.blobId) ids.push(sp.blobId);
+  for (const s of sectionsOf(j)) {
+    for (const d of (s.submittals || [])) if (d.blobId) ids.push(d.blobId);
+    for (const d of (s.responses || [])) if (d.blobId) ids.push(d.blobId);
   }
-
-  return `<div class="result-item">
-    <div class="result-type">${item.type}</div>
-    <div class="req-found">
-      <div class="rf-col rf-required">
-        <div class="rf-label">Required (spec)</div>
-        <div class="rf-body">${escapeHtml(reqText)}</div>
-      </div>
-      <div class="rf-col rf-found">
-        <div class="rf-label">Found (submittal)</div>
-        <div class="rf-body">${foundHtml}</div>
-      </div>
-    </div>
-  </div>`;
+  return ids;
 }
 
-// ── Refresh whichever view is showing this section ──
-function refreshSectionView(section) {
-  if (detailSectionId === section.id &&
-      document.getElementById('sectionDetail').style.display === 'block') {
-    renderSectionDetail(section);
-  } else {
-    const card = document.getElementById(section.id);
-    if (card) card.outerHTML = renderSectionCard(section);
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. JOB WORKSPACE
+   ═══════════════════════════════════════════════════════════════════════════ */
+function visibleSections() {
+  const q = query.trim().toLowerCase();
+  return sectionsOf(job).filter(s => {
+    if (divFilter !== 'all' && s.division !== divFilter) return false;
+    if (statusFilter && (s.status || 'not_started') !== statusFilter) return false;
+    if (q) {
+      const hay = (s.number + ' ' + s.key + ' ' + s.title + ' ' + (s.vendor || '') + ' ' + (s.package || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderJob() {
+  if (!job) return;
+  $('jobName').textContent = job.name;
+  const secs = sectionsOf(job);
+  const specNames = (job.specs || []).map(s => s.name).join(', ');
+  $('jobMeta').textContent = secs.length
+    ? `${secs.length} spec sections${specNames ? ' · ' + specNames : ''}`
+    : 'No spec imported yet';
+  $('btnSpec').style.display = (job.specs || []).length ? '' : 'none';
+
+  /* division segmented control */
+  const counts = {};
+  DIVISIONS.forEach(d => counts[d] = secs.filter(s => s.division === d).length);
+  $('divSeg').innerHTML = DIVISIONS.map(d =>
+    `<button class="${divFilter === d ? 'on' : ''}" onclick="setDiv('${d}')">Div ${d} · ${DIVISION_NAMES[d]}<span class="n">${counts[d]}</span></button>`
+  ).join('') + `<button class="${divFilter === 'all' ? 'on' : ''}" onclick="setDiv('all')">All<span class="n">${secs.length}</span></button>`;
+
+  /* status filter chips */
+  const scope = secs.filter(s => divFilter === 'all' || s.division === divFilter);
+  const tally = {}; STATUSES.forEach(s => tally[s.id] = 0);
+  scope.forEach(s => tally[s.status || 'not_started']++);
+  $('statusChips').innerHTML = STATUSES.map(s =>
+    `<button class="chip ${statusFilter === s.id ? 'on' : ''}" style="${statusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
+      onclick="setStatusFilter('${s.id}')"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id]}</span></button>`
+  ).join('') + (statusFilter ? `<button class="chip" onclick="setStatusFilter(null)">Clear filter ✕</button>` : '');
+
+  renderTable();
+}
+
+function setDiv(d) { divFilter = d; renderJob(); }
+function setStatusFilter(s) { statusFilter = (statusFilter === s) ? null : s; renderJob(); }
+$('searchBox').addEventListener('input', e => { query = e.target.value; renderTable(); $('countLabel').textContent = countLabel(); });
+function countLabel() {
+  const n = visibleSections().length, t = sectionsOf(job).filter(s => divFilter === 'all' || s.division === divFilter).length;
+  return n === t ? `${t} sections` : `${n} of ${t} sections`;
+}
+
+function renderTable() {
+  const body = $('secBody');
+  const list = visibleSections();
+  $('countLabel').textContent = countLabel();
+
+  if (!sectionsOf(job).length) {
+    body.innerHTML = '';
+    $('jobEmpty').innerHTML = `<div class="empty" style="margin-top:14px">
+      <h3>No spec imported yet</h3>
+      <p>Import the project spec PDF — Divisions 22 and 23 are split into their individual sections automatically.</p>
+      <p style="margin-top:14px"><button class="btn primary" onclick="promptImportSpec()">Import spec PDF</button>
+      <button class="btn" onclick="addSectionManually()">Add a section by hand</button></p></div>`;
+    return;
   }
-}
+  $('jobEmpty').innerHTML = '';
 
-// ── Handle submittal upload per section (append + gap-fill) ──
-async function handleSubmittalUpload(sectionId, input) {
-  if (!input.files[0]) return;
-
-  const file = input.files[0];
-  const all = [...specSections.div22, ...specSections.div23];
-  const section = all.find(s => s.id === sectionId);
-  if (!section) return;
-
-  // Section keeps a list of uploaded submittals
-  if (!section.submittalFiles) section.submittalFiles = [];
-  const submittalIndex = section.submittalFiles.length + 1;
-  const submittalId = 'sub_' + Date.now();
-  const submittalLabel = `Submittal ${submittalIndex}`;
-  section.submittalFiles.push({ id: submittalId, name: file.name, label: submittalLabel });
-
-  // If no API key, just record the upload and stop
-  if (!apiKey) {
-    persistCurrentJob();
-    refreshSectionView(section);
-    showToast(`Attached ${file.name} as ${submittalLabel} (no API key — check skipped)`, '');
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty" style="border:none;background:transparent;padding:34px">
+      <h3>Nothing matches</h3><p>Try a different search or clear the status filter.</p></div></td></tr>`;
     return;
   }
 
-  const spinner = document.getElementById('spinner_' + sectionId);
-  const btn = document.getElementById('btn_' + sectionId);
-  if (spinner) spinner.style.display = 'flex';
-  if (btn) btn.classList.add('loading');
+  let html = '', lastDiv = null;
+  for (const s of list) {
+    if (divFilter === 'all' && s.division !== lastDiv) {
+      lastDiv = s.division;
+      html += `<tr class="divhead"><td colspan="6">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
+    }
+    const st = ST[s.status || 'not_started'];
+    const nSub = (s.submittals || []).length, nRes = (s.responses || []).length;
+    const spec = s.startPage ? `p. ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : '—';
+    html += `<tr class="${openKey === s.key ? 'sel' : ''}" onclick="openSection('${s.key}')">
+      <td class="c-num">${esc(s.number)}</td>
+      <td class="c-title">${esc(s.title || '(untitled)')}
+        ${s.manual ? '<span class="flag">Added</span>' : ''}
+        ${(s.inBody === false) ? '<span class="flag">Index only</span>' : ''}
+        ${s.package ? `<div class="sub">${esc(s.package)}${s.vendor ? ' · ' + esc(s.vendor) : ''}</div>`
+          : (s.vendor ? `<div class="sub">${esc(s.vendor)}</div>` : '')}</td>
+      <td onclick="event.stopPropagation()">
+        <select class="st-select" style="color:${cvar(st.color)};background:${csf(st.color)};border-color:${cvar(st.color)}"
+          onchange="setStatus('${s.key}', this.value)">
+          ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+        </select></td>
+      <td class="num"><span class="dot-count ${nSub ? '' : 'zero'}">📄 ${nSub}</span></td>
+      <td class="num"><span class="dot-count ${nRes ? '' : 'zero'}">✔ ${nRes}</span></td>
+      <td class="num hide-sm"><span class="muted">${spec}</span></td>
+    </tr>`;
+  }
+  body.innerHTML = html;
+}
+
+async function setStatus(key, value) {
+  const s = findSection(key);
+  if (!s) return;
+  const from = s.status || 'not_started';
+  if (from === value) return;
+  s.status = value;
+  s.history = s.history || [];
+  s.history.push({ ts: Date.now(), from, to: value });
+  if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = new Date().toISOString().slice(0, 10);
+  if ((value === 'approved' || value === 'revise_resubmit') && !s.returnedDate) s.returnedDate = new Date().toISOString().slice(0, 10);
+  await persist();
+  renderJob();
+  if (openKey === key) renderDrawer();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. SECTION DRAWER
+   ═══════════════════════════════════════════════════════════════════════════ */
+function openSection(key) { openKey = key; renderDrawer(); renderTable(); }
+function closeDrawer() { openKey = null; $('drawerHost').innerHTML = ''; }
+
+function renderDrawer() {
+  const s = findSection(openKey);
+  if (!s) { closeDrawer(); return; }
+  const st = ST[s.status || 'not_started'];
+  const specFile = (job.specs || []).find(sp => sp.id === s.specId) || (job.specs || [])[0];
+
+  const statusButtons = STATUSES.map(o => `
+    <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
+      onclick="setStatus('${s.key}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
+
+  const reqHtml = (s.requirements && s.requirements.length)
+    ? s.requirements.map(g => `<div class="req-group">
+        <div class="req-kind">${esc(g.kind)} — ${esc(g.article)} ${esc(g.name)}</div>
+        ${g.items.map(it => {
+          const detail = it.detail != null ? it.detail : it.text;
+          return `<div class="req-item">
+            ${it.label ? `<span class="rl">${esc(it.label)}</span>` : ''}
+            ${detail ? `<span class="rt">${esc(detail)}</span>` : ''}</div>`;
+        }).join('')}
+      </div>`).join('')
+    : `<div class="muted">This section has no separate submittals article in the spec.</div>`;
+
+  const incHtml = (s.includes && s.includes.length)
+    ? `<div class="sec"><h4>Section includes</h4><div class="muted" style="color:var(--text-2)">${
+        s.includes.map(i => '• ' + esc(i)).join('<br>')}</div></div>` : '';
+
+  const html = `
+  <div class="scrim" onclick="closeDrawer()"></div>
+  <aside class="drawer" role="dialog" aria-label="Spec section">
+    <div class="drawer-head">
+      <div style="flex:1;min-width:0">
+        <div class="num">Division ${esc(s.division)} · ${esc(s.number)}</div>
+        <h2>${esc(s.title || '(untitled)')}</h2>
+      </div>
+      <button class="icon-btn" onclick="editSection('${s.key}')" title="Edit number / title">✎</button>
+      <button class="icon-btn" onclick="closeDrawer()" title="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+
+      <div class="sec">
+        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
+        <div class="status-grid">${statusButtons}</div>
+      </div>
+
+      <div class="sec">
+        <h4>Submittals <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></h4>
+        <div id="listSub">${fileList(s, 'submittals')}</div>
+        <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">Drop submittal PDFs here</div>
+      </div>
+
+      <div class="sec">
+        <h4>Submittal responses <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ Upload PDF</button></h4>
+        <div id="listRes">${fileList(s, 'responses')}</div>
+        <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">Drop the returned / stamped PDFs here</div>
+      </div>
+
+      <div class="sec">
+        <h4>Details</h4>
+        <div class="grid2">
+          <div class="field"><label class="fl">Vendor / supplier</label>
+            <input class="input" value="${esc(s.vendor || '')}" oninput="setField('${s.key}','vendor',this.value)"></div>
+          <div class="field"><label class="fl">Submittal no. / package</label>
+            <input class="input" value="${esc(s.package || '')}" oninput="setField('${s.key}','package',this.value)"></div>
+          <div class="field"><label class="fl">Sent to GC</label>
+            <input class="input" type="date" value="${esc(s.submittedDate || '')}" onchange="setField('${s.key}','submittedDate',this.value)"></div>
+          <div class="field"><label class="fl">Returned</label>
+            <input class="input" type="date" value="${esc(s.returnedDate || '')}" onchange="setField('${s.key}','returnedDate',this.value)"></div>
+        </div>
+        <div class="field" style="margin-bottom:0"><label class="fl">Notes</label>
+          <textarea class="input" oninput="setField('${s.key}','notes',this.value)"
+            placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea></div>
+      </div>
+
+      ${incHtml}
+
+      <div class="sec">
+        <h4>What the spec asks for
+          ${s.startPage && specFile ? `<button class="btn sm" onclick="openSpecViewer('${specFile.id}',${s.startPage})">Open spec · p. ${s.startPage}</button>` : ''}
+        </h4>
+        ${reqHtml}
+        <div class="muted" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+          ${s.startPage ? `Spec pages ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : 'No page reference'}
+          ${s.titleSource ? ` · title from ${esc(s.titleSource)}` : ''}
+        </div>
+      </div>
+
+      ${(s.history && s.history.length) ? `<div class="sec"><h4>History</h4>${
+        s.history.slice().reverse().map(h =>
+          `<div class="req-item"><span class="rl">${fmtDate(h.ts)}</span><span class="rt">${esc((ST[h.from] || {}).label || h.from)} → ${esc((ST[h.to] || {}).label || h.to)}</span></div>`
+        ).join('')}</div>` : ''}
+
+      <div style="text-align:right">
+        <button class="btn danger sm" onclick="deleteSection('${s.key}')">Delete section</button>
+      </div>
+    </div>
+  </aside>`;
+
+  $('drawerHost').innerHTML = html;
+  wireDrop($('dropSub'), s.key, 'submittals');
+  wireDrop($('dropRes'), s.key, 'responses');
+}
+
+function fileList(s, kind) {
+  const files = s[kind] || [];
+  if (!files.length) return `<div class="muted" style="margin-bottom:8px">Nothing uploaded yet.</div>`;
+  return files.map(f => `<div class="file-row">
+      <span class="fi">${kind === 'responses' ? '✔' : '📄'}</span>
+      <span class="fn"><b title="${esc(f.name)}">${esc(f.name)}</b>
+        <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}</small></span>
+      ${f.rev ? `<span class="rev-tag">${esc(f.rev)}</span>` : ''}
+      <button class="btn sm" onclick="viewDoc('${s.key}','${kind}','${f.id}')">View</button>
+      <button class="btn sm ghost" onclick="downloadDoc('${s.key}','${kind}','${f.id}')" title="Download">⤓</button>
+      <button class="btn sm ghost" onclick="removeDoc('${s.key}','${kind}','${f.id}')" title="Remove">✕</button>
+    </div>`).join('');
+}
+
+async function setField(key, field, value) {
+  const s = findSection(key);
+  if (!s) return;
+  s[field] = value;
+  clearTimeout(setField._t);
+  setField._t = setTimeout(async () => { await persist(); renderTable(); }, 350);
+}
+
+/* ── uploads ── */
+function pickFiles(key, kind) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/pdf,.pdf';
+  inp.multiple = true;
+  inp.onchange = () => addFiles(key, kind, Array.from(inp.files));
+  inp.click();
+}
+function wireDrop(el, key, kind) {
+  if (!el) return;
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', e => {
+    e.preventDefault(); el.classList.remove('over');
+    addFiles(key, kind, Array.from(e.dataTransfer.files));
+  });
+}
+async function addFiles(key, kind, files) {
+  const s = findSection(key);
+  if (!s || !files.length) return;
+  s[kind] = s[kind] || [];
+  let added = 0;
+  for (const f of files) {
+    if (f.type && f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) {
+      toast(`${f.name} is not a PDF — skipped`, true);
+      continue;
+    }
+    try {
+      const blobId = await saveBlob(f);
+      s[kind].push({
+        id: uid('doc'), name: f.name, size: f.size, type: f.type || 'application/pdf',
+        uploaded: Date.now(), blobId,
+        rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : ''
+      });
+      added++;
+    } catch (e) {
+      toast('Could not store ' + f.name + ' — ' + (e && e.name === 'QuotaExceededError' ? 'browser storage is full' : e), true);
+    }
+  }
+  if (!added) return;
+  // Uploading the first submittal on an untouched section moves it along.
+  if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
+  await persist();
+  renderDrawer(); renderTable();
+  toast(added + ' file' + (added === 1 ? '' : 's') + ' added');
+}
+async function removeDoc(key, kind, docId) {
+  const s = findSection(key);
+  const d = (s[kind] || []).find(x => x.id === docId);
+  if (!d) return;
+  if (!confirm(`Remove "${d.name}"?`)) return;
+  if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
+  s[kind] = s[kind].filter(x => x.id !== docId);
+  await persist();
+  renderDrawer(); renderTable();
+}
+async function docBlobUrl(key, kind, docId) {
+  const s = findSection(key);
+  const d = (s[kind] || []).find(x => x.id === docId);
+  if (!d) return null;
+  const blob = await getBlob(d.blobId);
+  if (!blob) { toast('That file is missing from storage', true); return null; }
+  return { url: URL.createObjectURL(blob), name: d.name };
+}
+async function viewDoc(key, kind, docId) {
+  const got = await docBlobUrl(key, kind, docId);
+  if (got) showPdf(got.url, got.name);
+}
+async function downloadDoc(key, kind, docId) {
+  const got = await docBlobUrl(key, kind, docId);
+  if (!got) return;
+  const a = document.createElement('a');
+  a.href = got.url; a.download = got.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(got.url), 30000);
+}
+
+/* ── manual section management ── */
+async function addSectionManually() {
+  if (!job) return;
+  const num = prompt('Section number (e.g. 23 05 93):');
+  if (!num) return;
+  const key = normNum(num);
+  if (!key) { toast('Use a 6-digit section number, e.g. 23 05 93', true); return; }
+  if (!DIVISIONS.includes(divOf(key))) { toast('Only Divisions 22 and 23 are tracked here', true); return; }
+  if (findSection(key)) { toast('That section is already in the register', true); return; }
+  const title = prompt('Section title:') || '';
+  job.sections.push(newSectionRecord({
+    key, number: prettyNum(key), division: divOf(key), title: title.trim(),
+    manual: true, inBody: true, requirements: [], includes: []
+  }));
+  sortSections();
+  await persist();
+  renderJob();
+  openSection(key);
+}
+async function editSection(key) {
+  const s = findSection(key);
+  if (!s) return;
+  const title = prompt('Section title:', s.title || '');
+  if (title === null) return;
+  s.title = title.trim();
+  await persist();
+  renderDrawer(); renderTable();
+}
+async function deleteSection(key) {
+  const s = findSection(key);
+  if (!s) return;
+  const files = (s.submittals || []).length + (s.responses || []).length;
+  if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?`)) return;
+  for (const d of (s.submittals || []).concat(s.responses || [])) {
+    if (d.blobId) { try { await dbDel('blobs', d.blobId); } catch (e) {} }
+  }
+  job.sections = job.sections.filter(x => x.key !== key);
+  await persist();
+  closeDrawer(); renderJob();
+}
+function sortSections() {
+  job.sections.sort((a, b) => String(a.key).localeCompare(String(b.key), undefined, { numeric: true }));
+}
+function newSectionRecord(base) {
+  return Object.assign({
+    status: 'not_started', vendor: '', package: '', submittedDate: '', returnedDate: '',
+    notes: '', submittals: [], responses: [], history: []
+  }, base);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8. PDF VIEWER
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showPdf(url, name, page) {
+  const src = url + (page ? '#page=' + page : '');
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()">
+      <div class="modal wide">
+        <div class="modal-head">
+          <h3>${esc(name)}${page ? ' · page ' + page : ''}</h3>
+          <button class="btn sm" onclick="window.open('${src}','_blank')">Open in tab</button>
+          <button class="icon-btn" onclick="closePdf()">✕</button>
+        </div>
+        <div class="modal-body flush"><iframe src="${src}"></iframe></div>
+      </div>
+    </div>`;
+  objectUrls.set('viewer', url);
+}
+function closePdf() {
+  $('modalHost').innerHTML = '';
+  const u = objectUrls.get('viewer');
+  if (u) { setTimeout(() => URL.revokeObjectURL(u), 1000); objectUrls.delete('viewer'); }
+}
+async function openSpecViewer(specId, page) {
+  const specs = (job && job.specs) || [];
+  const sp = specs.find(x => x.id === specId) || specs[0];
+  if (!sp) { toast('No spec PDF stored for this job', true); return; }
+  const blob = await getBlob(sp.blobId);
+  if (!blob) { toast('The spec PDF is missing from storage', true); return; }
+  showPdf(URL.createObjectURL(blob), sp.name, page);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9. SPEC IMPORT
+   ═══════════════════════════════════════════════════════════════════════════ */
+function promptImportSpec() {
+  if (!job) return;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/pdf,.pdf';
+  inp.onchange = () => { if (inp.files[0]) importSpec(inp.files[0]); };
+  inp.click();
+}
+
+function importModal(inner) {
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">${inner}</div></div>`;
+}
+
+async function importSpec(file) {
+  if (!window.pdfjsLib) { toast('The PDF engine did not load — check the connection and reload', true); return; }
+  importModal(`
+    <div class="modal-head"><h3>Reading ${esc(file.name)}</h3></div>
+    <div class="modal-body">
+      <div id="impStep" class="muted">Opening the PDF…</div>
+      <div class="progress"><div id="impBar"></div></div>
+    </div>`);
+
+  const step = (t, pct) => {
+    const a = $('impStep'), b = $('impBar');
+    if (a) a.textContent = t;
+    if (b) b.style.width = Math.round(pct * 100) + '%';
+  };
+  const yieldUi = () => new Promise(r => setTimeout(r, 0));
 
   try {
-    const submittalText = await extractPdfText(file);
-
-    // Only evaluate items not yet satisfied (gap-fill). First upload = all items.
-    const openItems = section.submittals.filter(i => i.status !== 'met');
-    const targetItems = openItems.length ? openItems : section.submittals;
-
-    const requirementsText = targetItems.map((item, i) =>
-      `${i + 1}. [${item.type}] ${item.requirement || item.name}`
-    ).join('\n\n');
-
-    const result = await checkSubmittalVsSpec(requirementsText, submittalText, section.title);
-
-    if (result && result.items) {
-      result.items.forEach(r => {
-        const item = targetItems.find(s =>
-          (s.requirement || s.name).toLowerCase().includes(r.name.toLowerCase().slice(0, 20)) ||
-          r.name.toLowerCase().includes((s.name).toLowerCase().slice(0, 20))
-        );
-        if (item) {
-          // Don't downgrade an already-met item from an earlier submittal
-          if (item.status === 'met' && r.status !== 'met') return;
-          item.status = r.status;
-          item.note = r.note || '';
-          if (r.status === 'met' || r.status === 'partial') {
-            item.foundIn = {
-              submittalId,
-              submittalLabel,
-              submittalName: file.name,
-              found: r.found || r.note || ''
-            };
-          }
-        }
-      });
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const pages = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pg = await pdf.getPage(i);
+      const tc = await pg.getTextContent();
+      pages.push({ num: i, lines: pageItemsToLines(tc.items) });
+      pg.cleanup();
+      if (i % 15 === 0 || i === pdf.numPages) {
+        step(`Reading page ${i} of ${pdf.numPages}…`, i / pdf.numPages * 0.9);
+        await yieldUi();
+      }
     }
+    step('Splitting Divisions 22 and 23…', 0.95);
+    await yieldUi();
 
-    persistCurrentJob();
-    refreshSectionView(section);
-    updateStats();
+    const result = parseSpec(pages);
+    if (!result.sections.length) {
+      importModal(`<div class="modal-head"><h3>No Division 22 or 23 sections found</h3></div>
+        <div class="modal-body"><p>Nothing in <b>${esc(file.name)}</b> looked like a Division 22 or 23 spec section.</p>
+        <p class="muted" style="margin-top:10px">If the PDF is a scan, the text has to be OCR'd first. You can also add sections by hand.</p></div>
+        <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
+      return;
+    }
+    showImportReview(file, pages.length, result);
+  } catch (e) {
+    console.error(e);
+    importModal(`<div class="modal-head"><h3>Could not read that PDF</h3></div>
+      <div class="modal-body"><p class="muted">${esc(String(e && e.message || e))}</p></div>
+      <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
+  }
+}
 
-    const filled = (result?.items || []).filter(r => r.status === 'met').length;
-    showToast(`${submittalLabel} checked — ${filled} requirement${filled === 1 ? '' : 's'} satisfied`, 'success');
-  } catch (err) {
-    persistCurrentJob();
-    refreshSectionView(section);
-    showToast('File attached, but check failed: ' + err.message, 'error');
-    console.error(err);
+let pendingImport = null;
+function showImportReview(file, pageCount, result) {
+  pendingImport = { file, pageCount, result };
+  const existing = new Set(sectionsOf(job).map(s => s.key));
+  let rows = '';
+  for (const d of DIVISIONS) {
+    const list = result.sections.filter(s => s.division === d);
+    if (!list.length) continue;
+    rows += `<div class="review-row review-head"><span class="rn">Div ${d}</span>
+      <span class="rt">${esc(DIVISION_NAMES[d])} — ${list.length} sections</span></div>`;
+    for (const s of list) {
+      const dup = existing.has(s.key);
+      rows += `<div class="review-row">
+        <input type="checkbox" ${dup ? '' : 'checked'} data-key="${esc(s.key)}" ${dup ? 'disabled' : ''}>
+        <span class="rn">${esc(s.number)}</span>
+        <span class="rt">${esc(s.title || '(untitled)')}</span>
+        ${dup ? '<span class="flag">In register</span>'
+              : (s.inBody ? '' : '<span class="flag">Index only</span>')}
+      </div>`;
+    }
+  }
+  const n = result.sections.filter(s => !existing.has(s.key)).length;
+  importModal(`
+    <div class="modal-head"><h3>Found ${result.sections.length} spec sections</h3></div>
+    <div class="modal-body">
+      <div class="muted">${esc(file.name)} · ${pageCount} pages · ${result.diagnostics.pagesMapped} pages matched to a section${
+        result.diagnostics.tocEntries ? ' · table of contents cross-checked' : ''}</div>
+      <div class="review-list">${rows}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePdf()">Cancel</button>
+      <button class="btn primary" onclick="confirmImport()">Add ${n} section${n === 1 ? '' : 's'}</button>
+    </div>`);
+}
+
+async function confirmImport() {
+  if (!pendingImport) return;
+  const { file, pageCount, result } = pendingImport;
+  const chosen = new Set(Array.from(document.querySelectorAll('.review-row input[type=checkbox]'))
+    .filter(c => c.checked && !c.disabled).map(c => c.dataset.key));
+
+  importModal(`<div class="modal-head"><h3>Saving…</h3></div>
+    <div class="modal-body"><div class="muted">Storing the spec PDF in this browser.</div>
+    <div class="progress"><div style="width:60%"></div></div></div>`);
+
+  try {
+    const blobId = await saveBlob(file);
+    const specId = uid('spec');
+    job.specs = job.specs || [];
+    job.specs.push({ id: specId, name: file.name, pages: pageCount, blobId, added: Date.now() });
+
+    const existing = new Set(sectionsOf(job).map(s => s.key));
+    let added = 0;
+    for (const s of result.sections) {
+      if (!chosen.has(s.key) || existing.has(s.key)) continue;
+      job.sections.push(newSectionRecord({
+        key: s.key, number: s.number, division: s.division, title: s.title, rawTitle: s.rawTitle,
+        titleSource: s.titleSource, specId, startPage: s.startPage, endPage: s.endPage,
+        inBody: s.inBody, requirements: s.requirements || [], includes: s.includes || []
+      }));
+      added++;
+    }
+    sortSections();
+    await persist();
+    closePdf();
+    divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || '22';
+    renderJob();
+    toast(`${added} section${added === 1 ? '' : 's'} imported`);
+  } catch (e) {
+    console.error(e);
+    const full = e && (e.name === 'QuotaExceededError' || /quota/i.test(String(e.message)));
+    importModal(`<div class="modal-head"><h3>Could not save</h3></div>
+      <div class="modal-body"><p>${full ? 'This browser is out of storage space for the site. Delete an old job, or use a browser profile with more room.' : esc(String(e && e.message || e))}</p></div>
+      <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>`);
   } finally {
-    const sp = document.getElementById('spinner_' + sectionId);
-    const b = document.getElementById('btn_' + sectionId);
-    if (sp) sp.style.display = 'none';
-    if (b) b.classList.remove('loading');
+    pendingImport = null;
   }
 }
 
-// ── Gemini API call ──
-async function checkSubmittalVsSpec(requirements, submittalText, sectionTitle) {
-  const prompt = `You are a construction spec compliance expert reviewing a vendor submittal against specification section requirements.
-
-SPECIFICATION SECTION: ${sectionTitle}
-
-REQUIRED SUBMITTALS (verbatim spec text, numbered):
-${requirements}
-
-VENDOR SUBMITTAL TEXT (extracted from PDF):
-${submittalText.slice(0, 14000)}
-
-For each required submittal item above, determine whether THIS vendor submittal satisfies it.
-
-Respond ONLY with valid JSON in this exact format, no other text:
-{
-  "items": [
-    {
-      "name": "first ~8 words of the requirement, enough to identify it",
-      "status": "met" | "partial" | "missing",
-      "found": "what specifically was located in the submittal that addresses this (or empty string if nothing)",
-      "note": "brief reasoning, max 25 words"
-    }
-  ]
+/* ═══════════════════════════════════════════════════════════════════════════
+   10. CSV EXPORT
+   ═══════════════════════════════════════════════════════════════════════════ */
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function exportCsv() {
+  if (!job) return;
+  const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
+    'Returned', 'Submittal files', 'Response files', 'Spec pages', 'Notes'];
+  const rows = sectionsOf(job).map(s => [
+    s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
+    s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
+    (s.submittals || []).map(d => d.name).join(' | '),
+    (s.responses || []).map(d => d.name).join(' | '),
+    s.startPage ? (s.startPage + (s.endPage && s.endPage !== s.startPage ? '-' + s.endPage : '')) : '',
+    (s.notes || '').replace(/\s+/g, ' ')
+  ]);
+  const csv = [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = job.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '_submittal_register.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
 }
 
-Rules:
-- "met" = submittal clearly satisfies the requirement
-- "partial" = submittal addresses it but is incomplete or unclear
-- "missing" = no evidence in this submittal for this requirement
-- "found" should quote or paraphrase the specific submittal content that matches (keep under 30 words). Empty if missing.
-- Include every item from the required list in your response
-- Be factual and concise`;
+/* ═══════════════════════════════════════════════════════════════════════════
+   11. THEME + BOOT
+   ═══════════════════════════════════════════════════════════════════════════ */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('sr_theme', t);
+}
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
+applyTheme(localStorage.getItem('sr_theme') ||
+  (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
-    })
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Gemini API error ${res.status}`);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if ($('modalHost').innerHTML) closePdf();
+    else if (openKey) { closeDrawer(); renderTable(); }
   }
+});
 
-  const data = await res.json();
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const clean = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
-}
-
-// ── Stats ──
-function updateStats() {
-  const all = [...specSections.div22, ...specSections.div23].flatMap(s => s.submittals);
-  const needed = all.filter(x => x.status === 'needed').length;
-  const met = all.filter(x => x.status === 'met').length;
-  const partial = all.filter(x => x.status === 'partial').length;
-  const missing = all.filter(x => x.status === 'missing').length;
-
-  document.getElementById('statNeeded').textContent = needed;
-  document.getElementById('statMet').textContent = met;
-  document.getElementById('statPartial').textContent = partial;
-  document.getElementById('statMissing').textContent = missing;
-
-  const bar = document.getElementById('statsBar');
-  if (all.length > 0) bar.classList.add('show');
-}
-
-// ── Tab switching ──
-function switchTab(div) {
-  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', i === (div === 'div22' ? 0 : 1)));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('panel-' + div).classList.add('active');
-}
-
-// ── Progress ──
-function setProgress(show, label, pct) {
-  const wrap = document.getElementById('progressWrap');
-  wrap.classList.toggle('show', show);
-  if (label) document.getElementById('progressLabel').textContent = label;
-  if (pct !== undefined) document.getElementById('progressFill').style.width = pct + '%';
-}
-
-// ── Toast ──
-let toastTimer;
-function showToast(msg, type = '') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast show' + (type ? ' ' + type : '');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
-}
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+(async function boot() {
+  try {
+    _db = await openDb();
+  } catch (e) {
+    document.querySelector('.wrap').innerHTML =
+      `<div class="empty"><h3>This browser blocked local storage</h3>
+       <p>The register keeps everything in IndexedDB. Private-browsing windows often block it.</p></div>`;
+    return;
+  }
+  if (navigator.storage && navigator.storage.persist) { try { await navigator.storage.persist(); } catch (e) {} }
+  jobs = (await dbAll('jobs')).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+  go('jobs');
+})();
 </script>
 </body>
 </html>
