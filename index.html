@@ -6,18 +6,16 @@
 <title>Submittal Register — Divisions 22 &amp; 23</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-<!-- Firebase: the register lives in Firestore, the PDFs in Cloud Storage, so
-     every device on the job sees the same log. -->
+<!-- Firebase: the register and the PDFs both live in Firestore, so every
+     device on the job sees the same log. Cloud Storage is deliberately not
+     used — it needs a billing account, Firestore does not. -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
-  connectFirestoreEmulator
+  collection, doc, getDoc, getDocs, getDocsFromCache, setDoc, updateDoc, deleteDoc,
+  onSnapshot, writeBatch, query, orderBy, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import {
-  getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject, connectStorageEmulator
-} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCvUzRTKkVg6uhgJ6yQcerL8OLq3OAo36g",
@@ -40,17 +38,13 @@ try {
 } catch (e) {
   db = getFirestore(app);
 }
-const storage = getStorage(app);
-
 // Test hook: nothing defines this in production.
-if (window.__fbConnect) {
-  window.__fbConnect({ db, storage, connectFirestoreEmulator, connectStorageEmulator });
-}
+if (window.__fbConnect) window.__fbConnect({ db, connectFirestoreEmulator });
 
 window.FB = {
-  db, storage,
-  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
-  ref, uploadBytesResumable, getDownloadURL, deleteObject
+  db,
+  collection, doc, getDoc, getDocs, getDocsFromCache, setDoc, updateDoc, deleteDoc,
+  onSnapshot, writeBatch, query, orderBy
 };
 window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -1078,9 +1072,22 @@ function jobSummary(j) {
   const secs = sectionsOf(j);
   const tally = {};
   STATUSES.forEach(st => tally[st.id] = 0);
-  for (const s of secs) tally[s.status || 'not_started']++;
-  return { count: secs.length, tally };
+  let bytes = 0;
+  for (const sp of (j.specs || [])) bytes += sp.size || 0;
+  for (const s of secs) {
+    tally[s.status || 'not_started']++;
+    for (const d of (s.submittals || []).concat(s.responses || [])) bytes += d.size || 0;
+  }
+  return { count: secs.length, tally, bytes };
 }
+
+/* A snapshot that was generated before a local change must not overwrite it.
+   Anything mid-edit is held back until its write lands. */
+let jobEditDepth = 0;
+const pendingSections = new Set();
+function beginJobEdit() { jobEditDepth++; }
+function endJobEdit() { jobEditDepth = Math.max(0, jobEditDepth - 1); }
+function markPending(key) { if (key) pendingSections.add(key); }
 
 async function saveJobMeta(j) {
   const target = j || job;
@@ -1100,18 +1107,24 @@ async function saveJobMeta(j) {
 
 async function saveSection(s) {
   if (!job || !s) return;
-  await FB.setDoc(sectionRef(job.id, s.key), clean(s));
-  await saveJobMeta();
+  markPending(s.key);
+  try {
+    await FB.setDoc(sectionRef(job.id, s.key), clean(s));
+    await saveJobMeta();
+  } finally { pendingSections.delete(s.key); }
 }
 
 async function saveSections(list) {
   if (!job || !list.length) return;
-  for (let i = 0; i < list.length; i += 400) {           // Firestore caps a batch at 500
-    const batch = FB.writeBatch(FB.db);
-    for (const s of list.slice(i, i + 400)) batch.set(sectionRef(job.id, s.key), clean(s));
-    await batch.commit();
-  }
-  await saveJobMeta();
+  list.forEach(s => markPending(s.key));
+  try {
+    for (let i = 0; i < list.length; i += 400) {         // Firestore caps a batch at 500
+      const batch = FB.writeBatch(FB.db);
+      for (const s of list.slice(i, i + 400)) batch.set(sectionRef(job.id, s.key), clean(s));
+      await batch.commit();
+    }
+    await saveJobMeta();
+  } finally { list.forEach(s => pendingSections.delete(s.key)); }
 }
 
 async function deleteSectionDocs(jobId, keys) {
@@ -1122,36 +1135,121 @@ async function deleteSectionDocs(jobId, keys) {
   }
 }
 
-/* ── Cloud Storage ── */
+/* ── PDFs, stored in Firestore ──────────────────────────────────────────────
+   Cloud Storage needs a billing account, so files go in Firestore instead:
+
+     files/{fileId}              name, size, type, chunk count
+     files/{fileId}/chunks/{n}   ~600 KB of base64 each
+
+   A Firestore document holds just under 1 MiB, hence the chunking. Chunks are
+   written once and never change, so reads come from the local cache and cost
+   nothing after the first time.
+   ────────────────────────────────────────────────────────────────────────── */
 const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-function uploadFile(path, file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const task = FB.uploadBytesResumable(FB.ref(FB.storage, path), file, {
-      contentType: file.type || 'application/pdf'
-    });
-    task.on('state_changed',
-      snap => { if (onProgress && snap.totalBytes) onProgress(snap.bytesTransferred / snap.totalBytes); },
-      reject,
-      async () => {
-        try { resolve({ path, url: await FB.getDownloadURL(task.snapshot.ref) }); }
-        catch (e) { reject(e); }
-      });
+const CHUNK_CHARS = 600000;        // base64 characters per document; a multiple of 4
+const FREE_TIER_BYTES = 1024 * 1024 * 1024;
+const blobUrlCache = new Map();    // fileId -> object URL, for this session
+
+const fileRef = id => FB.doc(FB.db, 'files', id);
+const chunksCol = id => FB.collection(FB.db, 'files', id, 'chunks');
+
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(file);
   });
 }
 
-async function deleteFile(path) {
-  if (!path) return;
-  try { await FB.deleteObject(FB.ref(FB.storage, path)); }
-  catch (e) { /* already gone, or never uploaded */ }
+async function putFile(file, meta, onProgress) {
+  const id = uid('file');
+  const b64 = await fileToBase64(file);
+  const parts = [];
+  for (let i = 0; i < b64.length; i += CHUNK_CHARS) parts.push(b64.slice(i, i + CHUNK_CHARS));
+
+  // One document per chunk, a few at a time: a batch would blow the request
+  // size limit long before it hit the 500-operation limit.
+  let done = 0;
+  const queue = parts.map((text, i) => async () => {
+    await FB.setDoc(FB.doc(chunksCol(id), String(i).padStart(4, '0')), { i, b: text });
+    if (onProgress) onProgress(++done / parts.length);
+  });
+  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) await (queue.shift())();
+  });
+  await Promise.all(workers);
+
+  await FB.setDoc(fileRef(id), clean(Object.assign({
+    id, name: file.name, size: file.size, type: file.type || 'application/pdf',
+    chunks: parts.length, created: Date.now()
+  }, meta || {})));
+  return id;
+}
+
+async function readFileBlob(fileId) {
+  if (!fileId) return null;
+  const col = chunksCol(fileId);
+  let snap = null;
+  // Chunks never change, so a cache hit is always correct — and free.
+  try {
+    snap = await FB.getDocsFromCache(col);
+    if (snap.empty) snap = null;
+  } catch (e) { snap = null; }
+  if (!snap) snap = await FB.getDocs(col);
+  if (snap.empty) return null;
+
+  const rows = snap.docs.map(d => d.data()).sort((a, b) => (a.i || 0) - (b.i || 0));
+  const parts = rows.map(r => {
+    const bin = atob(r.b || '');
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  });
+  const meta = await FB.getDoc(fileRef(fileId));
+  const type = (meta.exists() && meta.data().type) || 'application/pdf';
+  return new Blob(parts, { type });
+}
+
+async function fileUrl(fileId) {
+  if (!fileId) return null;
+  if (blobUrlCache.has(fileId)) return blobUrlCache.get(fileId);
+  const blob = await readFileBlob(fileId);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  blobUrlCache.set(fileId, url);
+  return url;
+}
+
+async function deleteStoredFile(fileId) {
+  if (!fileId) return;
+  if (blobUrlCache.has(fileId)) {
+    URL.revokeObjectURL(blobUrlCache.get(fileId));
+    blobUrlCache.delete(fileId);
+  }
+  try {
+    const snap = await FB.getDocs(chunksCol(fileId));
+    const keys = snap.docs.map(d => d.id);
+    for (let i = 0; i < keys.length; i += 400) {
+      const batch = FB.writeBatch(FB.db);
+      for (const k of keys.slice(i, i + 400)) batch.delete(FB.doc(chunksCol(fileId), k));
+      await batch.commit();
+    }
+    await FB.deleteDoc(fileRef(fileId));
+  } catch (e) { /* already gone */ }
 }
 
 function storageError(e) {
   const code = (e && e.code) || '';
-  if (code.includes('unauthorized')) return 'Cloud Storage refused the upload — paste the storage rules in the Firebase console.';
-  if (code.includes('retry-limit') || code.includes('canceled')) return 'The upload timed out. Check the connection and try again.';
-  if (code.includes('quota')) return 'The Cloud Storage quota for this project is used up.';
+  if (code.includes('permission-denied')) return 'Firestore refused the write — paste the security rules in the Firebase console.';
+  if (code.includes('resource-exhausted')) return 'This Firebase project has hit its free-tier limit for the day.';
+  if (code.includes('unavailable')) return 'No connection — the upload will finish when you are back online.';
   return 'Upload failed: ' + (e && (e.message || e.code) || e);
+}
+
+function usedBytes() {
+  return jobs.reduce((n, j) => n + ((j.summary && j.summary.bytes) || 0), 0);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1220,10 +1318,13 @@ function watchJobs() {
         // have their own listener, so keep those.
         const fresh = jobs.find(x => x.id === job.id);
         if (fresh) {
-          job.name = fresh.name; job.number = fresh.number;
-          job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
+          const stale = (fresh.updated || 0) < (job.updated || 0);
+          if (!jobEditDepth && !stale) {
+            job.name = fresh.name; job.number = fresh.number;
+            job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
+          }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
-        } else if (view === 'job') {
+        } else if (view === 'job' && !jobEditDepth) {
           toast('This job was deleted', true);
           go('jobs');
         }
@@ -1233,7 +1334,7 @@ function watchJobs() {
     },
     err => {
       setSync('error', err && err.code === 'permission-denied'
-        ? ' — Firestore refused the read. Paste the security rules in the Firebase console, then reload.'
+        ? ' — Firestore refused the read. Paste firestore.rules into the Firebase console under Firestore Database → Rules, then reload.'
         : ' — ' + (err && err.message || err));
       if (view === 'jobs') renderJobs();
     });
@@ -1244,7 +1345,15 @@ function watchSections(jobId) {
   unsubSections = FB.onSnapshot(sectionsCol(jobId),
     snap => {
       if (!job || job.id !== jobId) return;
-      job.sections = snap.docs.map(d => d.data());
+      const incoming = snap.docs.map(d => d.data());
+      const seen = new Set(incoming.map(x => x.key));
+      const local = job.sections || [];
+      job.sections = incoming.map(x => {
+        if (!pendingSections.has(x.key)) return x;
+        return local.find(y => y.key === x.key) || x;      // keep the edit in progress
+      });
+      // A section added locally but not yet written must survive too.
+      for (const y of local) if (!seen.has(y.key) && pendingSections.has(y.key)) job.sections.push(y);
       sortSections();
       if (view === 'job') {
         renderJob();
@@ -1309,8 +1418,9 @@ async function uploadCarryover() {
         const blob = sp.blobId ? await readLocalBlob(sp.blobId) : null;
         if (blob) {
           step(`Uploading ${sp.name}…`);
-          const up = await uploadFile(`jobs/${lj.id}/specs/${sp.id}`, blob);
-          sp.path = up.path; sp.url = up.url; files++;
+          sp.fileId = await putFile(new File([blob], sp.name, { type: 'application/pdf' }),
+            { jobId: lj.id, kind: 'spec' }, pct => step(`Uploading ${sp.name}… ${Math.round(pct * 100)}%`));
+          sp.size = sp.size || blob.size; files++;
         }
         delete sp.blobId;
       }
@@ -1320,8 +1430,9 @@ async function uploadCarryover() {
             const blob = d.blobId ? await readLocalBlob(d.blobId) : null;
             if (blob) {
               step(`Uploading ${d.name}…`);
-              const up = await uploadFile(`jobs/${lj.id}/sections/${s.key}/${d.id}`, blob);
-              d.path = up.path; d.url = up.url; files++;
+              d.fileId = await putFile(new File([blob], d.name, { type: 'application/pdf' }),
+                { jobId: lj.id, sectionKey: s.key, kind }, pct => step(`Uploading ${d.name}… ${Math.round(pct * 100)}%`));
+              d.size = d.size || blob.size; files++;
             }
             delete d.blobId;
           }
@@ -1421,9 +1532,14 @@ function renderStorageNote() {
     : syncState === 'error'
       ? '<span class="sync-dot off"></span>Not syncing. Changes you make now are held in this browser until the connection is fixed.'
       : '<span class="sync-dot wait"></span>Connecting…';
-  host.innerHTML = state +
-    '<br>Specs, submittals and responses are stored in the project\'s Firebase workspace. ' +
-    'Export a CSV from any job for a copy you can keep elsewhere.';
+  const used = usedBytes();
+  const pct = used / FREE_TIER_BYTES * 100;
+  let line = `<br>PDFs are stored in Firestore — <b>${fmtBytes(used)}</b> of the ${fmtBytes(FREE_TIER_BYTES)} free allowance`;
+  line += pct > 90 ? '. <b>Almost full</b> — delete a finished job before uploading more.'
+        : pct > 70 ? '. Getting full; delete finished jobs to make room.'
+        : '.';
+  host.innerHTML = state + line +
+    ' Export a CSV from any job for a copy of the register you can keep elsewhere.';
 }
 
 function renderLegacyNotice() {
@@ -1489,7 +1605,8 @@ async function submitJobForm(id) {
       const target = job && job.id === id ? job : jobs.find(x => x.id === id);
       if (!target) return;
       target.name = name; target.number = number;
-      await saveJobMeta(target);
+      beginJobEdit();
+      try { await saveJobMeta(target); } finally { endJobEdit(); }
       if (job && job.id === id) { $('crumbJob').textContent = name; renderJob(); }
       closePdf();
       toast('Job updated');
@@ -1516,8 +1633,9 @@ async function submitJobForm(id) {
 function writeError(e) {
   const code = (e && e.code) || '';
   if (code.includes('permission-denied')) {
-    return 'Firestore refused the write — paste the security rules in the Firebase console.';
+    return 'Firestore refused the write — paste firestore.rules into the Firebase console.';
   }
+  if (code.includes('resource-exhausted')) return 'This Firebase project has hit its free-tier limit for the day.';
   if (code.includes('unavailable')) return 'No connection — the change will sync when you are back online.';
   return 'Could not save: ' + (e && (e.message || e.code) || e);
 }
@@ -1532,9 +1650,9 @@ async function deleteJob(id) {
     // Sections carry the file paths, so read them before dropping the documents.
     const snap = await FB.getDocs(sectionsCol(id));
     const secs = snap.docs.map(d => d.data());
-    for (const sp of (j.specs || [])) await deleteFile(sp.path);
+    for (const sp of (j.specs || [])) await deleteStoredFile(sp.fileId);
     for (const s of secs) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
+      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
     }
     await deleteSectionDocs(id, secs.map(s => s.key));
     await FB.deleteDoc(jobRef(id));
@@ -1687,6 +1805,7 @@ async function setStatus(key, value) {
   if (!s) return;
   const from = s.status || 'not_started';
   if (from === value) return;
+  markPending(key);
   s.status = value;
   s.history = s.history || [];
   s.history.push({ ts: Date.now(), from, to: value });
@@ -1829,6 +1948,7 @@ async function setField(key, field, value) {
   const s = findSection(key);
   if (!s) return;
   s[field] = value;
+  markPending(key);                 // protect it across the debounce
   clearTimeout(setField._t);
   setField._t = setTimeout(async () => {
     renderTable();
@@ -1857,6 +1977,12 @@ function wireDrop(el, key, kind) {
 async function addFiles(key, kind, files) {
   const s = findSection(key);
   if (!s || !files.length) return;
+  markPending(key);                 // uploads take a while; hold the section
+  const incoming = files.reduce((n, f) => n + f.size, 0);
+  if (usedBytes() + incoming > FREE_TIER_BYTES) {
+    toast('That would go past the free Firestore allowance — delete a finished job first', true);
+    return;
+  }
   s[kind] = s[kind] || [];
   let added = 0;
   for (const f of files) {
@@ -1866,11 +1992,11 @@ async function addFiles(key, kind, files) {
     }
     const docId = uid('doc');
     try {
-      const up = await uploadFile(`jobs/${job.id}/sections/${s.key}/${docId}`, f,
+      const fileId = await putFile(f, { jobId: job.id, sectionKey: s.key, kind },
         pct => stickyToast(`Uploading ${f.name}… ${Math.round(pct * 100)}%`));
       s[kind].push({
         id: docId, name: f.name, size: f.size, type: f.type || 'application/pdf',
-        uploaded: Date.now(), path: up.path, url: up.url,
+        uploaded: Date.now(), fileId,
         rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : ''
       });
       added++;
@@ -1891,7 +2017,8 @@ async function removeDoc(key, kind, docId) {
   const d = (s[kind] || []).find(x => x.id === docId);
   if (!d) return;
   if (!confirm(`Remove "${d.name}" for everyone?`)) return;
-  await deleteFile(d.path);
+  markPending(key);
+  await deleteStoredFile(d.fileId);
   s[kind] = s[kind].filter(x => x.id !== docId);
   renderDrawer(); renderTable();
   try { await saveSection(s); } catch (e) { toast(writeError(e), true); }
@@ -1900,26 +2027,25 @@ function docOf(key, kind, docId) {
   const s = findSection(key);
   return s ? (s[kind] || []).find(x => x.id === docId) : null;
 }
-function viewDoc(key, kind, docId) {
+async function resolveDoc(key, kind, docId) {
   const d = docOf(key, kind, docId);
-  if (!d || !d.url) { toast('That file is missing from storage', true); return; }
-  showPdf(d.url, d.name);
+  if (!d) return null;
+  if (d.url) return { url: d.url, name: d.name };            // pre-Firestore upload
+  stickyToast(`Opening ${d.name}…`);
+  const url = await fileUrl(d.fileId);
+  if (!url) { toast('That file is missing', true); return null; }
+  toast(' ');
+  return { url, name: d.name };
+}
+async function viewDoc(key, kind, docId) {
+  const got = await resolveDoc(key, kind, docId);
+  if (got) showPdf(got.url, got.name);
 }
 async function downloadDoc(key, kind, docId) {
-  const d = docOf(key, kind, docId);
-  if (!d || !d.url) { toast('That file is missing from storage', true); return; }
-  // A cross-origin href ignores the download attribute, so fetch it when the
-  // bucket allows it and fall back to opening the file in a tab.
-  try {
-    const res = await fetch(d.url);
-    if (!res.ok) throw new Error(res.status);
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a');
-    a.href = url; a.download = d.name; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  } catch (e) {
-    window.open(d.url, '_blank');
-  }
+  const got = await resolveDoc(key, kind, docId);
+  if (!got) return;
+  const a = document.createElement('a');
+  a.href = got.url; a.download = got.name; a.click();
 }
 
 /* ── manual section management ── */
@@ -1936,6 +2062,7 @@ async function addSectionManually() {
     key, number: prettyNum(key), division: divOf(key), title: title.trim(),
     manual: true, inBody: true, requirements: [], includes: []
   });
+  markPending(key);
   job.sections.push(rec);
   sortSections();
   renderJob();
@@ -1957,7 +2084,7 @@ async function deleteSection(key) {
   if (!s) return;
   const files = (s.submittals || []).length + (s.responses || []).length;
   if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?\n\nThis affects everyone on this job.`)) return;
-  for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
+  for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
   job.sections = job.sections.filter(x => x.key !== key);
   closeDrawer(); renderJob();
   try { await FB.deleteDoc(sectionRef(job.id, key)); await saveJobMeta(); }
@@ -2015,8 +2142,12 @@ async function openSpecViewer(specId, page) {
     chooseSpecModal(specs);
     return;
   }
-  if (!sp.url) { toast('The spec PDF is missing from storage', true); return; }
-  showPdf(sp.url, sp.name, page);
+  if (sp.url) { showPdf(sp.url, sp.name, page); return; }     // pre-Firestore upload
+  stickyToast(`Opening ${sp.name}…`);
+  const url = await fileUrl(sp.fileId);
+  if (!url) { toast('The spec PDF is missing', true); return; }
+  toast(' ');
+  showPdf(url, sp.name, page);
 }
 
 function chooseSpecModal(specs) {
@@ -2068,12 +2199,13 @@ function removeSpecPrompt(specId) {
 async function removeSpec(specId, dropSections) {
   const sp = specById(specId);
   if (!sp) return;
+  beginJobEdit();
   const owned = sectionsFromSpec(specId);
   stickyToast(`Removing ${sp.name}…`);
   let keptSections = [];
   if (dropSections) {
     for (const s of owned) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteFile(d.path);
+      for (const d of (s.submittals || []).concat(s.responses || [])) await deleteStoredFile(d.fileId);
     }
     const gone = new Set(owned.map(s => s.key));
     job.sections = job.sections.filter(s => !gone.has(s.key));
@@ -2081,7 +2213,7 @@ async function removeSpec(specId, dropSections) {
     for (const s of owned) { s.specId = null; s.startPage = null; s.endPage = null; }
     keptSections = owned;
   }
-  await deleteFile(sp.path);
+  await deleteStoredFile(sp.fileId);
   job.specs = job.specs.filter(x => x.id !== specId);
   closeDrawer();
   renderJob();
@@ -2090,6 +2222,7 @@ async function removeSpec(specId, dropSections) {
     else await saveSections(keptSections);
     await saveJobMeta();
   } catch (e) { toast(writeError(e), true); return; }
+  finally { endJobEdit(); }
   toast(dropSections ? `Removed ${sp.name} and ${owned.length} section${owned.length === 1 ? '' : 's'}`
                      : `Removed ${sp.name}`);
 }
@@ -2246,6 +2379,7 @@ function showImportReview(file, pageCount, result) {
 
 async function confirmImport() {
   if (!pendingImport) return;
+  beginJobEdit();
   const { file, pageCount, result } = pendingImport;
   const ticked = Array.from(document.querySelectorAll('.review-row input[type=checkbox]')).filter(c => c.checked);
   const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
@@ -2257,14 +2391,14 @@ async function confirmImport() {
 
   try {
     const specId = uid('spec');
-    const up = await uploadFile(`jobs/${job.id}/specs/${specId}`, file, pct => {
+    const fileId = await putFile(file, { jobId: job.id, kind: 'spec' }, pct => {
       const bar = $('upBar'), step = $('upStep');
       if (bar) bar.style.width = Math.round(pct * 100) + '%';
       if (step) step.textContent = `Uploading… ${Math.round(pct * 100)}%`;
     });
     job.specs = job.specs || [];
     job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
-      path: up.path, url: up.url, added: Date.now() });
+      fileId, added: Date.now() });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
     let added = 0, updated = 0;
@@ -2309,6 +2443,7 @@ async function confirmImport() {
       <div class="modal-foot"><button class="btn" onclick="cancelImport()">Close</button></div>`);
   } finally {
     pendingImport = null;
+    endJobEdit();
   }
 }
 

@@ -8,24 +8,25 @@ The whole app is `index.html`. There is no build step.
 
 ## Firebase setup
 
-The register lives in Firestore and the PDFs in Cloud Storage, so every device
-on the job sees the same log and changes appear live.
+The register lives in Firestore, and so do the PDFs. Cloud Storage would be the
+natural home for them, but it needs a billing account — Firestore does not, so
+files are split into chunk documents instead. Nothing here costs anything on
+the free Spark plan.
 
 1. **Firestore** — Firebase console → Build → Firestore Database → Create
    database. Any location; the rules below replace whatever mode you pick.
-2. **Cloud Storage** — Build → Storage → Get started. New Firebase projects need
-   the Blaze plan before a bucket can be created.
-3. **Rules** — paste `firestore.rules` into Firestore → Rules and
-   `storage.rules` into Storage → Rules, then Publish each.
-4. **Authorised domains** — Authentication → Settings → Authorised domains must
+2. **Rules** — paste `firestore.rules` into Firestore → Rules, then Publish.
+3. **Authorised domains** — Authentication → Settings → Authorised domains must
    list wherever the page is served from (for GitHub Pages that is
    `<user>.github.io`).
 
 Or, with the Firebase CLI:
 
 ```
-firebase deploy --only firestore:rules,storage:rules
+firebase deploy --only firestore:rules
 ```
+
+There is no Cloud Storage step, and no bucket to create.
 
 ### Access
 
@@ -41,12 +42,25 @@ starts being shared.
 ```
 jobs/{jobId}                        name, number, spec files, status roll-up
 jobs/{jobId}/sections/{sectionKey}  one document per spec section
+files/{fileId}                      a PDF's name, size and chunk count
+files/{fileId}/chunks/{n}           ~600 KB of that PDF, base64 encoded
 ```
 
 Sections are separate documents so two people editing different sections at the
-same time cannot overwrite each other. PDFs go to
-`jobs/{jobId}/specs/{specId}` and
-`jobs/{jobId}/sections/{sectionKey}/{docId}`.
+same time cannot overwrite each other.
+
+A Firestore document holds just under 1 MiB, so each PDF is base64 encoded and
+split across chunk documents of 600 KB. Chunks are written once and never
+change, which means reads are served from the SDK's local cache and cost
+nothing after the first time.
+
+### The free-tier ceiling
+
+Firestore's free plan stores **1 GiB total**. The jobs page shows how much of
+that the PDFs are using and warns past 70%. Uploads that would cross the line
+are refused rather than half-written. Roughly, that is one spec manual plus a
+few hundred megabytes of submittals — delete finished jobs to make room, or
+move to Blaze and switch back to Cloud Storage when it stops being enough.
 
 ## Local development
 
