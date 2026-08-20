@@ -73,8 +73,16 @@ by hand — an override is never overwritten.
 
 Recording a release asks whether it finishes the section (the default) or is
 only part of it — "Phase 1 — TU boxes". A section can hold as many releases as
-it takes. Once anything is released, the row on the main page carries the lead
-time, the release date and the delivery window alongside the status.
+it takes, and the main page names each one with its release date and delivery
+window, not just a count.
+
+Each release has a **delivered** tick, on the main page as well as in the
+section panel. It records only that the thing arrived — no date is asked for
+and none is invented.
+
+The main page carries the section number, title, status and release. Submittal
+and response counts and the spec page reference live in the section panel,
+where they are actually used.
 
 ## Documents: upload or link
 

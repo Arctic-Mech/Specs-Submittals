@@ -295,7 +295,14 @@ tbody tr.sel td { background: var(--accent-sf); }
 .c-title { font-weight: 500; }
 .c-title .sub { font-size: 11.5px; color: var(--text-3); font-weight: 400; }
 tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.35; }
-tbody td .sub.due-line { color: var(--blue); font-weight: 600; }
+.lead-tag { font-size: 11.5px; color: var(--text-3); margin-left: 8px; white-space: nowrap; }
+.rel-line { display: flex; align-items: flex-start; gap: 7px; margin-top: 5px; }
+.rel-line .tick { display: flex; align-items: center; padding-top: 1px; cursor: pointer; }
+.rel-line .tick input { cursor: pointer; margin: 0; }
+.rel-of { min-width: 0; line-height: 1.35; }
+.rel-of > b { display: block; font-size: 12px; font-weight: 600; }
+.rel-of small { display: block; font-size: 11.5px; color: var(--text-3); }
+.delivered-tag { color: var(--green); font-weight: 700; }
 .divhead td {
   background: var(--surface-3) !important; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); padding: 7px 12px;
@@ -404,6 +411,9 @@ tbody td .sub.due-line { color: var(--blue); font-weight: 600; }
 .rel-row .rn b { display: block; font-weight: 600; font-size: 13px; }
 .rel-row .rn small { color: var(--text-3); font-size: 11.5px; }
 .rel-row .due { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.rel-row .tick { display: flex; align-items: center; cursor: pointer; }
+.rel-row .tick input { cursor: pointer; margin: 0; }
+.rel-row.is-delivered { border-color: var(--green); background: var(--green-sf); }
 .seg-sm { display: flex; background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 7px; padding: 2px; flex-wrap: wrap; }
 .seg-sm button { border: none; background: transparent; padding: 5px 10px; border-radius: 5px;
@@ -579,10 +589,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <th style="width:104px">Section</th>
         <th>Title</th>
         <th style="width:172px">Status</th>
-        <th style="width:210px" class="hide-sm">Release</th>
-        <th style="width:96px" class="num">Submittal</th>
-        <th style="width:96px" class="num">Response</th>
-        <th style="width:92px" class="num hide-sm">Spec</th>
+        <th style="width:330px">Release</th>
       </tr></thead>
       <tbody id="secBody"></tbody>
     </table></div>
@@ -677,7 +684,8 @@ function parseLead(raw) {
 function leadLabel(raw) {
   const L = parseLead(raw);
   if (!L) return String(raw || '').trim();
-  return (L.min === L.max ? String(L.min) : L.min + '–' + L.max) + ' wk';
+  const n = L.min === L.max ? String(L.min) : L.min + '–' + L.max;
+  return n + (L.max === 1 ? ' week' : ' weeks');
 }
 function expectedRange(dateStr, leadRaw) {
   const L = parseLead(leadRaw);
@@ -2161,17 +2169,40 @@ function countLabel() {
 function releaseCell(s, rl) {
   if (rl.id === 'not_ready') return '<span class="muted">—</span>';
   const pill = `<span class="pill" style="color:${cvar(rl.color)};background:${csf(rl.color)}"><i></i>${esc(rl.label)}</span>`;
-  if (rl.id === 'ready') return pill;
-
-  const n = (s.releases || []).length;
-  const on = releasedOn(s);
-  const win = expectedWindow(s);
   const lead = leadLabel(s.leadWeeks);
-  const line1 = [lead ? lead + ' lead' : '', on ? 'rel ' + fmtShort(on) : '']
-    .filter(Boolean).join(' · ') + (n > 1 ? ` · ${n} releases` : '');
-  return pill +
-    (line1.trim() ? `<div class="sub">${esc(line1)}</div>` : '') +
-    (win.from ? `<div class="sub due-line">arrives ${esc(fmtWindow(win))}</div>` : '');
+  const head = pill + (lead ? `<span class="lead-tag">Lead time ${esc(lead)}</span>` : '');
+  if (rl.id === 'ready') return head;
+
+  // Say what went out, not just that something did.
+  const lines = (s.releases || []).map(r => {
+    const when = r.date ? 'Released ' + fmtShort(r.date) : 'Release date not set';
+    const arrival = r.delivered
+      ? '<b class="delivered-tag">Delivered</b>'
+      : (r.expected ? 'arrives ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : 'no delivery date');
+    return `<div class="rel-line">
+      <label class="tick" title="Tick when it arrives on site" onclick="event.stopPropagation()">
+        <input type="checkbox" ${r.delivered ? 'checked' : ''}
+          onchange="toggleDelivered('${s.key}','${r.id}', this.checked)">
+      </label>
+      <span class="rel-of">
+        <b>${esc(r.label)}</b>
+        <small>${esc(when)} · ${arrival}</small>
+      </span>
+    </div>`;
+  }).join('');
+  return head + lines;
+}
+
+async function toggleDelivered(key, relId, on) {
+  const s = findSection(key);
+  if (!s) return;
+  const r = (s.releases || []).find(x => x.id === relId);
+  if (!r) return;
+  markPending(key);
+  r.delivered = !!on;          // just a tick — no date is recorded or invented
+  renderTable();
+  if (openKey === key) renderDrawer();
+  try { await patchSection(key, { releases: s.releases }); } catch (e) { toast(writeError(e), true); }
 }
 
 function renderTable() {
@@ -2192,7 +2223,7 @@ function renderTable() {
   $('jobEmpty').innerHTML = '';
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="7"><div class="empty" style="border:none;background:transparent;padding:34px">
+    body.innerHTML = `<tr><td colspan="4"><div class="empty" style="border:none;background:transparent;padding:34px">
       <h3>Nothing matches</h3><p>Try a different search or clear the status filter.</p></div></td></tr>`;
     return;
   }
@@ -2201,15 +2232,11 @@ function renderTable() {
   for (const s of list) {
     if (divFilter === 'all' && s.division !== lastDiv) {
       lastDiv = s.division;
-      html += `<tr class="divhead"><td colspan="7">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
+      html += `<tr class="divhead"><td colspan="4">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
     }
     const st = ST[s.status || 'not_started'];
     const rl = relOf(s);
     const hitTag = matchedTag(s, query.trim().toLowerCase());
-    const nSub = (s.submittals || []).length, nRes = (s.responses || []).length;
-    const sf = s.specId ? specById(s.specId) : null;
-    const spec = s.startPage ? `p. ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : '—';
-    const specHint = sf ? `${sf.name}${s.startPage ? ', page ' + s.startPage : ''}` : 'No spec file linked';
     html += `<tr class="${openKey === s.key ? 'sel ' : ''}${st.id === 'na' ? 'row-na' : ''}" onclick="openSection('${s.key}')">
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title"><span>${esc(s.title || '(untitled)')}</span>
@@ -2223,10 +2250,7 @@ function renderTable() {
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
-      <td class="hide-sm">${releaseCell(s, rl)}</td>
-      <td class="num"><span class="dot-count ${nSub ? '' : 'zero'}">📄 ${nSub}</span></td>
-      <td class="num"><span class="dot-count ${nRes ? '' : 'zero'}">✔ ${nRes}</span></td>
-      <td class="num hide-sm"><span class="muted" title="${esc(specHint)}">${spec}</span></td>
+      <td>${releaseCell(s, rl)}</td>
     </tr>`;
   }
   body.innerHTML = html;
@@ -2604,13 +2628,17 @@ async function removeTag(key, tag) {
 function releaseList(s) {
   const list = s.releases || [];
   if (!list.length) return `<div class="muted" style="margin-bottom:8px">Nothing released yet.</div>`;
-  return list.map(r => `<div class="rel-row">
-      <span class="fi">📦</span>
+  return list.map(r => `<div class="rel-row${r.delivered ? ' is-delivered' : ''}">
+      <label class="tick" title="Tick when it arrives on site">
+        <input type="checkbox" ${r.delivered ? 'checked' : ''}
+          onchange="toggleDelivered('${s.key}','${r.id}', this.checked)">
+      </label>
       <span class="rn"><b>${esc(r.label)}</b>
         <small>Released ${esc(r.date ? fmtDate(r.date + 'T00:00:00') : '—')}${
-          r.weeks ? ' · ' + esc(leadLabel(r.weeks)) + ' lead' : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
-      <span class="due" style="color:${r.expected ? cvar('blue') : 'var(--text-3)'}">${
-        r.expected ? 'Due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : 'no date'}</span>
+          r.weeks ? ' · lead time ' + esc(leadLabel(r.weeks)) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
+      <span class="due" style="color:${r.delivered ? cvar('green') : (r.expected ? cvar('blue') : 'var(--text-3)')}">${
+        r.delivered ? 'Delivered' :
+        (r.expected ? 'Due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : 'no date')}</span>
       <button class="btn sm ghost" onclick="releaseModal('${s.key}','${r.id}')" title="Edit">✎</button>
       <button class="btn sm ghost" onclick="removeRelease('${s.key}','${r.id}')" title="Remove">✕</button>
     </div>`).join('');
@@ -3306,8 +3334,9 @@ function csvCell(v) {
 function exportCsv() {
   if (!job) return;
   const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Lead time (wks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
-    'Releases', 'Tags', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
+    'Returned', 'Lead time (weeks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
+    'Delivered', 'Releases', 'Tags', 'Submittal files', 'Response files', 'Links',
+    'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
     s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
@@ -3316,8 +3345,15 @@ function exportCsv() {
     releasedOn(s),
     expectedWindow(s).from,
     expectedWindow(s).to || expectedWindow(s).from,
-    (s.releases || []).map(r => `${r.label} (rel ${r.date || '?'}${
-      r.expected ? ', due ' + r.expected + (r.expectedTo ? '–' + r.expectedTo : '') : ''})`).join(' | '),
+    (() => {
+      const rels = s.releases || [];
+      if (!rels.length) return '';
+      const done = rels.filter(r => r.delivered).length;
+      return done === rels.length ? 'All delivered' : done ? `${done} of ${rels.length} delivered` : 'No';
+    })(),
+    (s.releases || []).map(r => `${r.label} (released ${r.date || '?'}${
+      r.expected ? ', due ' + r.expected + (r.expectedTo ? '–' + r.expectedTo : '') : ''}${
+      r.delivered ? ', delivered' : ''})`).join(' | '),
     (s.tags || []).join(', '),
     (s.submittals || []).map(d => d.name).join(' | '),
     (s.responses || []).map(d => d.name).join(' | '),
