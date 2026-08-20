@@ -41,8 +41,8 @@ starts being shared.
 
 ## Tags and search
 
-Search covers the section number, the title, tags, vendor, package, notes,
-release labels and document names.
+Search covers the section number, the title, description, spec, manufacturer,
+tags, vendor, package, notes, release labels and document names.
 
 Tags are what make search useful. On import each section's text is scanned for
 the terms mechanical people actually search for, with the synonyms spelled out —
@@ -64,7 +64,8 @@ Partial Approval → Approved, with Revise & Resubmit and Not Required alongside
 Release is tracked separately, because a section can be approved and only part
 of it released. Approving a section moves it to **Ready to Release**. Setting it
 to **Released** records a full release there and then, so there is always a date
-to run the lead time from.
+to run the lead time from. A section that never gets released — furnished by
+others, or deleted from scope — can have its release set to **N/A**.
 
 Lead time is free text and takes a range: `6`, `6-7`, `6 to 8`, `10 weeks`. A
 range gives a delivery window rather than a single date. Filling the lead time
@@ -80,9 +81,15 @@ Each release has a **delivered** tick, on the main page as well as in the
 section panel. It records only that the thing arrived — no date is asked for
 and none is invented.
 
-The main page carries the section number, title, status and release. Submittal
-and response counts and the spec page reference live in the section panel,
-where they are actually used.
+The main page carries the section number, title, a one-line description, the
+spec, the vendor, the status and the release — every one of them editable in
+place, straight from the row, without opening the panel. The manufacturer, the
+submittal and response counts, and the spec page reference live in the section
+panel, where they are actually used.
+
+Rows are a uniform height, so a section with several releases is no taller than
+one with none: the main page shows the first couple of releases with a "+N more"
+line, and the section panel lists them all.
 
 ## Documents: upload or link
 

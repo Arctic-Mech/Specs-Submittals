@@ -158,7 +158,7 @@ header {
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 
-.wrap { max-width: 1220px; margin: 0 auto; padding: 24px 18px 80px; }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 24px 18px 80px; }
 
 /* ── jobs home ── */
 .page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -303,6 +303,25 @@ tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-h
 .rel-of > b { display: block; font-size: 12px; font-weight: 600; }
 .rel-of small { display: block; font-size: 11.5px; color: var(--text-3); }
 .delivered-tag { color: var(--green); font-weight: 700; }
+/* Uniform, slightly taller rows — a section with releases is no taller than one
+   without. The release cell is clipped and shows "+N more" instead of growing. */
+#secBody td { height: 62px; }
+#secBody tr.divhead td { height: auto; }
+.c-num { cursor: pointer; }
+.c-num:hover { color: var(--accent); text-decoration: underline; }
+.c-rel { vertical-align: top; padding-top: 10px; }
+.rel-cell { max-height: 40px; overflow: hidden; }
+.rel-more { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+/* Inline editing straight from the main page. */
+.cell-in {
+  width: 100%; border: 1px solid transparent; background: transparent; border-radius: 6px;
+  padding: 4px 6px; font: inherit; color: inherit; box-sizing: border-box;
+}
+.cell-in::placeholder { color: var(--text-3); opacity: .7; }
+.cell-in:hover { border-color: var(--border); }
+.cell-in:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.cell-title { font-weight: 500; }
+.cell-desc { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .divhead td {
   background: var(--surface-3) !important; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); padding: 7px 12px;
@@ -474,7 +493,7 @@ tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-h
 
 /* Sections marked Not Required sink to the bottom and read as struck out. */
 tbody tr.row-na td { opacity: .55; }
-tbody tr.row-na .c-title > span:first-child,
+tbody tr.row-na .cell-title,
 tbody tr.row-na .c-num { text-decoration: line-through; }
 .drawer-head.is-na h2 { text-decoration: line-through; opacity: .6; }
 
@@ -586,10 +605,12 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <div class="chips" id="releaseChips"></div>
     <div class="table-card"><table>
       <thead><tr>
-        <th style="width:104px">Section</th>
+        <th style="width:96px">Section</th>
         <th>Title</th>
-        <th style="width:172px">Status</th>
-        <th style="width:330px">Release</th>
+        <th style="width:150px">Spec</th>
+        <th style="width:160px">Vendor</th>
+        <th style="width:168px">Status</th>
+        <th style="width:300px">Release</th>
       </tr></thead>
       <tbody id="secBody"></tbody>
     </table></div>
@@ -652,7 +673,8 @@ const RELEASES = [
   { id: 'not_ready', label: 'Not Ready',          short: '—',        color: 'grey'   },
   { id: 'ready',     label: 'Ready to Release',   short: 'Ready',    color: 'violet' },
   { id: 'partial',   label: 'Partially Released', short: 'Part',     color: 'amber'  },
-  { id: 'released',  label: 'Released',           short: 'Released', color: 'green'  }
+  { id: 'released',  label: 'Released',           short: 'Released', color: 'green'  },
+  { id: 'na',        label: 'N/A',                short: 'N/A',      color: 'grey'   }
 ];
 const RL = Object.fromEntries(RELEASES.map(r => [r.id, r]));
 const relOf = s => RL[s.releaseState || 'not_ready'] || RL.not_ready;
@@ -2064,7 +2086,7 @@ async function deleteJob(id) {
    ═══════════════════════════════════════════════════════════════════════════ */
 /* Everything worth finding a section by, tags included. */
 function searchHay(s) {
-  return [s.number, s.key, s.title, s.vendor, s.package, s.notes,
+  return [s.number, s.key, s.title, s.vendor, s.spec, s.description, s.manufacturer, s.package, s.notes,
     (s.tags || []).join(' '),
     (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
     (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
@@ -2168,13 +2190,19 @@ function countLabel() {
    lead time, the release date and the delivery window all show on the row. */
 function releaseCell(s, rl) {
   if (rl.id === 'not_ready') return '<span class="muted">—</span>';
+  if (rl.id === 'na') return '<span class="pill" style="color:var(--text-3);background:var(--surface-2)"><i></i>N/A</span>';
   const pill = `<span class="pill" style="color:${cvar(rl.color)};background:${csf(rl.color)}"><i></i>${esc(rl.label)}</span>`;
   const lead = leadLabel(s.leadWeeks);
   const head = pill + (lead ? `<span class="lead-tag">Lead time ${esc(lead)}</span>` : '');
   if (rl.id === 'ready') return head;
 
+  // Rows stay a uniform height, so only the first couple of releases show on
+  // the main page; the section panel lists them all.
+  const all = s.releases || [];
+  const shown = all.slice(0, 2);
+  const more = all.length - shown.length;
   // Say what went out, not just that something did.
-  const lines = (s.releases || []).map(r => {
+  const lines = shown.map(r => {
     const when = r.date ? 'Released ' + fmtShort(r.date) : 'Release date not set';
     const arrival = r.delivered
       ? '<b class="delivered-tag">Delivered</b>'
@@ -2190,7 +2218,8 @@ function releaseCell(s, rl) {
       </span>
     </div>`;
   }).join('');
-  return head + lines;
+  const moreLine = more > 0 ? `<div class="rel-more">+${more} more release${more === 1 ? '' : 's'}</div>` : '';
+  return head + `<div class="rel-cell">${lines}${moreLine}</div>`;
 }
 
 async function toggleDelivered(key, relId, on) {
@@ -2223,7 +2252,7 @@ function renderTable() {
   $('jobEmpty').innerHTML = '';
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="4"><div class="empty" style="border:none;background:transparent;padding:34px">
+    body.innerHTML = `<tr><td colspan="6"><div class="empty" style="border:none;background:transparent;padding:34px">
       <h3>Nothing matches</h3><p>Try a different search or clear the status filter.</p></div></td></tr>`;
     return;
   }
@@ -2232,28 +2261,64 @@ function renderTable() {
   for (const s of list) {
     if (divFilter === 'all' && s.division !== lastDiv) {
       lastDiv = s.division;
-      html += `<tr class="divhead"><td colspan="4">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
+      html += `<tr class="divhead"><td colspan="6">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
     }
     const st = ST[s.status || 'not_started'];
     const rl = relOf(s);
     const hitTag = matchedTag(s, query.trim().toLowerCase());
-    html += `<tr class="${openKey === s.key ? 'sel ' : ''}${st.id === 'na' ? 'row-na' : ''}" onclick="openSection('${s.key}')">
-      <td class="c-num">${esc(s.number)}</td>
-      <td class="c-title"><span>${esc(s.title || '(untitled)')}</span>
+    html += `<tr class="${openKey === s.key ? 'sel ' : ''}${st.id === 'na' ? 'row-na' : ''}">
+      <td class="c-num" onclick="openSection('${s.key}')" title="Open this section">${esc(s.number)}</td>
+      <td class="c-title" onclick="cellEdit(event)">
+        <input class="cell-in cell-title" data-key="${s.key}" data-field="title"
+          value="${esc(s.title || '')}" placeholder="(untitled)"
+          onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','title',this.value)">
         ${hitTag ? `<span class="row-tag">${esc(hitTag)}</span>` : ''}
-        ${s.manual ? '<span class="flag">Added</span>' : ''}
         ${(s.inBody === false) ? '<span class="flag">Index only</span>' : ''}
-        ${s.package ? `<div class="sub">${esc(s.package)}${s.vendor ? ' · ' + esc(s.vendor) : ''}</div>`
-          : (s.vendor ? `<div class="sub">${esc(s.vendor)}</div>` : '')}</td>
+        <input class="cell-in cell-desc" data-key="${s.key}" data-field="description"
+          value="${esc(s.description || '')}" placeholder="Add a description…"
+          onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','description',this.value)"></td>
+      <td onclick="cellEdit(event)">
+        <input class="cell-in" data-key="${s.key}" data-field="spec"
+          value="${esc(s.spec || '')}" placeholder="—"
+          onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','spec',this.value)"></td>
+      <td onclick="cellEdit(event)">
+        <input class="cell-in" data-key="${s.key}" data-field="vendor"
+          value="${esc(s.vendor || '')}" placeholder="—"
+          onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','vendor',this.value)"></td>
       <td onclick="event.stopPropagation()">
         <select class="st-select" style="color:${cvar(st.color)};background:${csf(st.color)};border-color:${cvar(st.color)}"
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
-      <td>${releaseCell(s, rl)}</td>
+      <td class="c-rel">${releaseCell(s, rl)}</td>
     </tr>`;
   }
+  // Re-rendering the table (a debounced save, or a live snapshot from another
+  // browser) must not yank the caret out of an input someone is typing in.
+  const focus = captureCellFocus(body);
   body.innerHTML = html;
+  restoreCellFocus(body, focus);
+}
+
+/* Clicking anywhere in an editable cell drops the caret into its input. */
+function cellEdit(e) {
+  if (e.target.tagName === 'INPUT') return;   // the input handles its own click
+  const inp = e.currentTarget.querySelector('.cell-in');
+  if (inp) inp.focus();
+}
+
+function captureCellFocus(body) {
+  const el = document.activeElement;
+  if (!el || !body.contains(el) || !el.classList.contains('cell-in')) return null;
+  return { key: el.getAttribute('data-key'), field: el.getAttribute('data-field'),
+    start: el.selectionStart, end: el.selectionEnd };
+}
+function restoreCellFocus(body, f) {
+  if (!f) return;
+  const el = body.querySelector(`.cell-in[data-key="${f.key}"][data-field="${f.field}"]`);
+  if (!el) return;
+  el.focus();
+  try { el.setSelectionRange(f.start, f.end); } catch (_) {}
 }
 
 async function setStatus(key, value) {
@@ -2391,6 +2456,12 @@ function renderDrawer() {
           <div class="field"><label class="fl">Expected delivery</label>
             <input class="input" value="${esc(fmtWindow(expectedWindow(s)))}"
               placeholder="set when released" disabled></div>
+          <div class="field"><label class="fl">Manufacturer</label>
+            <input class="input" value="${esc(s.manufacturer || '')}" oninput="setField('${s.key}','manufacturer',this.value)"></div>
+          <div class="field"><label class="fl">Spec</label>
+            <input class="input" value="${esc(s.spec || '')}" oninput="setField('${s.key}','spec',this.value)"></div>
+          <div class="field" style="grid-column:1/-1"><label class="fl">Description</label>
+            <input class="input" value="${esc(s.description || '')}" oninput="setField('${s.key}','description',this.value)"></div>
         </div>
         <div class="field" style="margin-bottom:0"><label class="fl">Notes</label>
           <textarea class="input" oninput="setField('${s.key}','notes',this.value)"
@@ -2777,12 +2848,18 @@ async function removeRelease(key, relId) {
   catch (e) { toast(writeError(e), true); }
 }
 
+/* Edits are debounced, but each section keeps its own pending patch and its own
+   timer — editing the title, then the spec, then the vendor in quick succession
+   must not let one field's write cancel the others. */
+const _fieldPatches = new Map();   // key → { field: value, … }
+const _fieldTimers = new Map();    // key → timeout id
 async function setField(key, field, value) {
   const s = findSection(key);
   if (!s) return;
   s[field] = value;
   markPending(key);                 // protect it across the debounce
-  const patch = { [field]: value };
+  const patch = _fieldPatches.get(key) || {};
+  patch[field] = value;
 
   // A lead time is often filled in after the release. Re-date anything whose
   // delivery has not been typed in by hand.
@@ -2796,12 +2873,16 @@ async function setField(key, field, value) {
     patch.releases = s.releases || [];
     if (openKey === key) renderDrawer();
   }
+  _fieldPatches.set(key, patch);
 
-  clearTimeout(setField._t);
-  setField._t = setTimeout(async () => {
+  clearTimeout(_fieldTimers.get(key));
+  _fieldTimers.set(key, setTimeout(async () => {
+    _fieldTimers.delete(key);
+    const p = _fieldPatches.get(key); _fieldPatches.delete(key);
+    if (!p) return;
     renderTable();
-    try { await patchSection(key, patch); } catch (e) { toast(writeError(e), true); }
-  }, 500);
+    try { await patchSection(key, p); } catch (e) { toast(writeError(e), true); }
+  }, 500));
 }
 
 /* ── uploads ── */
@@ -2961,7 +3042,8 @@ function sortSections() {
 }
 function newSectionRecord(base) {
   return Object.assign({
-    status: 'not_started', vendor: '', package: '', submittedDate: '', returnedDate: '',
+    status: 'not_started', vendor: '', spec: '', description: '', manufacturer: '',
+    package: '', submittedDate: '', returnedDate: '',
     notes: '', submittals: [], responses: [], history: [],
     tags: [], autoTags: [], leadWeeks: '', releaseState: 'not_ready', releases: []
   }, base);
@@ -3333,12 +3415,13 @@ function csvCell(v) {
 }
 function exportCsv() {
   if (!job) return;
-  const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
+  const head = ['Division', 'Section', 'Title', 'Description', 'Spec', 'Manufacturer', 'Status', 'Vendor', 'Package', 'Sent to GC',
     'Returned', 'Lead time (weeks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
     'Delivered', 'Releases', 'Tags', 'Submittal files', 'Response files', 'Links',
     'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
-    s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
+    s.division, s.number, s.title, s.description || '', s.spec || '', s.manufacturer || '',
+    (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
     s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''),
     relOf(s).label,
