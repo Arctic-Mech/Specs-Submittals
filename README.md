@@ -7,7 +7,49 @@ come back, and what has been released to site.
 
 The whole app is `index.html`. There is no build step.
 
+## Where it saves — two modes
+
+The register has two storage backends, chosen with the **storage button** in the
+top-right. The choice is remembered per browser.
+
+- **ShareFile folder (default).** Each job is one folder in ShareFile. The whole
+  register is a `register.json` file in that folder and every uploaded PDF is a
+  real file beside it, so ShareFile Drive syncs them to everyone exactly like a
+  saved spreadsheet. **Chrome or Edge only**, and each machine needs ShareFile
+  Drive (or any sync that makes the job folder a normal local folder). There is
+  no cloud database and no storage ceiling beyond the disk.
+- **Firebase (off by default).** The original shared-cloud store with live
+  sync. Kept so jobs saved before the switch stay reachable — flip the toggle to
+  open them.
+
+### ShareFile-folder mode
+
+Opening the app shows **Open a job folder**. Pick a job's folder:
+
+- A folder that already has a `register.json` opens straight into the job.
+- An empty folder starts a new job — name it, import the spec, and the app writes
+  `register.json`, the spec PDF, and a launcher shortcut into the folder.
+
+**Saving is automatic.** Every change writes `register.json` as you work (the
+header shows *Saving… → Saved ✓*); ShareFile syncs it up. There is no Save
+button. To pull in a coworker's synced changes, press **Reload** — folder mode
+doesn't push live like Firebase did. Two people editing at once is last-write-
+wins; ShareFile may occasionally leave a `register (conflicted copy).json` to
+tidy up.
+
+**Launching from the folder.** Each job folder carries an `Open Register.url`
+shortcut pointing at the hosted app with that job's id. Double-clicking it opens
+the app straight to the job — as close to "open it from the folder" as a browser
+allows. A browser can't save from a double-clicked HTML file (that's the
+`file://` sandbox), so the app is always opened from its web address and the
+shortcut is what lives in the folder. The shortcut opens in the machine's default
+browser, which must be Chrome or Edge. The first time each person opens a given
+job they pick its folder once; after that it's a single permission click.
+
 ## Firebase setup
+
+Firebase is the alternate backend. These steps only matter if you use it.
+
 
 The register lives in Firestore, and so do any uploaded PDFs. Cloud Storage
 would be the natural home for the files, but it needs a billing account —
@@ -108,6 +150,16 @@ blocked. A link needs none of that.
 
 ## Data
 
+**ShareFile-folder mode** — one job folder holds:
+
+```
+register.json          the whole job: meta + sections (spec text inline) + file index
+files/<fileId>.pdf     each uploaded submittal / response / spec PDF, as a real file
+Open Register.url      the launcher shortcut to the hosted app for this job
+```
+
+**Firebase mode** — Firestore documents:
+
 ```
 jobs/{jobId}                        name, number, ShareFile folder, spec files, roll-up
 jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, documents
@@ -136,8 +188,9 @@ spec text inline are moved across the first time the job is opened: the copy is
 written and read back from the server before the inline fields are removed, so
 an interrupted run leaves the data exactly as it was.
 
-### The free-tier ceiling
+### The free-tier ceiling (Firebase mode only)
 
+Folder mode has no such ceiling — files live on disk and in ShareFile.
 Firestore's free plan stores **1 GiB total**, and only uploads count against it.
 The jobs page shows what is used and warns past 70%, each upload area shows the
 headroom, an upload over 25 MB offers the link route first, and anything that
@@ -152,5 +205,8 @@ npx firebase emulators:start --project specs-submittals
 ```
 
 `index.html` calls `window.__fbConnect(...)` if something has defined it, which
-is where a test harness points the app at the emulators. Nothing defines it in
-production.
+is where a test harness points the app at the emulators (in Firebase mode).
+Nothing defines it in production. The Firebase suite sets
+`localStorage.sr_storage_mode = 'firebase'` before load; the folder-mode suite
+(`jstest/folder.js`) injects a mock `showDirectoryPicker` and drives the whole
+register.json / files / launcher / Reload flow without a real folder dialog.
