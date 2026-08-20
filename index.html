@@ -64,6 +64,8 @@ window.dispatchEvent(new Event('fb-ready'));
   --blue:      #1f6feb;   --blue-sf:  #e6effd;
   --green:     #157347;   --green-sf: #e2f4ea;
   --red:       #c0392f;   --red-sf:   #fdeae8;
+  --teal:      #0f766e;   --teal-sf:  #ddf4f1;
+  --violet:    #6d28d9;   --violet-sf:#efe8fd;
   --radius: 8px;
   --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06);
   --shadow-lg: 0 12px 40px rgba(16,24,40,.18);
@@ -86,6 +88,8 @@ html[data-theme="dark"] {
   --blue:      #4d94ff;   --blue-sf:  #12233c;
   --green:     #3fbf7f;   --green-sf: #10281d;
   --red:       #f87171;   --red-sf:   #2e1616;
+  --teal:      #2dd4bf;   --teal-sf:  #0f2b28;
+  --violet:    #a78bfa;   --violet-sf:#221a38;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
   --shadow-lg: 0 12px 40px rgba(0,0,0,.55);
 }
@@ -255,7 +259,9 @@ header {
 .choice-btn.danger:hover { border-color: var(--red); background: var(--red-sf); }
 .choice-btn.danger b { color: var(--red); }
 
-.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+.chip-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-3); margin-right: 2px; }
 .chip {
   border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
   padding: 4px 11px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
@@ -362,6 +368,45 @@ tbody tr.sel td { background: var(--accent-sf); }
   font-family: var(--mono); font-size: 11px; background: var(--surface-3); color: var(--text-2);
   border-radius: 4px; padding: 1px 5px; flex: none;
 }
+
+.tag-wrap { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  background: var(--accent-sf); color: var(--accent); border: 1px solid transparent;
+  border-radius: 999px; padding: 3px 5px 3px 10px; white-space: nowrap;
+}
+.tag-chip button {
+  border: none; background: transparent; color: inherit; cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 1px 3px; border-radius: 50%; opacity: .6;
+}
+.tag-chip button:hover { opacity: 1; background: rgba(0,0,0,.08); }
+.tag-add {
+  border: 1px dashed var(--border-2); background: transparent; border-radius: 999px;
+  padding: 3px 11px; font-size: 12px; color: var(--text-2); cursor: pointer;
+}
+.tag-add:hover { border-color: var(--accent); color: var(--accent); }
+.tag-input {
+  border: 1px solid var(--accent); border-radius: 999px; padding: 3px 11px;
+  font-size: 12px; background: var(--surface); outline: none; width: 150px;
+}
+.row-tag {
+  display: inline-block; font-size: 10.5px; font-weight: 600; background: var(--accent-sf);
+  color: var(--accent); border-radius: 3px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px;
+}
+
+.rel-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border);
+  border-radius: 7px; margin-bottom: 7px; background: var(--surface-2);
+}
+.rel-row .rn { flex: 1; min-width: 0; }
+.rel-row .rn b { display: block; font-weight: 600; font-size: 13px; }
+.rel-row .rn small { color: var(--text-3); font-size: 11.5px; }
+.rel-row .due { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.seg-sm { display: flex; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 2px; flex-wrap: wrap; }
+.seg-sm button { border: none; background: transparent; padding: 5px 10px; border-radius: 5px;
+  cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.seg-sm button.on { background: var(--surface); box-shadow: var(--shadow); font-weight: 650; }
 
 .req-group { margin-bottom: 12px; }
 .req-group:last-child { margin-bottom: 0; }
@@ -526,11 +571,13 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     </div>
 
     <div class="chips" id="statusChips"></div>
+    <div class="chips" id="releaseChips"></div>
     <div class="table-card"><table>
       <thead><tr>
         <th style="width:104px">Section</th>
         <th>Title</th>
-        <th style="width:186px">Status</th>
+        <th style="width:172px">Status</th>
+        <th style="width:132px" class="hide-sm">Release</th>
         <th style="width:96px" class="num">Submittal</th>
         <th style="width:96px" class="num">Response</th>
         <th style="width:92px" class="num hide-sm">Spec</th>
@@ -580,14 +627,41 @@ function loadPdfJs() {
 
 /* ───────────────────────── statuses ───────────────────────── */
 const STATUSES = [
-  { id: 'not_started',     label: 'Not Started',        short: 'Not Started',    color: 'grey'  },
-  { id: 'waiting_vendor',  label: 'Waiting on Vendor',  short: 'Waiting',        color: 'amber' },
-  { id: 'submitted_gc',    label: 'Submitted to GC',    short: 'Submitted',      color: 'blue'  },
-  { id: 'approved',        label: 'Approved',           short: 'Approved',       color: 'green' },
-  { id: 'revise_resubmit', label: 'Revise & Resubmit',  short: 'Revise',         color: 'red'   },
-  { id: 'na',              label: 'Not Required',       short: 'N/A',            color: 'grey'  }
+  { id: 'not_started',      label: 'Not Started',        short: 'Not Started', color: 'grey'   },
+  { id: 'waiting_vendor',   label: 'Waiting on Vendor',  short: 'Waiting',     color: 'amber'  },
+  { id: 'submitted_gc',     label: 'Submitted to GC',    short: 'Submitted',   color: 'blue'   },
+  { id: 'partial_approval', label: 'Partial Approval',   short: 'Partial',     color: 'teal'   },
+  { id: 'approved',         label: 'Approved',           short: 'Approved',    color: 'green'  },
+  { id: 'revise_resubmit',  label: 'Revise & Resubmit',  short: 'Revise',      color: 'red'    },
+  { id: 'na',               label: 'Not Required',       short: 'N/A',         color: 'grey'   }
 ];
 const ST = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+
+/* Release runs alongside approval: a section can be approved and only part of
+   it released — phase 1 of the TU boxes, say. */
+const RELEASES = [
+  { id: 'not_ready', label: 'Not Ready',          short: '—',        color: 'grey'   },
+  { id: 'ready',     label: 'Ready to Release',   short: 'Ready',    color: 'violet' },
+  { id: 'partial',   label: 'Partially Released', short: 'Part',     color: 'amber'  },
+  { id: 'released',  label: 'Released',           short: 'Released', color: 'green'  }
+];
+const RL = Object.fromEntries(RELEASES.map(r => [r.id, r]));
+const relOf = s => RL[s.releaseState || 'not_ready'] || RL.not_ready;
+
+const today = () => new Date().toISOString().slice(0, 10);
+/* A lead time in weeks from a release date gives the expected delivery. */
+function addWeeks(dateStr, weeks) {
+  const w = parseFloat(weeks);
+  if (!dateStr || !isFinite(w)) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
+  d.setDate(d.getDate() + Math.round(w * 7));
+  return d.toISOString().slice(0, 10);
+}
+function nextExpected(s) {
+  const dates = (s.releases || []).map(r => r.expected).filter(Boolean).sort();
+  return dates[0] || '';
+}
 const cvar = c => `var(--${c})`;
 const csf  = c => `var(--${c}-sf)`;
 
@@ -860,6 +934,95 @@ function extractRequirements(lines) {
   return groups;
 }
 
+/* Keyword rules for auto-tagging spec sections.
+   `min` is how many times the term must appear in the body before it counts as
+   what the section is *about* rather than a passing mention. A hit in the title
+   or in "Section Includes" always counts. */
+const TAG_RULES = [
+  // ── equipment ──
+  ['VFD',                 /\bVFDs?\b|\bVFCs?\b|variable[-\s]frequency|variable[-\s]speed\s+drive|adjustable[-\s]frequency\s+drive/i, 2],
+  ['Chiller',             /\bchillers?\b/i, 2],
+  ['Cooling Tower',       /cooling\s+towers?\b/i, 2],
+  ['Boiler',              /\bboilers?\b/i, 3],
+  ['Pump',                /\bpumps?\b/i, 4],
+  ['Booster Pump',        /booster\s+pumps?\b/i, 2],
+  ['Air Handling Unit',   /air[-\s]handling\s+units?\b|\bAHUs?\b/i, 2],
+  ['Fan Coil',            /fan[-\s]coil|blower[-\s]coil/i, 2],
+  ['Terminal Unit',       /air\s+terminal\s+units?\b|\bVAV\b|variable[-\s]air[-\s]volume|terminal\s+units?\b/i, 2],
+  ['Fan',                 /\bfans?\b/i, 5],
+  ['Power Ventilator',    /power\s+ventilators?|gravity\s+ventilators?/i, 2],
+  ['Humidifier',          /humidifiers?\b/i, 2],
+  ['Heat Exchanger',      /heat\s+exchangers?\b/i, 2],
+  ['Expansion Tank',      /expansion\s+tanks?\b/i, 2],
+  ['Water Heater',        /water\s+heaters?\b/i, 2],
+  ['Motor',               /\bmotors?\b/i, 5],
+  ['Coil',                /\bcoils?\b/i, 4],
+  ['Filter',              /\bfilters?\b/i, 4],
+
+  // ── distribution ──
+  ['Ductwork',            /\bducts?\b|ductwork/i, 4],
+  ['Duct Accessories',    /duct\s+accessories|access\s+doors?\b/i, 2],
+  ['Damper',              /\bdampers?\b/i, 3],
+  ['Fire Damper',         /fire\s+dampers?|smoke\s+dampers?/i, 2],
+  ['Piping',              /\bpiping\b/i, 6],
+  ['Valve',               /\bvalves?\b/i, 6],
+  ['Strainer',            /\bstrainers?\b/i, 2],
+  ['Hanger & Support',    /hangers?\s+and\s+supports?|pipe\s+hangers?/i, 2],
+  ['Sleeve',              /\bsleeves?\b/i, 3],
+  ['Escutcheon',          /escutcheons?\b/i, 2],
+  ['Expansion Fitting',   /expansion\s+(?:fittings?|joints?|loops?)/i, 2],
+  ['Insulation',          /insulation\b/i, 4],
+  ['Heat Trace',          /heat[-\s]tracing|heating\s+cable/i, 2],
+
+  // ── systems ──
+  ['Hydronic',            /hydronic/i, 2],
+  ['Steam',               /\bsteam\b/i, 3],
+  ['Condensate',          /condensate\b/i, 3],
+  ['Natural Gas',         /natural[-\s]gas|fuel\s+gas/i, 2],
+  ['Domestic Water',      /domestic[-\s]water/i, 2],
+  ['Sanitary Waste',      /sanitary\s+waste|waste\s+and\s+vent/i, 2],
+  ['Storm Drain',         /storm\s+drain/i, 2],
+  ['Compressed Air',      /compressed[-\s]air/i, 2],
+  ['Refrigerant',         /refrigerants?\b/i, 3],
+  ['Water Treatment',     /water\s+treatment/i, 2],
+  ['Plumbing Fixture',    /plumbing\s+fixtures?|lavator|water\s+closet/i, 2],
+  ['Emergency Fixture',   /emergency\s+(?:shower|eyewash)|eyewash/i, 2],
+  ['Floor Drain',         /floor\s+drains?|cleanouts?\b/i, 2],
+
+  // ── controls & instruments ──
+  ['Controls',            /\bDDC\b|direct\s+digital\s+control|building\s+automation|\bBAS\b|control\s+system/i, 2],
+  ['Thermostat',          /thermostats?\b/i, 2],
+  ['Sensor',              /\bsensors?\b/i, 3],
+  ['Actuator',            /actuators?\b/i, 3],
+  ['Gauge',               /\bgauges?\b|\bgages?\b|thermometers?\b/i, 3],
+  ['Meter',               /flow\s+meters?|\bmeters\b/i, 3],
+
+  // ── work types ──
+  ['Seismic',             /seismic/i, 3],
+  ['Vibration Isolation', /vibration\s+(?:isolation|control)|isolators?\b/i, 2],
+  ['Testing & Balancing', /testing,?\s+adjusting,?\s+and\s+balancing|\bTAB\b/i, 2],
+  ['Commissioning',       /commissioning/i, 3],
+  ['Identification',      /identification|nameplates?\b|labels?\b/i, 3],
+  ['Cleaning & Flushing', /flushing|disinfect/i, 2],
+];
+
+const MAX_TAGS = 14;
+
+function extractTags(lines, title, includes) {
+  const body = lines.join('\n');
+  const head = (title || '') + ' ' + (includes || []).join(' ');
+  const scored = [];
+  for (const [tag, re, min] of TAG_RULES) {
+    const inHead = re.test(head);
+    const hits = (body.match(new RegExp(re.source, 'gi')) || []).length;
+    if (!inHead && hits < min) continue;
+    // What the section is named after wins; otherwise favour terms that are
+    // specific over ones every piping section happens to mention.
+    scored.push({ tag, score: (inHead ? 1000 : 0) + hits / min });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, MAX_TAGS).map(x => x.tag);
+}
+
 /* --- "Section Includes:" scope list --- */
 function extractIncludes(lines) {
   const out = [];
@@ -1002,7 +1165,7 @@ function parseSpec(pages, wantedDivs) {
     .sort((a, b) => a - b);
   for (let i = 0; i < sections.length; i++) {
     const s = sections[i];
-    s.requirements = []; s.includes = [];
+    s.requirements = []; s.includes = []; s.tags = []; s.autoTags = [];
     if (!s.inBody || s.startPage == null) continue;
     let to = s.endPage;
     if (to == null) {
@@ -1039,6 +1202,10 @@ function parseSpec(pages, wantedDivs) {
     if (hi > 0) lines.splice(0, hi);
     s.requirements = extractRequirements(lines);
     s.includes = extractIncludes(lines);
+    // Searchable keywords, so "VFD" finds the controls section that only ever
+    // says "variable frequency".
+    s.autoTags = extractTags(lines, s.title, s.includes);
+    s.tags = s.autoTags.slice();
   }
 
   return {
@@ -1385,6 +1552,8 @@ let job = null;           // open job
 let view = 'jobs';
 let divFilter = '22';
 let statusFilter = null;
+let releaseFilter = null;
+let divPicked = false;      // the opening tab is chosen once, then left alone
 let query = '';
 let openKey = null;       // section open in the drawer
 let unsubJobs = null;
@@ -1483,6 +1652,15 @@ function watchSections(jobId) {
       // A section added locally but not yet written must survive too.
       for (const y of local) if (!seen.has(y.key) && pendingSections.has(y.key)) job.sections.push(y);
       sortSections();
+      // Sections arrive after the view opens, so the first tab can only be
+      // chosen now — landing on an empty Division 22 hides a Div 23-only job.
+      if (!divPicked && job.sections.length) {
+        divPicked = true;
+        if (!job.sections.some(x => x.division === divFilter)) {
+          const first = DIVISIONS.find(d => job.sections.some(x => x.division === d));
+          if (first) divFilter = first;
+        }
+      }
       migrateSpecData(jobId, job.sections);
       if (view === 'job') {
         renderJob();
@@ -1624,7 +1802,8 @@ async function openJob(id) {
   const j = jobs.find(x => x.id === id);
   if (!j) { toast('Job not found', true); return; }
   job = Object.assign({}, j, { sections: [] });
-  statusFilter = null; query = ''; $('searchBox').value = '';
+  statusFilter = null; releaseFilter = null; query = ''; divPicked = false;
+  $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
   go('job');
   watchSections(job.id);          // sections stream in and re-render
@@ -1775,6 +1954,7 @@ async function submitJobForm(id) {
       await saveJobMeta(j);
       jobs.unshift(j);
       job = Object.assign({}, j, { sections: [] });
+      divPicked = false;
       $('crumbJob').textContent = name;
       closePdf();
       go('job');
@@ -1827,15 +2007,27 @@ async function deleteJob(id) {
 /* ═══════════════════════════════════════════════════════════════════════════
    6. JOB WORKSPACE
    ═══════════════════════════════════════════════════════════════════════════ */
+/* Everything worth finding a section by, tags included. */
+function searchHay(s) {
+  return [s.number, s.key, s.title, s.vendor, s.package, s.notes,
+    (s.tags || []).join(' '),
+    (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
+    (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+/* Which tag matched, so the row can say why it is in the results. */
+function matchedTag(s, q) {
+  if (!q) return null;
+  return (s.tags || []).find(t => t.toLowerCase().includes(q)) || null;
+}
+
 function visibleSections() {
   const q = query.trim().toLowerCase();
   return sectionsOf(job).slice().sort(sectionOrder).filter(s => {
     if (divFilter !== 'all' && s.division !== divFilter) return false;
     if (statusFilter && (s.status || 'not_started') !== statusFilter) return false;
-    if (q) {
-      const hay = (s.number + ' ' + s.key + ' ' + s.title + ' ' + (s.vendor || '') + ' ' + (s.package || '')).toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    if (releaseFilter && (s.releaseState || 'not_ready') !== releaseFilter) return false;
+    if (q && !searchHay(s).includes(q)) return false;
     return true;
   });
 }
@@ -1894,13 +2086,23 @@ function renderJob() {
   $('statusChips').innerHTML = STATUSES.map(s =>
     `<button class="chip ${statusFilter === s.id ? 'on' : ''}" style="${statusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
       onclick="setStatusFilter('${s.id}')"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id]}</span></button>`
-  ).join('') + (statusFilter ? `<button class="chip" onclick="setStatusFilter(null)">Clear filter ✕</button>` : '');
+  ).join('') + (statusFilter ? `<button class="chip" onclick="setStatusFilter(null)">Clear ✕</button>` : '');
+
+  const rtally = {}; RELEASES.forEach(r => rtally[r.id] = 0);
+  scope.forEach(x => rtally[x.releaseState || 'not_ready']++);
+  $('releaseChips').innerHTML =
+    `<span class="chip-label">Release</span>` +
+    RELEASES.filter(r => r.id !== 'not_ready' || rtally.not_ready < scope.length).map(r =>
+      `<button class="chip ${releaseFilter === r.id ? 'on' : ''}" style="${releaseFilter === r.id ? 'color:' + cvar(r.color) + ';background:' + csf(r.color) : ''}"
+        onclick="setReleaseFilter('${r.id}')"><i style="background:${cvar(r.color)}"></i>${esc(r.label)}<span class="n">${rtally[r.id]}</span></button>`
+    ).join('') + (releaseFilter ? `<button class="chip" onclick="setReleaseFilter(null)">Clear ✕</button>` : '');
 
   renderTable();
 }
 
 function setDiv(d) { divFilter = d; renderJob(); }
 function setStatusFilter(s) { statusFilter = (statusFilter === s) ? null : s; renderJob(); }
+function setReleaseFilter(r) { releaseFilter = (releaseFilter === r) ? null : r; renderJob(); }
 $('searchBox').addEventListener('input', e => { query = e.target.value; renderTable(); $('countLabel').textContent = countLabel(); });
 function countLabel() {
   const n = visibleSections().length, t = sectionsOf(job).filter(s => divFilter === 'all' || s.division === divFilter).length;
@@ -1925,7 +2127,7 @@ function renderTable() {
   $('jobEmpty').innerHTML = '';
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty" style="border:none;background:transparent;padding:34px">
+    body.innerHTML = `<tr><td colspan="7"><div class="empty" style="border:none;background:transparent;padding:34px">
       <h3>Nothing matches</h3><p>Try a different search or clear the status filter.</p></div></td></tr>`;
     return;
   }
@@ -1934,9 +2136,12 @@ function renderTable() {
   for (const s of list) {
     if (divFilter === 'all' && s.division !== lastDiv) {
       lastDiv = s.division;
-      html += `<tr class="divhead"><td colspan="6">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
+      html += `<tr class="divhead"><td colspan="7">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
     }
     const st = ST[s.status || 'not_started'];
+    const rl = relOf(s);
+    const due = nextExpected(s);
+    const hitTag = matchedTag(s, query.trim().toLowerCase());
     const nSub = (s.submittals || []).length, nRes = (s.responses || []).length;
     const sf = s.specId ? specById(s.specId) : null;
     const spec = s.startPage ? `p. ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}` : '—';
@@ -1944,6 +2149,7 @@ function renderTable() {
     html += `<tr class="${openKey === s.key ? 'sel ' : ''}${st.id === 'na' ? 'row-na' : ''}" onclick="openSection('${s.key}')">
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title"><span>${esc(s.title || '(untitled)')}</span>
+        ${hitTag ? `<span class="row-tag">${esc(hitTag)}</span>` : ''}
         ${s.manual ? '<span class="flag">Added</span>' : ''}
         ${(s.inBody === false) ? '<span class="flag">Index only</span>' : ''}
         ${s.package ? `<div class="sub">${esc(s.package)}${s.vendor ? ' · ' + esc(s.vendor) : ''}</div>`
@@ -1953,6 +2159,9 @@ function renderTable() {
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
+      <td class="hide-sm">${rl.id === 'not_ready' ? '<span class="muted">—</span>' :
+        `<span class="pill" style="color:${cvar(rl.color)};background:${csf(rl.color)}"><i></i>${esc(rl.short)}</span>${
+          due ? `<div class="sub" style="margin-top:2px">due ${esc(fmtDate(due + 'T00:00:00'))}</div>` : ''}`}</td>
       <td class="num"><span class="dot-count ${nSub ? '' : 'zero'}">📄 ${nSub}</span></td>
       <td class="num"><span class="dot-count ${nRes ? '' : 'zero'}">✔ ${nRes}</span></td>
       <td class="num hide-sm"><span class="muted" title="${esc(specHint)}">${spec}</span></td>
@@ -1970,15 +2179,20 @@ async function setStatus(key, value) {
   s.status = value;
   s.history = s.history || [];
   s.history.push({ ts: Date.now(), from, to: value });
-  if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = new Date().toISOString().slice(0, 10);
-  if ((value === 'approved' || value === 'revise_resubmit') && !s.returnedDate) s.returnedDate = new Date().toISOString().slice(0, 10);
+  if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = today();
+  if ((value === 'approved' || value === 'partial_approval' || value === 'revise_resubmit') && !s.returnedDate) {
+    s.returnedDate = today();
+  }
+  // Once it is approved it is ready to go out, unless a release already happened.
+  if (value === 'approved' && (s.releaseState || 'not_ready') === 'not_ready') s.releaseState = 'ready';
   sortSections();
   renderJob();
   if (openKey === key) renderDrawer();
   try {
     await patchSection(key, {
       status: s.status, history: s.history || [],
-      submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || ''
+      submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || '',
+      releaseState: s.releaseState || 'not_ready'
     });
   } catch (e) { toast(writeError(e), true); }
 }
@@ -1993,6 +2207,7 @@ function renderDrawer() {
   const s = findSection(openKey);
   if (!s) { closeDrawer(); return; }
   const st = ST[s.status || 'not_started'];
+  const rel = relOf(s);
   // Only the file this section was actually parsed from — its page numbers mean
   // nothing in any other file.
   const specFile = s.specId ? specById(s.specId) : null;
@@ -2055,6 +2270,25 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
+        <h4>Tags <button class="btn sm ghost" onclick="startAddTag('${s.key}')">+ Add tag</button></h4>
+        <div class="tag-wrap" id="tagWrap">${tagChips(s)}</div>
+        <div class="muted" style="margin-top:8px">Tags are searchable. The spec is scanned on import —
+          add anything it missed.</div>
+      </div>
+
+      <div class="sec">
+        <h4>Release <span class="pill" style="color:${cvar(rel.color)};background:${csf(rel.color)}"><i></i>${esc(rel.label)}</span></h4>
+        <div class="seg-sm" style="margin-bottom:12px">${RELEASES.map(r => `
+          <button class="${r.id === rel.id ? 'on' : ''}" style="${r.id === rel.id ? 'color:' + cvar(r.color) : ''}"
+            onclick="setRelease('${s.key}','${r.id}')">${esc(r.label)}</button>`).join('')}</div>
+        <div id="listRel">${releaseList(s)}</div>
+        <button class="btn sm" onclick="releaseModal('${s.key}', null)">+ Record a release</button>
+        ${(s.releases || []).length ? '' : `<div class="muted" style="margin-top:8px">
+          A release can be the whole section or just part of it — phase 1 of the TU boxes, say.
+          The expected delivery is worked out from the lead time and can be overridden.</div>`}
+      </div>
+
+      <div class="sec">
         <h4>Details</h4>
         <div class="grid2">
           <div class="field"><label class="fl">Vendor / supplier</label>
@@ -2065,6 +2299,12 @@ function renderDrawer() {
             <input class="input" type="date" value="${esc(s.submittedDate || '')}" onchange="setField('${s.key}','submittedDate',this.value)"></div>
           <div class="field"><label class="fl">Returned</label>
             <input class="input" type="date" value="${esc(s.returnedDate || '')}" onchange="setField('${s.key}','returnedDate',this.value)"></div>
+          <div class="field"><label class="fl">Expected lead time (weeks)</label>
+            <input class="input" type="number" min="0" step="0.5" value="${esc(s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''))}"
+              placeholder="e.g. 10" onchange="setField('${s.key}','leadWeeks',this.value)"></div>
+          <div class="field"><label class="fl">Next expected delivery</label>
+            <input class="input" value="${esc(nextExpected(s) ? fmtDate(nextExpected(s) + 'T00:00:00') : '')}"
+              placeholder="set when released" disabled></div>
         </div>
         <div class="field" style="margin-bottom:0"><label class="fl">Notes</label>
           <textarea class="input" oninput="setField('${s.key}','notes',this.value)"
@@ -2252,6 +2492,178 @@ function openDocLink(key, kind, docId) {
   if (d && d.url) window.open(d.url, '_blank', 'noopener');
 }
 
+/* ── tags ── */
+function tagChips(s) {
+  const tags = s.tags || [];
+  return (tags.length
+    ? tags.map(t => `<span class="tag-chip">${esc(t)}<button title="Remove"
+        onclick="removeTag('${s.key}', ${JSON.stringify(t).replace(/"/g, '&quot;')})">✕</button></span>`).join('')
+    : `<span class="muted">No tags yet.</span>`) +
+    `<button class="tag-add" onclick="startAddTag('${s.key}')">+ tag</button>`;
+}
+
+function startAddTag(key) {
+  const wrap = $('tagWrap');
+  if (!wrap || $('tagInput')) { const i = $('tagInput'); if (i) i.focus(); return; }
+  const el = document.createElement('input');
+  el.className = 'tag-input'; el.id = 'tagInput'; el.placeholder = 'e.g. VFD';
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addTag(key, el.value); }
+    if (e.key === 'Escape') { el.remove(); }
+  });
+  el.addEventListener('blur', () => { if (el.value.trim()) addTag(key, el.value); else el.remove(); });
+  wrap.appendChild(el);
+  el.focus();
+}
+
+async function addTag(key, raw) {
+  const s = findSection(key);
+  if (!s) return;
+  const tag = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (!tag) return;
+  s.tags = s.tags || [];
+  if (s.tags.some(t => t.toLowerCase() === tag.toLowerCase())) { renderDrawer(); return; }
+  markPending(key);
+  s.tags.push(tag);
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { tags: s.tags }); } catch (e) { toast(writeError(e), true); }
+}
+
+async function removeTag(key, tag) {
+  const s = findSection(key);
+  if (!s) return;
+  markPending(key);
+  s.tags = (s.tags || []).filter(t => t !== tag);
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { tags: s.tags }); } catch (e) { toast(writeError(e), true); }
+}
+
+/* ── releases ── */
+function releaseList(s) {
+  const list = s.releases || [];
+  if (!list.length) return `<div class="muted" style="margin-bottom:8px">Nothing released yet.</div>`;
+  return list.map(r => `<div class="rel-row">
+      <span class="fi">📦</span>
+      <span class="rn"><b>${esc(r.label)}</b>
+        <small>Released ${esc(r.date ? fmtDate(r.date + 'T00:00:00') : '—')}${
+          r.weeks ? ' · ' + esc(String(r.weeks)) + ' wk lead' : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
+      <span class="due" style="color:${r.expected ? cvar('blue') : 'var(--text-3)'}">${
+        r.expected ? 'Due ' + esc(fmtDate(r.expected + 'T00:00:00')) : 'no date'}</span>
+      <button class="btn sm ghost" onclick="releaseModal('${s.key}','${r.id}')" title="Edit">✎</button>
+      <button class="btn sm ghost" onclick="removeRelease('${s.key}','${r.id}')" title="Remove">✕</button>
+    </div>`).join('');
+}
+
+async function setRelease(key, state) {
+  const s = findSection(key);
+  if (!s || (s.releaseState || 'not_ready') === state) return;
+  markPending(key);
+  s.releaseState = state;
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { releaseState: state }); } catch (e) { toast(writeError(e), true); }
+}
+
+function releaseModal(key, relId) {
+  const s = findSection(key);
+  if (!s) return;
+  const r = relId ? (s.releases || []).find(x => x.id === relId) : null;
+  const n = (s.releases || []).length + 1;
+  const date = r ? r.date : today();
+  const weeks = r ? r.weeks : (s.leadWeeks || '');
+  const expected = r ? r.expected : addWeeks(date, weeks);
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>${r ? 'Edit release' : 'Record a release'}</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="fl">What is going out</label>
+          <input class="input" id="rlLabel" value="${esc(r ? r.label : 'Release ' + n)}"
+            placeholder="e.g. Phase 1 — TU boxes" autocomplete="off">
+        </div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Released on</label>
+            <input class="input" type="date" id="rlDate" value="${esc(date)}"></div>
+          <div class="field"><label class="fl">Lead time (weeks)</label>
+            <input class="input" type="number" min="0" step="0.5" id="rlWeeks" value="${esc(weeks === 0 ? '0' : (weeks || ''))}"></div>
+        </div>
+        <div class="field">
+          <label class="fl">Expected delivery</label>
+          <input class="input" type="date" id="rlExpected" value="${esc(expected || '')}">
+          <div class="muted" style="margin-top:5px">Worked out from the release date and lead time. Change it if the vendor says otherwise.</div>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="fl">Note (optional)</label>
+          <input class="input" id="rlNote" value="${esc(r && r.note || '')}" autocomplete="off">
+        </div>
+        ${r ? '' : `<div class="field" style="margin-top:12px;margin-bottom:0">
+          <label class="fl">Does this finish the section?</label>
+          <div class="seg-sm" id="rlScope">
+            <button class="on" data-scope="partial" onclick="pickScope(this)">Part of it</button>
+            <button data-scope="released" onclick="pickScope(this)">All of it</button>
+          </div></div>`}
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closePdf()">Cancel</button>
+        <button class="btn primary" onclick="saveRelease('${key}',${r ? "'" + r.id + "'" : 'null'})">${r ? 'Save' : 'Record release'}</button>
+      </div>
+    </div></div>`;
+  // Keep the expected date in step until someone types their own.
+  const recalc = () => {
+    if ($('rlExpected').dataset.touched) return;
+    $('rlExpected').value = addWeeks($('rlDate').value, $('rlWeeks').value) || '';
+  };
+  $('rlDate').addEventListener('change', recalc);
+  $('rlWeeks').addEventListener('input', recalc);
+  $('rlExpected').addEventListener('input', e => { e.target.dataset.touched = '1'; });
+  $('rlLabel').focus(); $('rlLabel').select();
+}
+
+function pickScope(btn) {
+  for (const b of btn.parentNode.querySelectorAll('button')) b.classList.remove('on');
+  btn.classList.add('on');
+}
+
+async function saveRelease(key, relId) {
+  const s = findSection(key);
+  if (!s) return;
+  const label = $('rlLabel').value.trim() || 'Release';
+  const date = $('rlDate').value;
+  const weeks = $('rlWeeks').value;
+  const expected = $('rlExpected').value;
+  const note = $('rlNote').value.trim();
+  const scopeEl = $('rlScope') && $('rlScope').querySelector('button.on');
+  const scope = scopeEl ? scopeEl.dataset.scope : null;
+
+  markPending(key);
+  s.releases = s.releases || [];
+  const existing = relId ? s.releases.find(x => x.id === relId) : null;
+  if (existing) Object.assign(existing, { label, date, weeks, expected, note });
+  else {
+    s.releases.push({ id: uid('rel'), label, date, weeks, expected, note });
+    s.releaseState = scope === 'released' ? 'released' : 'partial';
+  }
+  if (weeks && !s.leadWeeks) s.leadWeeks = weeks;
+  closePdf();
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState, leadWeeks: s.leadWeeks || '' }); }
+  catch (e) { toast(writeError(e), true); return; }
+  toast(existing ? 'Release updated' : 'Release recorded');
+}
+
+async function removeRelease(key, relId) {
+  const s = findSection(key);
+  if (!s) return;
+  const r = (s.releases || []).find(x => x.id === relId);
+  if (!r || !confirm(`Remove "${r.label}"?`)) return;
+  markPending(key);
+  s.releases = s.releases.filter(x => x.id !== relId);
+  if (!s.releases.length && s.releaseState === 'partial') s.releaseState = 'ready';
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState }); }
+  catch (e) { toast(writeError(e), true); }
+}
+
 async function setField(key, field, value) {
   const s = findSection(key);
   if (!s) return;
@@ -2422,7 +2834,8 @@ function sortSections() {
 function newSectionRecord(base) {
   return Object.assign({
     status: 'not_started', vendor: '', package: '', submittedDate: '', returnedDate: '',
-    notes: '', submittals: [], responses: [], history: []
+    notes: '', submittals: [], responses: [], history: [],
+    tags: [], autoTags: [], leadWeeks: '', releaseState: 'not_ready', releases: []
   }, base);
 }
 
@@ -2738,6 +3151,9 @@ async function confirmImport() {
           cur.specId = specId;
           cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
           cur.requirements = s.requirements || []; cur.includes = s.includes || [];
+          const fresh = (s.autoTags || []).filter(t => !(cur.autoTags || []).includes(t));
+          cur.tags = (cur.tags || []).concat(fresh.filter(t => !(cur.tags || []).includes(t)));
+          cur.autoTags = (s.autoTags || []).slice();
           relinked.push(cur);
           if (!cur.titleEdited) {                       // never clobber a hand-typed title
             cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource;
@@ -2750,7 +3166,8 @@ async function confirmImport() {
       job.sections.push(newSectionRecord({
         key: s.key, number: s.number, division: s.division, title: s.title, rawTitle: s.rawTitle,
         titleSource: s.titleSource, specId, startPage: s.startPage, endPage: s.endPage,
-        inBody: s.inBody, requirements: s.requirements || [], includes: s.includes || []
+        inBody: s.inBody, requirements: s.requirements || [], includes: s.includes || [],
+        tags: (s.tags || []).slice(), autoTags: (s.autoTags || []).slice()
       }));
       added++;
     }
@@ -2789,10 +3206,16 @@ function csvCell(v) {
 function exportCsv() {
   if (!job) return;
   const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
+    'Returned', 'Lead time (wks)', 'Release status', 'Releases', 'Next delivery',
+    'Tags', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
     s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
+    s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''),
+    relOf(s).label,
+    (s.releases || []).map(r => `${r.label} (rel ${r.date || '?'}${r.expected ? ', due ' + r.expected : ''})`).join(' | '),
+    nextExpected(s),
+    (s.tags || []).join(', '),
     (s.submittals || []).map(d => d.name).join(' | '),
     (s.responses || []).map(d => d.name).join(' | '),
     (s.submittals || []).concat(s.responses || []).filter(isLink).map(d => d.url).join(' | '),

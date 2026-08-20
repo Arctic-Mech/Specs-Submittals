@@ -2,7 +2,8 @@
 
 A submittal log for mechanical spec sections. Import a project spec PDF, it is
 split into its individual Division 22 and 23 sections, and each section carries
-a status, the submittal PDFs sent out, and the response PDFs that come back.
+a status, searchable tags, the submittal PDFs sent out, the response PDFs that
+come back, and what has been released to site.
 
 The whole app is `index.html`. There is no build step.
 
@@ -38,6 +39,36 @@ rules it is the only thing between the register and the public. Add Anonymous
 or Google sign-in and swap `if true` for `if request.auth != null` when the URL
 starts being shared.
 
+## Tags and search
+
+Search covers the section number, the title, tags, vendor, package, notes,
+release labels and document names.
+
+Tags are what make search useful. On import each section's text is scanned for
+the terms mechanical people actually search for, with the synonyms spelled out —
+searching **VFD** finds 23 09 00 Instrumentation and Control even though that
+section never types "VFD", only "variable frequency" (40 times) and "VFC" (21).
+Terms are ranked so what a section is *named* after beats what it merely
+mentions, and each section keeps the strongest 14.
+
+Anything the scan missed can be typed in by hand in the section panel, and any
+tag can be removed. Re-importing a spec adds newly detected tags but never
+brings back one that was deleted. When a search matches on a tag, the row shows
+which tag it was.
+
+## Status, lead time and release
+
+The submittal status runs Not Started → Waiting on Vendor → Submitted to GC →
+Partial Approval → Approved, with Revise & Resubmit and Not Required alongside.
+
+Release is tracked separately, because a section can be approved and only part
+of it released. Approving a section moves it to **Ready to Release**. Recording
+a release asks whether it finishes the section or is only part of it — "Phase 1
+— TU boxes" — and works out the expected delivery from the section's lead time
+in weeks. That date can be overridden when the vendor says otherwise. A section
+can hold as many releases as it takes; the table shows the earliest delivery
+still outstanding.
+
 ## Documents: upload or link
 
 A submittal or a response can be either an uploaded PDF or a link to where the
@@ -57,7 +88,7 @@ blocked. A link needs none of that.
 
 ```
 jobs/{jobId}                        name, number, ShareFile folder, spec files, roll-up
-jobs/{jobId}/sections/{sectionKey}  the log: status, vendor, dates, notes, documents
+jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, documents
 jobs/{jobId}/specdata/{sectionKey}  the spec text for that section
 files/{fileId}                      an uploaded PDF's name, size and chunk count
 files/{fileId}/chunks/{n}           ~600 KB of that PDF, base64 encoded
