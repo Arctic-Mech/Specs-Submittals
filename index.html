@@ -294,6 +294,8 @@ tbody tr.sel td { background: var(--accent-sf); }
 .c-num { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--text-2); }
 .c-title { font-weight: 500; }
 .c-title .sub { font-size: 11.5px; color: var(--text-3); font-weight: 400; }
+tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.35; }
+tbody td .sub.due-line { color: var(--blue); font-weight: 600; }
 .divhead td {
   background: var(--surface-3) !important; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); padding: 7px 12px;
@@ -577,7 +579,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <th style="width:104px">Section</th>
         <th>Title</th>
         <th style="width:172px">Status</th>
-        <th style="width:132px" class="hide-sm">Release</th>
+        <th style="width:210px" class="hide-sm">Release</th>
         <th style="width:96px" class="num">Submittal</th>
         <th style="width:96px" class="num">Response</th>
         <th style="width:92px" class="num hide-sm">Spec</th>
@@ -649,7 +651,7 @@ const RL = Object.fromEntries(RELEASES.map(r => [r.id, r]));
 const relOf = s => RL[s.releaseState || 'not_ready'] || RL.not_ready;
 
 const today = () => new Date().toISOString().slice(0, 10);
-/* A lead time in weeks from a release date gives the expected delivery. */
+
 function addWeeks(dateStr, weeks) {
   const w = parseFloat(weeks);
   if (!dateStr || !isFinite(w)) return '';
@@ -658,8 +660,53 @@ function addWeeks(dateStr, weeks) {
   d.setDate(d.getDate() + Math.round(w * 7));
   return d.toISOString().slice(0, 10);
 }
-function nextExpected(s) {
-  const dates = (s.releases || []).map(r => r.expected).filter(Boolean).sort();
+
+/* Lead times get quoted as a range as often as a single number: "6", "6-7",
+   "6 to 7 weeks". Both ends are kept so the delivery window is a range too. */
+function parseLead(raw) {
+  const t = String(raw == null ? '' : raw).trim().replace(/\s*(?:weeks?|wks?)\.?$/i, '').trim();
+  if (!t) return null;
+  const range = t.match(/^(\d+(?:\.\d+)?)\s*(?:[-–—]|to)\s*(\d+(?:\.\d+)?)$/i);
+  if (range) {
+    const a = parseFloat(range[1]), b = parseFloat(range[2]);
+    return { min: Math.min(a, b), max: Math.max(a, b) };
+  }
+  const one = t.match(/^(\d+(?:\.\d+)?)$/);
+  return one ? { min: parseFloat(one[1]), max: parseFloat(one[1]) } : null;
+}
+function leadLabel(raw) {
+  const L = parseLead(raw);
+  if (!L) return String(raw || '').trim();
+  return (L.min === L.max ? String(L.min) : L.min + '–' + L.max) + ' wk';
+}
+function expectedRange(dateStr, leadRaw) {
+  const L = parseLead(leadRaw);
+  if (!dateStr || !L) return { from: '', to: '' };
+  return { from: addWeeks(dateStr, L.min), to: L.max !== L.min ? addWeeks(dateStr, L.max) : '' };
+}
+
+/* The delivery window across every release on a section. */
+function expectedWindow(s) {
+  const rels = (s.releases || []).filter(r => r.expected);
+  if (!rels.length) return { from: '', to: '' };
+  const from = rels.map(r => r.expected).sort()[0];
+  const to = rels.map(r => r.expectedTo || r.expected).sort().slice(-1)[0];
+  return { from, to: to > from ? to : '' };
+}
+const nextExpected = s => expectedWindow(s).from;
+
+function fmtShort(d) {
+  if (!d) return '';
+  return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+function fmtWindow(w) {
+  if (!w.from) return '';
+  return (w.to && w.to > w.from) ? fmtShort(w.from) + ' – ' + fmtShort(w.to)
+                                 : fmtDate(w.from + 'T00:00:00');
+}
+/* Earliest release date on a section, and how many there are. */
+function releasedOn(s) {
+  const dates = (s.releases || []).map(r => r.date).filter(Boolean).sort();
   return dates[0] || '';
 }
 const cvar = c => `var(--${c})`;
@@ -2109,6 +2156,24 @@ function countLabel() {
   return n === t ? `${t} sections` : `${n} of ${t} sections`;
 }
 
+/* Once something is out the door the dates matter more than the label, so the
+   lead time, the release date and the delivery window all show on the row. */
+function releaseCell(s, rl) {
+  if (rl.id === 'not_ready') return '<span class="muted">—</span>';
+  const pill = `<span class="pill" style="color:${cvar(rl.color)};background:${csf(rl.color)}"><i></i>${esc(rl.label)}</span>`;
+  if (rl.id === 'ready') return pill;
+
+  const n = (s.releases || []).length;
+  const on = releasedOn(s);
+  const win = expectedWindow(s);
+  const lead = leadLabel(s.leadWeeks);
+  const line1 = [lead ? lead + ' lead' : '', on ? 'rel ' + fmtShort(on) : '']
+    .filter(Boolean).join(' · ') + (n > 1 ? ` · ${n} releases` : '');
+  return pill +
+    (line1.trim() ? `<div class="sub">${esc(line1)}</div>` : '') +
+    (win.from ? `<div class="sub due-line">arrives ${esc(fmtWindow(win))}</div>` : '');
+}
+
 function renderTable() {
   const body = $('secBody');
   const list = visibleSections();
@@ -2140,7 +2205,6 @@ function renderTable() {
     }
     const st = ST[s.status || 'not_started'];
     const rl = relOf(s);
-    const due = nextExpected(s);
     const hitTag = matchedTag(s, query.trim().toLowerCase());
     const nSub = (s.submittals || []).length, nRes = (s.responses || []).length;
     const sf = s.specId ? specById(s.specId) : null;
@@ -2159,9 +2223,7 @@ function renderTable() {
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
-      <td class="hide-sm">${rl.id === 'not_ready' ? '<span class="muted">—</span>' :
-        `<span class="pill" style="color:${cvar(rl.color)};background:${csf(rl.color)}"><i></i>${esc(rl.short)}</span>${
-          due ? `<div class="sub" style="margin-top:2px">due ${esc(fmtDate(due + 'T00:00:00'))}</div>` : ''}`}</td>
+      <td class="hide-sm">${releaseCell(s, rl)}</td>
       <td class="num"><span class="dot-count ${nSub ? '' : 'zero'}">📄 ${nSub}</span></td>
       <td class="num"><span class="dot-count ${nRes ? '' : 'zero'}">✔ ${nRes}</span></td>
       <td class="num hide-sm"><span class="muted" title="${esc(specHint)}">${spec}</span></td>
@@ -2300,10 +2362,10 @@ function renderDrawer() {
           <div class="field"><label class="fl">Returned</label>
             <input class="input" type="date" value="${esc(s.returnedDate || '')}" onchange="setField('${s.key}','returnedDate',this.value)"></div>
           <div class="field"><label class="fl">Expected lead time (weeks)</label>
-            <input class="input" type="number" min="0" step="0.5" value="${esc(s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''))}"
-              placeholder="e.g. 10" onchange="setField('${s.key}','leadWeeks',this.value)"></div>
-          <div class="field"><label class="fl">Next expected delivery</label>
-            <input class="input" value="${esc(nextExpected(s) ? fmtDate(nextExpected(s) + 'T00:00:00') : '')}"
+            <input class="input" value="${esc(s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''))}"
+              placeholder="e.g. 6 or 6-7" onchange="setField('${s.key}','leadWeeks',this.value)"></div>
+          <div class="field"><label class="fl">Expected delivery</label>
+            <input class="input" value="${esc(fmtWindow(expectedWindow(s)))}"
               placeholder="set when released" disabled></div>
         </div>
         <div class="field" style="margin-bottom:0"><label class="fl">Notes</label>
@@ -2546,9 +2608,9 @@ function releaseList(s) {
       <span class="fi">📦</span>
       <span class="rn"><b>${esc(r.label)}</b>
         <small>Released ${esc(r.date ? fmtDate(r.date + 'T00:00:00') : '—')}${
-          r.weeks ? ' · ' + esc(String(r.weeks)) + ' wk lead' : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
+          r.weeks ? ' · ' + esc(leadLabel(r.weeks)) + ' lead' : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
       <span class="due" style="color:${r.expected ? cvar('blue') : 'var(--text-3)'}">${
-        r.expected ? 'Due ' + esc(fmtDate(r.expected + 'T00:00:00')) : 'no date'}</span>
+        r.expected ? 'Due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : 'no date'}</span>
       <button class="btn sm ghost" onclick="releaseModal('${s.key}','${r.id}')" title="Edit">✎</button>
       <button class="btn sm ghost" onclick="removeRelease('${s.key}','${r.id}')" title="Remove">✕</button>
     </div>`).join('');
@@ -2559,8 +2621,19 @@ async function setRelease(key, state) {
   if (!s || (s.releaseState || 'not_ready') === state) return;
   markPending(key);
   s.releaseState = state;
+  // Flipping straight to Released is a full release: record it, so there is a
+  // date to run the lead time from instead of a blank delivery.
+  if ((state === 'released' || state === 'partial') && !(s.releases || []).length) {
+    const d = today();
+    const e = expectedRange(d, s.leadWeeks);
+    s.releases = [{
+      id: uid('rel'), label: state === 'released' ? 'Full release' : 'Release 1',
+      date: d, weeks: s.leadWeeks || '', expected: e.from, expectedTo: e.to, note: ''
+    }];
+  }
   renderDrawer(); renderTable();
-  try { await patchSection(key, { releaseState: state }); } catch (e) { toast(writeError(e), true); }
+  try { await patchSection(key, { releaseState: state, releases: s.releases || [] }); }
+  catch (e) { toast(writeError(e), true); }
 }
 
 function releaseModal(key, relId) {
@@ -2570,7 +2643,7 @@ function releaseModal(key, relId) {
   const n = (s.releases || []).length + 1;
   const date = r ? r.date : today();
   const weeks = r ? r.weeks : (s.leadWeeks || '');
-  const expected = r ? r.expected : addWeeks(date, weeks);
+  const win = r ? { from: r.expected, to: r.expectedTo } : expectedRange(date, weeks);
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
       <div class="modal-head"><h3>${r ? 'Edit release' : 'Record a release'}</h3>
@@ -2585,13 +2658,17 @@ function releaseModal(key, relId) {
           <div class="field"><label class="fl">Released on</label>
             <input class="input" type="date" id="rlDate" value="${esc(date)}"></div>
           <div class="field"><label class="fl">Lead time (weeks)</label>
-            <input class="input" type="number" min="0" step="0.5" id="rlWeeks" value="${esc(weeks === 0 ? '0' : (weeks || ''))}"></div>
+            <input class="input" id="rlWeeks" value="${esc(weeks === 0 ? '0' : (weeks || ''))}"
+              placeholder="6 or 6-7"></div>
         </div>
-        <div class="field">
-          <label class="fl">Expected delivery</label>
-          <input class="input" type="date" id="rlExpected" value="${esc(expected || '')}">
-          <div class="muted" style="margin-top:5px">Worked out from the release date and lead time. Change it if the vendor says otherwise.</div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Expected delivery</label>
+            <input class="input" type="date" id="rlExpected" value="${esc(win.from || '')}"></div>
+          <div class="field"><label class="fl">…through (range)</label>
+            <input class="input" type="date" id="rlExpectedTo" value="${esc(win.to || '')}"></div>
         </div>
+        <div class="muted" style="margin:-4px 0 11px">Worked out from the release date and lead time.
+          A range like <b>6-7</b> gives a delivery window. Change either date if the vendor says otherwise.</div>
         <div class="field" style="margin-bottom:0">
           <label class="fl">Note (optional)</label>
           <input class="input" id="rlNote" value="${esc(r && r.note || '')}" autocomplete="off">
@@ -2599,8 +2676,8 @@ function releaseModal(key, relId) {
         ${r ? '' : `<div class="field" style="margin-top:12px;margin-bottom:0">
           <label class="fl">Does this finish the section?</label>
           <div class="seg-sm" id="rlScope">
-            <button class="on" data-scope="partial" onclick="pickScope(this)">Part of it</button>
-            <button data-scope="released" onclick="pickScope(this)">All of it</button>
+            <button class="on" data-scope="released" onclick="pickScope(this)">All of it</button>
+            <button data-scope="partial" onclick="pickScope(this)">Only part of it</button>
           </div></div>`}
       </div>
       <div class="modal-foot">
@@ -2611,11 +2688,15 @@ function releaseModal(key, relId) {
   // Keep the expected date in step until someone types their own.
   const recalc = () => {
     if ($('rlExpected').dataset.touched) return;
-    $('rlExpected').value = addWeeks($('rlDate').value, $('rlWeeks').value) || '';
+    const e = expectedRange($('rlDate').value, $('rlWeeks').value);
+    $('rlExpected').value = e.from || '';
+    $('rlExpectedTo').value = e.to || '';
   };
   $('rlDate').addEventListener('change', recalc);
   $('rlWeeks').addEventListener('input', recalc);
-  $('rlExpected').addEventListener('input', e => { e.target.dataset.touched = '1'; });
+  for (const id of ['rlExpected', 'rlExpectedTo']) {
+    $(id).addEventListener('input', () => { $('rlExpected').dataset.touched = '1'; });
+  }
   $('rlLabel').focus(); $('rlLabel').select();
 }
 
@@ -2631,6 +2712,10 @@ async function saveRelease(key, relId) {
   const date = $('rlDate').value;
   const weeks = $('rlWeeks').value;
   const expected = $('rlExpected').value;
+  const expectedManual = !!$('rlExpected').dataset.touched;
+  // A hand-typed delivery date makes a leftover range end meaningless.
+  const rawTo = $('rlExpectedTo').value;
+  const expectedTo = (rawTo && expected && rawTo <= expected) ? '' : rawTo;
   const note = $('rlNote').value.trim();
   const scopeEl = $('rlScope') && $('rlScope').querySelector('button.on');
   const scope = scopeEl ? scopeEl.dataset.scope : null;
@@ -2638,10 +2723,10 @@ async function saveRelease(key, relId) {
   markPending(key);
   s.releases = s.releases || [];
   const existing = relId ? s.releases.find(x => x.id === relId) : null;
-  if (existing) Object.assign(existing, { label, date, weeks, expected, note });
+  if (existing) Object.assign(existing, { label, date, weeks, expected, expectedTo, note, expectedManual });
   else {
-    s.releases.push({ id: uid('rel'), label, date, weeks, expected, note });
-    s.releaseState = scope === 'released' ? 'released' : 'partial';
+    s.releases.push({ id: uid('rel'), label, date, weeks, expected, expectedTo, note, expectedManual });
+    s.releaseState = scope === 'partial' ? 'partial' : 'released';
   }
   if (weeks && !s.leadWeeks) s.leadWeeks = weeks;
   closePdf();
@@ -2669,10 +2754,25 @@ async function setField(key, field, value) {
   if (!s) return;
   s[field] = value;
   markPending(key);                 // protect it across the debounce
+  const patch = { [field]: value };
+
+  // A lead time is often filled in after the release. Re-date anything whose
+  // delivery has not been typed in by hand.
+  if (field === 'leadWeeks') {
+    for (const r of (s.releases || [])) {
+      if (r.expectedManual) continue;
+      r.weeks = value;
+      const e = expectedRange(r.date, value);
+      r.expected = e.from; r.expectedTo = e.to;
+    }
+    patch.releases = s.releases || [];
+    if (openKey === key) renderDrawer();
+  }
+
   clearTimeout(setField._t);
   setField._t = setTimeout(async () => {
     renderTable();
-    try { await patchSection(key, { [field]: value }); } catch (e) { toast(writeError(e), true); }
+    try { await patchSection(key, patch); } catch (e) { toast(writeError(e), true); }
   }, 500);
 }
 
@@ -3206,15 +3306,18 @@ function csvCell(v) {
 function exportCsv() {
   if (!job) return;
   const head = ['Division', 'Section', 'Title', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Lead time (wks)', 'Release status', 'Releases', 'Next delivery',
-    'Tags', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
+    'Returned', 'Lead time (wks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
+    'Releases', 'Tags', 'Submittal files', 'Response files', 'Links', 'Spec file', 'Spec pages', 'Notes'];
   const rows = sectionsOf(job).map(s => [
     s.division, s.number, s.title, (ST[s.status || 'not_started'] || {}).label,
     s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
     s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''),
     relOf(s).label,
-    (s.releases || []).map(r => `${r.label} (rel ${r.date || '?'}${r.expected ? ', due ' + r.expected : ''})`).join(' | '),
-    nextExpected(s),
+    releasedOn(s),
+    expectedWindow(s).from,
+    expectedWindow(s).to || expectedWindow(s).from,
+    (s.releases || []).map(r => `${r.label} (rel ${r.date || '?'}${
+      r.expected ? ', due ' + r.expected + (r.expectedTo ? '–' + r.expectedTo : '') : ''})`).join(' | '),
     (s.tags || []).join(', '),
     (s.submittals || []).map(d => d.name).join(' | '),
     (s.responses || []).map(d => d.name).join(' | '),

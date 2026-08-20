@@ -62,12 +62,19 @@ The submittal status runs Not Started → Waiting on Vendor → Submitted to GC 
 Partial Approval → Approved, with Revise & Resubmit and Not Required alongside.
 
 Release is tracked separately, because a section can be approved and only part
-of it released. Approving a section moves it to **Ready to Release**. Recording
-a release asks whether it finishes the section or is only part of it — "Phase 1
-— TU boxes" — and works out the expected delivery from the section's lead time
-in weeks. That date can be overridden when the vendor says otherwise. A section
-can hold as many releases as it takes; the table shows the earliest delivery
-still outstanding.
+of it released. Approving a section moves it to **Ready to Release**. Setting it
+to **Released** records a full release there and then, so there is always a date
+to run the lead time from.
+
+Lead time is free text and takes a range: `6`, `6-7`, `6 to 8`, `10 weeks`. A
+range gives a delivery window rather than a single date. Filling the lead time
+in after a release re-dates that release, unless the delivery date was typed in
+by hand — an override is never overwritten.
+
+Recording a release asks whether it finishes the section (the default) or is
+only part of it — "Phase 1 — TU boxes". A section can hold as many releases as
+it takes. Once anything is released, the row on the main page carries the lead
+time, the release date and the delivery window alongside the status.
 
 ## Documents: upload or link
 
