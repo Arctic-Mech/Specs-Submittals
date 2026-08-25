@@ -44,7 +44,10 @@ register into the ShareFile folder, overwriting the previous one:
 
 - **`register.json`** — a full machine-readable snapshot of the job (every
   section, its statuses, releases, tags, spec text, and PDF references).
-- **`register.csv`** — the same register as a spreadsheet you can open in Excel.
+- **`register.csv`** — the register as a clean submittal-register spreadsheet
+  ready to send to a GC: a title block (project, job no., date), columns grouped
+  by division, US-format dates, readable statuses and lead times, and every
+  release listed. The ⤓ **CSV** button downloads the same thing.
 - It also **re-files the PDFs** so each one sits under the status subfolder it
   belongs to, keeping its original name — repairing anything that got moved, and
   pulling any older flat files into the sorted layout.
@@ -133,12 +136,16 @@ spec, the vendor, the status and the release. Clicking a row opens the section;
 the small **pencil** on a row turns its title, description, spec and vendor into
 inline fields so you can edit them right there without opening the panel (the
 tick puts the row back). Status and release are always live on the row. The
-manufacturer, the submittal and response counts, and the spec page reference live
-in the section panel, where they are actually used.
+manufacturer, and the submittal and response counts, live in the section panel.
 
-Rows are a uniform height, so a section with several releases is no taller than
-one with none: the main page shows the first couple of releases with a "+N more"
-line, and the section panel lists them all.
+A section can hold several releases (phase 1, phase 2, …) and **every one of them
+shows on the row** — each with its release date, delivery window and delivered
+tick — so a partially-released section reads at a glance. The row grows to fit
+them all.
+
+The spec PDF is reached only from the **Spec** button in the top-right (it opens
+the file, or lists them if there is more than one); there is no spec bar above the
+division selector. **Import spec** (also top-right) adds another.
 
 ## Documents: upload or link
 

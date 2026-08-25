@@ -276,6 +276,8 @@ header {
 .choice-btn.danger:hover { border-color: var(--red); background: var(--red-sf); }
 .choice-btn.danger b { color: var(--red); }
 .choice-btn.sel { border-color: var(--accent); background: var(--accent-sf); }
+.spec-choice { display: flex; align-items: stretch; gap: 6px; margin-bottom: 9px; }
+.spec-choice .btn { align-self: center; }
 
 /* ── storage / folder mode ── */
 .btn.lg { padding: 11px 20px; font-size: 14px; }
@@ -334,14 +336,13 @@ tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-h
 .rel-of > b { display: block; font-size: 12px; font-weight: 600; }
 .rel-of small { display: block; font-size: 11.5px; color: var(--text-3); }
 .delivered-tag { color: var(--green); font-weight: 700; }
-/* Uniform, slightly taller rows — a section with releases is no taller than one
-   without. The release cell is clipped and shows "+N more" instead of growing. */
+/* Rows are a comfortable minimum height; one with several releases grows to show
+   them all rather than clipping. */
 #secBody td { height: 62px; }
 #secBody tr.divhead td { height: auto; }
 .c-num { font-family: var(--mono); }
 .c-rel { vertical-align: top; padding-top: 10px; }
-.rel-cell { max-height: 40px; overflow: hidden; }
-.rel-more { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+.rel-cell { display: flex; flex-direction: column; gap: 2px; }
 /* A row opens the section on click; the pencil turns it into inline inputs. */
 .t-line { display: flex; align-items: center; gap: 6px; }
 .cell-ro { display: inline-block; padding: 4px 0; }
@@ -633,7 +634,6 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     </div>
 
     <div class="folder-bar" id="folderBar" hidden></div>
-    <div class="spec-bar" id="specBar" hidden></div>
 
     <div class="toolbar">
       <div class="seg" id="divSeg"></div>
@@ -2127,25 +2127,11 @@ function specsOf(j) { return (j && j.specs) || []; }
 function specById(id) { return specsOf(job).find(s => s.id === id) || null; }
 function sectionsFromSpec(id) { return sectionsOf(job).filter(s => s.specId === id); }
 
+/* The spec files are reached from the top-right "Spec" button only; there is no
+   bar above the division selector. */
 function renderSpecBar() {
   const bar = $('specBar');
-  const specs = specsOf(job);
-  if (!specs.length) { bar.hidden = true; bar.innerHTML = ''; return; }
-  bar.hidden = false;
-  bar.innerHTML = `<span class="spec-bar-label">Spec file${specs.length === 1 ? '' : 's'}</span>` +
-    specs.map(sp => {
-      const n = sectionsFromSpec(sp.id).length;
-      return `<span class="spec-chip">
-        <button class="open" onclick="openSpecViewer('${sp.id}')" title="Open ${esc(sp.name)}">
-          <span>📄</span><b>${esc(sp.name)}</b>
-          <span class="meta">${sp.pages ? sp.pages + ' pp · ' : ''}${n} section${n === 1 ? '' : 's'}</span>
-        </button>
-        <button class="kill" onclick="removeSpecPrompt('${sp.id}')" title="Remove this spec file">✕</button>
-      </span>`;
-    }).join('') +
-    `<button class="btn sm" onclick="promptImportSpec()">+ Add spec PDF</button>` +
-    (job.folderUrl ? `<button class="btn sm" onclick="window.open('${esc(job.folderUrl)}','_blank','noopener')"
-       title="Open this job's ShareFile folder">🔗 ShareFile</button>` : '');
+  if (bar) { bar.hidden = true; bar.innerHTML = ''; }
 }
 
 function renderJob() {
@@ -2210,13 +2196,9 @@ function releaseCell(s, rl) {
   const head = pill + (lead ? `<span class="lead-tag">Lead time ${esc(lead)}</span>` : '');
   if (rl.id === 'ready') return head;
 
-  // Rows stay a uniform height, so only the first couple of releases show on
-  // the main page; the section panel lists them all.
-  const all = s.releases || [];
-  const shown = all.slice(0, 2);
-  const more = all.length - shown.length;
-  // Say what went out, not just that something did.
-  const lines = shown.map(r => {
+  // Every release shows on the main page — a partially-released section can hold
+  // several, and the row grows to fit them all.
+  const lines = (s.releases || []).map(r => {
     const when = r.date ? 'Released ' + fmtShort(r.date) : 'Release date not set';
     const arrival = r.delivered
       ? '<b class="delivered-tag">Delivered</b>'
@@ -2232,8 +2214,7 @@ function releaseCell(s, rl) {
       </span>
     </div>`;
   }).join('');
-  const moreLine = more > 0 ? `<div class="rel-more">+${more} more release${more === 1 ? '' : 's'}</div>` : '';
-  return head + `<div class="rel-cell">${lines}${moreLine}</div>`;
+  return head + `<div class="rel-cell">${lines}</div>`;
 }
 
 async function toggleDelivered(key, relId, on) {
@@ -3153,15 +3134,19 @@ async function openSpecViewer(specId, page) {
 function chooseSpecModal(specs) {
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-      <div class="modal-head"><h3>Which spec file?</h3>
+      <div class="modal-head"><h3>Spec files</h3>
         <button class="icon-btn" onclick="closePdf()">✕</button></div>
       <div class="modal-body">${specs.map(sp => {
         const n = sectionsFromSpec(sp.id).length;
-        return `<button class="choice-btn" onclick="closePdf();openSpecViewer('${sp.id}')">
-          <b>${esc(sp.name)}</b>
-          <span>${sp.pages ? sp.pages + ' pages · ' : ''}${n} section${n === 1 ? '' : 's'} in the register</span>
-        </button>`;
+        return `<div class="spec-choice">
+          <button class="choice-btn" style="flex:1;margin:0" onclick="closePdf();openSpecViewer('${sp.id}')">
+            <b>${esc(sp.name)}</b>
+            <span>${sp.pages ? sp.pages + ' pages · ' : ''}${n} section${n === 1 ? '' : 's'} in the register</span>
+          </button>
+          <button class="btn sm ghost" title="Remove this spec file" onclick="closePdf();removeSpecPrompt('${sp.id}')">✕</button>
+        </div>`;
       }).join('')}</div>
+      <div class="modal-foot"><button class="btn" onclick="closePdf();promptImportSpec()">+ Import another spec</button></div>
     </div></div>`;
 }
 
@@ -3473,38 +3458,65 @@ function csvCell(v) {
   const s = String(v == null ? '' : v);
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
+/* US-format dates for the CSV a GC will open in Excel. */
+function csvDate(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${+m[2]}/${+m[3]}/${m[1]}` : (iso || '');
+}
+function csvWindow(w) {
+  if (!w || !w.from) return '';
+  return (w.to && w.to > w.from) ? `${csvDate(w.from)} – ${csvDate(w.to)}` : csvDate(w.from);
+}
+/* A clean submittal register — title block, grouped by division, readable dates
+   and release notes — suitable to send to a GC. */
 function buildCsv() {
-  const head = ['Division', 'Section', 'Title', 'Description', 'Spec', 'Manufacturer', 'Status', 'Vendor', 'Package', 'Sent to GC',
-    'Returned', 'Lead time (weeks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
-    'Delivered', 'Releases', 'Tags', 'Submittal files', 'Response files', 'Links',
-    'Spec file', 'Spec pages', 'Notes'];
-  const rows = sectionsOf(job).map(s => [
-    s.division, s.number, s.title, s.description || '', s.spec || '', s.manufacturer || '',
-    (ST[s.status || 'not_started'] || {}).label,
-    s.vendor || '', s.package || '', s.submittedDate || '', s.returnedDate || '',
-    s.leadWeeks === 0 ? '0' : (s.leadWeeks || ''),
-    relOf(s).label,
-    releasedOn(s),
-    expectedWindow(s).from,
-    expectedWindow(s).to || expectedWindow(s).from,
-    (() => {
-      const rels = s.releases || [];
-      if (!rels.length) return '';
-      const done = rels.filter(r => r.delivered).length;
-      return done === rels.length ? 'All delivered' : done ? `${done} of ${rels.length} delivered` : 'No';
-    })(),
-    (s.releases || []).map(r => `${r.label} (released ${r.date || '?'}${
-      r.expected ? ', due ' + r.expected + (r.expectedTo ? '–' + r.expectedTo : '') : ''}${
-      r.delivered ? ', delivered' : ''})`).join(' | '),
-    (s.tags || []).join(', '),
-    (s.submittals || []).map(d => d.name).join(' | '),
-    (s.responses || []).map(d => d.name).join(' | '),
-    (s.submittals || []).concat(s.responses || []).filter(isLink).map(d => d.url).join(' | '),
-    (s.specId && specById(s.specId) ? specById(s.specId).name : ''),
-    s.startPage ? (s.startPage + (s.endPage && s.endPage !== s.startPage ? '-' + s.endPage : '')) : '',
-    (s.notes || '').replace(/\s+/g, ' ')
-  ]);
-  return [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+  const L = [];
+  const push = arr => L.push((arr || []).map(csvCell).join(','));
+  const secs = sectionsOf(job).slice().sort(sectionOrder);
+
+  push(['SUBMITTAL REGISTER']);
+  push(['Project:', job.name || '']);
+  if (job.number) push(['Job No.:', job.number]);
+  push(['Divisions:', '22 — Plumbing, 23 — HVAC']);
+  push(['Date:', csvDate(today())]);
+  push(['Total sections:', String(secs.length)]);
+  push([]);
+
+  push(['Spec Section', 'Title', 'Description', 'Manufacturer', 'Vendor / Supplier', 'Submittal No.',
+    'Status', 'Date to GC', 'Date Returned', 'Lead Time', 'Anticipated Delivery',
+    'Released', 'Delivered', 'Notes']);
+
+  let lastDiv = null;
+  for (const s of secs) {
+    if (s.division !== lastDiv) {
+      lastDiv = s.division;
+      push([`DIVISION ${s.division} — ${(DIVISION_NAMES[s.division] || '').toUpperCase()}`]);
+    }
+    const rels = s.releases || [];
+    const released = rels.length
+      ? rels.map(r => {
+          const p = [r.label];
+          if (r.date) p.push('released ' + csvDate(r.date));
+          if (r.expected) p.push('due ' + csvWindow({ from: r.expected, to: r.expectedTo }));
+          if (r.delivered) p.push('delivered');
+          return p.join(', ');
+        }).join('  |  ')
+      : (relOf(s).id === 'ready' ? 'Ready to release' : relOf(s).id === 'na' ? 'N/A' : '');
+    const delivered = rels.length
+      ? (rels.every(r => r.delivered) ? 'All delivered'
+        : rels.some(r => r.delivered) ? `${rels.filter(r => r.delivered).length} of ${rels.length}` : '')
+      : '';
+    push([
+      s.number, s.title || '', s.description || '', s.manufacturer || '', s.vendor || '', s.package || '',
+      (ST[s.status || 'not_started'] || {}).label,
+      csvDate(s.submittedDate), csvDate(s.returnedDate),
+      leadLabel(s.leadWeeks) || '',
+      csvWindow(expectedWindow(s)),
+      released, delivered,
+      (s.notes || '').replace(/\s+/g, ' ')
+    ]);
+  }
+  return L.join('\r\n');
 }
 function jobFileBase() {
   return (job.name || 'job').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'job';
