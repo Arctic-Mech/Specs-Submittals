@@ -29,9 +29,17 @@ top-right. The choice is remembered per browser.
 
 Opening the app shows **Open a job folder**. Pick a job's folder:
 
-- A folder that already has a `register.json` opens straight into the job.
+- A folder that already has a `register.json` opens straight into the job. If you
+  pick the *parent* by mistake, the app looks one level down and opens the job
+  folder it finds there.
 - An empty folder starts a new job — name it, import the spec, and the app writes
-  `register.json`, the spec PDF, and a launcher shortcut into the folder.
+  `register.json`, the spec PDF, and a launcher into the folder.
+
+If a folder has a `register.json` that can't be read, the app says so and does
+**not** offer to start a new job over it — nothing is written until a folder
+opens cleanly. The usual cause is ShareFile keeping the file **cloud-only**: in
+ShareFile, right-click the job folder and choose **Make available offline** (or
+open `register.json` once so it downloads), then try again.
 
 **Saving is automatic.** Every change writes `register.json` as you work (the
 header shows *Saving… → Saved ✓*); ShareFile syncs it up. There is no Save

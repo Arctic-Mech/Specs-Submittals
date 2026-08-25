@@ -3673,12 +3673,46 @@ async function folderFlushNow() {
   clearTimeout(folderFlushTimer);
   if (folderDirty) await folderWriteRegister();
 }
+/* Read register.json from a folder, reporting WHY it could not be read rather
+   than lumping every failure into "empty folder" — a ShareFile file that is still
+   a cloud-only placeholder reads back empty, and treating that as empty would
+   offer to start a new job right on top of real data. Returns a status:
+   ok | missing | empty | corrupt | error. */
+async function readRegisterFrom(handle) {
+  let fh;
+  try { fh = await handle.getFileHandle('register.json'); }
+  catch (e) { return { status: (e && e.name === 'NotFoundError') ? 'missing' : 'error', error: e }; }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let txt;
+    try { txt = await (await handle.getFileHandle('register.json')).getFile().then(f => f.text()); }
+    catch (e) { return { status: 'error', error: e }; }
+    if (txt && txt.trim()) {
+      try { return { status: 'ok', data: JSON.parse(txt) }; }
+      catch (e) { return { status: 'corrupt', error: e }; }
+    }
+    // Empty content: a cloud-only file may still be downloading — wait and retry.
+    if (attempt === 0) await new Promise(r => setTimeout(r, 1200));
+  }
+  return { status: 'empty' };
+}
 async function folderReadRegister() {
+  const res = await readRegisterFrom(folderHandle);
+  return res.status === 'ok' ? res.data : null;
+}
+async function folderHasDir(handle, name) {
+  try { await handle.getDirectoryHandle(name); return true; } catch (e) { return false; }
+}
+/* If the parent folder was picked by mistake, the job folder is one level down. */
+async function findRegisterInSubfolders(handle) {
   try {
-    const fh = await folderHandle.getFileHandle('register.json');
-    const f = await fh.getFile();
-    return JSON.parse(await f.text());
-  } catch (e) { return null; }          // NotFoundError etc. → treat as an empty folder
+    for await (const entry of handle.values()) {
+      if (entry.kind === 'directory' && entry.name !== 'files') {
+        const res = await readRegisterFrom(entry);
+        if (res.status === 'ok' && res.data && res.data.job) return { handle: entry, data: res.data };
+      }
+    }
+  } catch (e) { /* values() unsupported, or iteration failed — fall through */ }
+  return null;
 }
 
 /* The on-disk name is <fileId><ext>; the real name is kept in the file index, so
@@ -3892,17 +3926,41 @@ function reopenPending() { if (pendingFolderRec) openFolderHandle(pendingFolderR
 async function openFolderHandle(handle) {
   if (!(await ensureRW(handle))) { toast('Folder permission is needed to open the job', true); return; }
   folderHandle = handle;
-  const reg = await folderReadRegister();
-  if (reg && reg.job) {
-    hydrateFromRegister(reg);
-    pendingFolderRec = { handle, name: job.name, jobId: job.id };
-    await rememberHandle(job.id, handle);
-    go('job');
-    setSaveState('Saved ✓', false);
-  } else {
-    // an empty folder: start a new job in it
-    jobFormModal(null);
+  const res = await readRegisterFrom(handle);
+  if (res.status === 'ok' && res.data && res.data.job) { openLoadedRegister(handle, res.data); return; }
+
+  if (res.status === 'missing') {
+    // Maybe the parent folder was picked — the job folder may be one level down.
+    const sub = await findRegisterInSubfolders(handle);
+    if (sub) { openLoadedRegister(sub.handle, sub.data); return; }
+    if (await folderHasDir(handle, 'files')) { folderProblemModal('has-files-no-register'); return; }
+    jobFormModal(null);                 // genuinely empty → start a new job here
+    return;
   }
+  // register.json is present but unreadable/empty/corrupt — never overwrite it.
+  folderProblemModal(res.status, res.error);
+}
+function openLoadedRegister(handle, data) {
+  folderHandle = handle;
+  hydrateFromRegister(data);
+  pendingFolderRec = { handle, name: job.name, jobId: job.id };
+  rememberHandle(job.id, handle);
+  go('job');
+  setSaveState('Saved ✓', false);
+}
+function folderProblemModal(kind, err) {
+  const msg = kind === 'has-files-no-register'
+    ? `This folder has a <b>files</b> folder but no <b>register.json</b> the app can open. It may be the wrong folder (pick the exact job folder), or the register is still syncing down from ShareFile.`
+    : kind === 'corrupt'
+      ? `This folder's <b>register.json</b> could not be read — it looks corrupted or was written incompletely.`
+      : `This folder has a <b>register.json</b>, but it read back empty. If it lives in ShareFile it is most likely still a cloud-only file that hasn't downloaded yet — in ShareFile, right-click the job folder and choose <b>Make available offline</b> (or open register.json once so it downloads), then try again.`;
+  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+    <div class="modal-head"><h3>Couldn’t open this folder</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body"><p>${msg}</p>${err ? `<p class="muted" style="margin-top:8px">${esc(String((err && err.message) || err))}</p>` : ''}
+      <p class="muted" style="margin-top:10px">Nothing was changed — the app never writes to a folder until it has opened successfully.</p></div>
+    <div class="modal-foot"><button class="btn" onclick="closePdf()">Cancel</button>
+      <button class="btn primary" onclick="closePdf();pickAndOpenFolder()">Pick the folder again</button></div>
+  </div></div>`;
 }
 function hydrateFromRegister(reg) {
   const j = reg.job || {};
@@ -3922,8 +3980,14 @@ function hydrateFromRegister(reg) {
 async function folderReload() {
   if (!folderHandle) return;
   try { await folderFlushNow(); } catch (e) {}
-  const reg = await folderReadRegister();
-  if (!reg || !reg.job) { toast('register.json is missing from this folder', true); return; }
+  const res = await readRegisterFrom(folderHandle);
+  if (res.status !== 'ok' || !res.data || !res.data.job) {
+    toast(res.status === 'empty' ? 'register.json read back empty — it may still be downloading from ShareFile'
+        : res.status === 'missing' ? 'register.json is missing from this folder'
+        : 'register.json could not be read', true);
+    return;
+  }
+  const reg = res.data;
   const openWas = openKey;
   hydrateFromRegister(reg);
   renderJob();
