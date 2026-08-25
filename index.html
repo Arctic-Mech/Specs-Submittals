@@ -3681,13 +3681,24 @@ async function folderReadRegister() {
   } catch (e) { return null; }          // NotFoundError etc. → treat as an empty folder
 }
 
+/* The on-disk name is <fileId><ext>; the real name is kept in the file index, so
+   the extension is cosmetic. Force a safe one — the File System Access API
+   refuses shortcut/executable extensions (.url, .lnk, .exe, …) with "Name is not
+   allowed", and a document could carry one. */
+const BLOCKED_EXT = /^\.(url|lnk|scf|exe|dll|com|scr|pif|bat|cmd|msi|msc|vbs|vbe|js|jse|ws|wsf|wsh|jar|reg|ps1|hta|cpl|inf|scb)$/i;
+function safeExt(name) {
+  const m = String(name || '').match(/\.[a-z0-9]{1,8}$/i);
+  const ext = m ? m[0].toLowerCase() : '.pdf';
+  return BLOCKED_EXT.test(ext) ? '.pdf' : ext;
+}
+
 /* ── PDFs as real files under files/ ── */
 async function filesDir(create) {
   return folderHandle.getDirectoryHandle('files', { create: !!create });
 }
 async function folderPutFile(file, meta) {
   const id = uid('file');
-  const ext = (String(file.name).match(/\.[a-z0-9]+$/i) || ['.pdf'])[0];
+  const ext = safeExt(file.name);
   const dir = await filesDir(true);
   const fh = await dir.getFileHandle(id + ext, { create: true });
   const w = await fh.createWritable();
@@ -3715,18 +3726,37 @@ async function folderDeleteFile(fileId) {
   folderScheduleFlush();
 }
 
-/* ── the launcher shortcut dropped into each job folder ── */
+/* ── the launcher dropped into each job folder ──
+   A Windows ".url" / ".lnk" shortcut is REFUSED by the File System Access API —
+   it blocks shortcut and executable extensions and throws "Name is not allowed".
+   So the launcher is a tiny ".html" page that redirects to the hosted app for
+   this job; double-clicking it in the folder opens the default browser and lands
+   on the register. It also shows a plain link in case the redirect is blocked. */
+function launcherHtml(url) {
+  const u = String(url);
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + '<title>Opening submittal register…</title>'
+    + '<meta http-equiv="refresh" content="0;url=' + esc(u) + '">'
+    + '</head><body style="font-family:system-ui,Segoe UI,Arial,sans-serif;padding:48px;color:#16191d">'
+    + '<p style="font-size:16px">Opening the submittal register…</p>'
+    + '<p><a href="' + esc(u) + '">Click here</a> if it does not open automatically.</p>'
+    + '<script>location.replace(' + JSON.stringify(u) + ')<\/script>'
+    + '</body></html>';
+}
+async function writeLauncherInto(dirHandle, jobId) {
+  if (!dirHandle || !jobId) return false;
+  const url = location.origin + location.pathname + '?job=' + encodeURIComponent(jobId);
+  try {
+    const fh = await dirHandle.getFileHandle('Open Register.html', { create: true });
+    const w = await fh.createWritable();
+    await w.write(new Blob([launcherHtml(url)], { type: 'text/html' }));
+    await w.close();
+    return true;
+  } catch (e) { return false; }        // non-fatal: the app still opens from its URL
+}
 async function writeLauncher() {
   if (!folderHandle || !job) return;
-  const base = location.origin + location.pathname;
-  const url = base + '?job=' + encodeURIComponent(job.id);
-  const ics = '[InternetShortcut]\r\nURL=' + url + '\r\n';
-  try {
-    const fh = await folderHandle.getFileHandle('Open Register.url', { create: true });
-    const w = await fh.createWritable();
-    await w.write(new Blob([ics], { type: 'text/plain' }));
-    await w.close();
-  } catch (e) { /* non-fatal: the app still opens from its URL */ }
+  await writeLauncherInto(folderHandle, job.id);
 }
 
 /* ── Save the open job (from any backend) into a ShareFile folder ──
@@ -3755,7 +3785,7 @@ async function exportJobToFolder() {
       stickyToast(`Saving to ShareFile… file ${++n} of ${pdfs.length}`);
       const blob = await readFileBlob(p.fileId);
       if (!blob) continue;
-      const ext = (String(p.name).match(/\.[a-z0-9]+$/i) || ['.pdf'])[0];
+      const ext = safeExt(p.name);
       const fh = await filesDirH.getFileHandle(p.fileId + ext, { create: true });
       const w = await fh.createWritable(); await w.write(blob); await w.close();
       files[p.fileId] = { name: p.name, size: blob.size, type: blob.type || 'application/pdf', kind: p.kind, ext };
@@ -3779,15 +3809,12 @@ async function exportJobToFolder() {
     await rw.write(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     await rw.close();
 
-    // Launcher + remember the folder so folder mode can reopen this job.
-    const url = location.origin + location.pathname + '?job=' + encodeURIComponent(job.id);
-    const lf = await dir.getFileHandle('Open Register.url', { create: true });
-    const lw = await lf.createWritable();
-    await lw.write(new Blob(['[InternetShortcut]\r\nURL=' + url + '\r\n'], { type: 'text/plain' }));
-    await lw.close();
+    // Launcher (best-effort) + remember the folder so folder mode can reopen it.
+    const launcherOk = await writeLauncherInto(dir, job.id);
     try { const db = await handleDb(); await idbPut(db, 'job:' + job.id, { handle: dir, name: job.name }); await idbPut(db, 'lastJob', job.id); } catch (e) {}
 
-    toast(`Saved to ShareFile ✓ — switch storage to “ShareFile folder” to work from it (${pdfs.length} PDF${pdfs.length === 1 ? '' : 's'})`);
+    toast(`Saved to ShareFile ✓ — ${pdfs.length} PDF${pdfs.length === 1 ? '' : 's'}. Switch storage to “ShareFile folder” to work from it.`
+      + (launcherOk ? '' : ' (The launcher shortcut couldn’t be written, but the folder is ready to open.)'));
   } catch (e) {
     console.error(e);
     toast('Could not save to the folder: ' + (e.message || e), true);

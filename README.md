@@ -40,14 +40,18 @@ doesn't push live like Firebase did. Two people editing at once is last-write-
 wins; ShareFile may occasionally leave a `register (conflicted copy).json` to
 tidy up.
 
-**Launching from the folder.** Each job folder carries an `Open Register.url`
-shortcut pointing at the hosted app with that job's id. Double-clicking it opens
-the app straight to the job — as close to "open it from the folder" as a browser
-allows. A browser can't save from a double-clicked HTML file (that's the
-`file://` sandbox), so the app is always opened from its web address and the
-shortcut is what lives in the folder. The shortcut opens in the machine's default
+**Launching from the folder.** Each job folder carries an `Open Register.html`
+launcher pointing at the hosted app with that job's id. Double-clicking it opens
+the default browser and redirects to the app on that job — as close to "open it
+from the folder" as a browser allows. (It is a `.html` redirect rather than a
+Windows `.url` shortcut because the File System Access API refuses to create
+`.url`/`.lnk` files — it blocks shortcut and executable extensions.) A browser
+still can't *save* from a double-clicked `file://` page, so the app itself is
+always opened from its web address. The launcher opens in the machine's default
 browser, which must be Chrome or Edge. The first time each person opens a given
-job they pick its folder once; after that it's a single permission click.
+job they pick its folder once; after that it's a single permission click. If the
+launcher can't be written for any reason, the folder is still fully usable — just
+open the app and use **Open a job folder**.
 
 ## Firebase setup
 
@@ -163,7 +167,7 @@ blocked. A link needs none of that.
 ```
 register.json          the whole job: meta + sections (spec text inline) + file index
 files/<fileId>.pdf     each uploaded submittal / response / spec PDF, as a real file
-Open Register.url      the launcher shortcut to the hosted app for this job
+Open Register.html     the launcher (a redirect) that opens the hosted app for this job
 ```
 
 **Firebase mode** — Firestore documents:
