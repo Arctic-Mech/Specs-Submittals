@@ -3700,11 +3700,13 @@ async function writeFolderFile(name, text, type) {
   await w.close();
 }
 async function buildRegisterSnapshot() {
-  const sections = [];
-  for (const s of sectionsOf(job)) {
-    const sd = await specDataFor(s.key).catch(() => ({ requirements: [], includes: [] }));
-    sections.push(Object.assign({}, s, { requirements: sd.requirements || [], includes: sd.includes || [] }));
-  }
+  // Fetch every section's spec text in parallel (cache-first); a failed read
+  // just leaves that section's spec text empty in the snapshot.
+  const secs = sectionsOf(job);
+  const specTexts = await Promise.all(secs.map(s =>
+    specDataFor(s.key).catch(() => ({ requirements: [], includes: [] }))));
+  const sections = secs.map((s, i) => Object.assign({}, s,
+    { requirements: specTexts[i].requirements || [], includes: specTexts[i].includes || [] }));
   return {
     version: 2, savedAt: Date.now(),
     job: { id: job.id, name: job.name, number: job.number || '', folderUrl: job.folderUrl || '',
@@ -3712,65 +3714,101 @@ async function buildRegisterSnapshot() {
     sections
   };
 }
-/* Move one document so it sits under files/<wantDir>/, keeping its name. */
-async function refileDoc(filesRoot, doc, wantDir) {
+/* Which status folder a document belongs in — its own status, else a default by
+   kind. Never the section status (which can be not_started / N/A). */
+function docWantDir(doc, kind) {
+  return statusDirName(doc.status || (kind === 'responses' ? 'approved' : 'submitted_gc'));
+}
+/* Copy one doc's PDF into files/<wantDir>/ (keeping its name) WITHOUT deleting
+   the source yet. Returns a move plan, or null if nothing to do / source gone. */
+async function planRefile(filesRoot, doc, wantDir) {
   const curDir = doc.dir || null;
   const curFile = doc.file || (doc.fileId ? doc.fileId + '.pdf' : null);
-  if (!curFile) return false;
-  if (curDir === wantDir) return false;               // already in place
+  if (!curFile || curDir === wantDir) return null;    // already in place / nothing on disk
   let blob = null;
   try {
     if (curDir) { const d = await filesRoot.getDirectoryHandle(curDir); blob = await (await d.getFileHandle(curFile)).getFile(); }
     else { blob = await (await filesRoot.getFileHandle(curFile)).getFile(); }   // legacy flat file
-  } catch (e) { return false; }                       // source missing → leave the record
+  } catch (e) { return null; }                        // source missing → leave the record
   const targetDir = await filesRoot.getDirectoryHandle(wantDir, { create: true });
   const targetName = await uniqueFileName(targetDir, sanitizeFileName(doc.name || curFile));
   const fh = await targetDir.getFileHandle(targetName, { create: true });
   const w = await fh.createWritable(); await w.write(blob); await w.close();
-  try {
-    if (curDir) { const d = await filesRoot.getDirectoryHandle(curDir); await d.removeEntry(curFile); }
-    else await filesRoot.removeEntry(curFile);
-  } catch (e) {}
-  if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
-  doc.dir = wantDir; doc.file = targetName; delete doc.fileId;
-  return true;
+  return { doc, oldDir: curDir, oldFile: curFile, newDir: wantDir, newFile: targetName };
 }
-async function refilePdfs() {
-  const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
-  const touched = new Set();
-  let moved = 0, specChanged = false;
-  for (const s of sectionsOf(job)) {
-    for (const kind of ['submittals', 'responses']) {
-      for (const d of (s[kind] || [])) {
-        if (isLink(d)) continue;
-        const want = statusDirName(d.status || s.status || 'submitted_gc');
-        if (await refileDoc(filesRoot, d, want)) { moved++; touched.add(s); }
-      }
-    }
-  }
-  for (const sp of (job.specs || [])) {
-    if (isLink(sp)) continue;
-    if (await refileDoc(filesRoot, sp, statusDirName('spec'))) { moved++; specChanged = true; }
-  }
-  return { moved, touched: [...touched], specChanged };
-}
+
 async function saveToFolder() {
   if (!job) return;
+  if (saveToFolder._busy) { toast('A save is already in progress…', true); return; }
   if (!jobFolder) { if (!(await ensureJobFolder())) return; }
+  saveToFolder._busy = true;
+  const btn = document.querySelector('#jobActions button[onclick="saveToFolder()"]');
+  if (btn) btn.disabled = true;
   stickyToast('Saving to the ShareFile folder…');
   try {
-    const { moved, touched, specChanged } = await refilePdfs();
+    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+
+    // 1) COPY each out-of-place PDF to its target folder — no deletes yet.
+    const moves = [];
+    const touched = new Set(); let specChanged = false;
+    for (const s of sectionsOf(job)) {
+      for (const kind of ['submittals', 'responses']) {
+        for (const d of (s[kind] || [])) {
+          if (isLink(d)) continue;
+          const m = await planRefile(filesRoot, d, docWantDir(d, kind));
+          if (m) { moves.push(m); touched.add(s); }
+        }
+      }
+    }
+    for (const sp of (job.specs || [])) {
+      if (isLink(sp)) continue;
+      const m = await planRefile(filesRoot, sp, statusDirName('spec'));
+      if (m) { moves.push(m); specChanged = true; }
+    }
+
+    // 2) Point the records at the new copies, in memory.
+    for (const m of moves) { m.doc.dir = m.newDir; m.doc.file = m.newFile; delete m.doc.fileId; }
+
+    // 3) Persist the records to the cloud (the source of truth) BEFORE deleting
+    //    any source file. If this fails, roll back and remove the new copies —
+    //    the originals are untouched, so nothing is lost.
+    try {
+      if (touched.size) await saveSections([...touched]);
+      if (specChanged) await saveJobMeta();
+    } catch (e) {
+      for (const m of moves) {
+        m.doc.dir = m.oldDir; m.doc.file = m.oldFile;
+        try { const td = await filesRoot.getDirectoryHandle(m.newDir); await td.removeEntry(m.newFile); } catch (_) {}
+      }
+      throw e;
+    }
+
+    // 4) Records are durable — now delete the old copies. A failed delete only
+    //    leaves a harmless duplicate; the record already points at the new file.
+    for (const m of moves) {
+      try {
+        if (m.oldDir) { const d = await filesRoot.getDirectoryHandle(m.oldDir); await d.removeEntry(m.oldFile); }
+        else await filesRoot.removeEntry(m.oldFile);
+      } catch (e) {}
+      if (blobUrlCache.has(m.doc.id)) { URL.revokeObjectURL(blobUrlCache.get(m.doc.id)); blobUrlCache.delete(m.doc.id); }
+    }
+
+    // 5) Write the snapshot + CSV. Records and files are already consistent, so
+    //    a failure here only means the snapshot is stale, not that data is lost.
     const snap = await buildRegisterSnapshot();
     await writeFolderFile('register.json', JSON.stringify(snap, null, 2), 'application/json');
     await writeFolderFile('register.csv', '﻿' + buildCsv(), 'text/csv;charset=utf-8');
-    if (touched.length) { try { await saveSections(touched); } catch (e) {} }
-    if (specChanged) { try { await saveJobMeta(); } catch (e) {} }
+
     if (openKey) renderDrawer();
     renderTable();
+    const moved = moves.length;
     toast(`Saved to the ShareFile folder — register.json + register.csv written${moved ? `, ${moved} PDF${moved === 1 ? '' : 's'} re-filed` : ''}`);
   } catch (e) {
     console.error(e);
     toast('Could not save to the folder: ' + (e.message || e), true);
+  } finally {
+    saveToFolder._busy = false;
+    if (btn) btn.disabled = false;
   }
 }
 
