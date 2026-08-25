@@ -22,8 +22,10 @@ top-right. The choice is remembered per browser.
   sync. Kept so jobs saved before the switch stay reachable — flip the toggle to
   open them. A **Save to ShareFile** button (shown in Firebase mode) writes the
   open job — register, spec text, and every PDF — into a folder you pick, so a
-  Firebase job can be seeded into ShareFile as a starting point. After it saves,
-  switch storage to *ShareFile folder* to work from the folder copy.
+  Firebase job can be seeded into ShareFile as a starting point; when it finishes
+  it offers to **open the folder right away**. The Firebase jobs page also carries
+  an **Open a ShareFile job** button, so you can load a saved folder without first
+  hunting for the storage toggle. Both switch to folder mode for you.
 
 ### ShareFile-folder mode
 

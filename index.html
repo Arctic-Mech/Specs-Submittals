@@ -603,6 +603,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <div class="page-sub">One register per project, shared with everyone on this workspace.</div>
       </div>
       <div class="spacer"></div>
+      <button class="btn" id="btnOpenSf" onclick="openShareFileJob()" style="display:none">📁 Open a ShareFile job</button>
       <button class="btn primary" onclick="newJob()">+ New job</button>
     </div>
     <div id="syncBanner"></div>
@@ -3847,12 +3848,52 @@ async function exportJobToFolder() {
     const launcherOk = await writeLauncherInto(dir, job.id);
     try { const db = await handleDb(); await idbPut(db, 'job:' + job.id, { handle: dir, name: job.name }); await idbPut(db, 'lastJob', job.id); } catch (e) {}
 
-    toast(`Saved to ShareFile ✓ — ${pdfs.length} PDF${pdfs.length === 1 ? '' : 's'}. Switch storage to “ShareFile folder” to work from it.`
-      + (launcherOk ? '' : ' (The launcher shortcut couldn’t be written, but the folder is ready to open.)'));
+    // Offer to switch to the folder copy right now — that is the whole point.
+    lastSavedExport = { dir, data };
+    savedToShareFileModal(pdfs.length, launcherOk);
   } catch (e) {
     console.error(e);
     toast('Could not save to the folder: ' + (e.message || e), true);
   }
+}
+
+let lastSavedExport = null;
+function savedToShareFileModal(pdfCount, launcherOk) {
+  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+    <div class="modal-head"><h3>Saved to ShareFile ✓</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <p>Wrote <b>register.json</b>, ${pdfCount} PDF${pdfCount === 1 ? '' : 's'}${launcherOk ? ', and a launcher' : ''} into the folder.</p>
+      <p class="muted" style="margin-top:8px">From now on, open this job by loading that ShareFile folder — no need to go through Firebase again. Do that now?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePdf()">Later</button>
+      <button class="btn primary" onclick="closePdf();openSavedFolderNow()">Open the ShareFile job now</button>
+    </div></div></div>`;
+}
+function openSavedFolderNow() {
+  if (!lastSavedExport) return;
+  switchToFolderMode();
+  openLoadedRegister(lastSavedExport.dir, lastSavedExport.data);
+}
+
+/* Flip to folder mode in place (no reload) and stop the Firebase listeners, so
+   "Open a ShareFile job" works straight from the Firebase view. */
+function switchToFolderMode() {
+  storageMode = 'folder';
+  localStorage.setItem('sr_storage_mode', 'folder');
+  if (unsubJobs) { unsubJobs(); unsubJobs = null; }
+  if (unsubSections) { unsubSections(); unsubSections = null; }
+  applyStorageModeUI();
+}
+/* One-click "load a job from its ShareFile folder", available from any mode. */
+async function openShareFileJob() {
+  if (!fsSupported()) { toast('Opening a folder needs Chrome or Edge', true); return; }
+  switchToFolderMode();
+  closePdf();
+  let handle;
+  try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+  catch (e) { go('jobs'); return; }          // dismissed → show the folder landing
+  await openFolderHandle(handle);
 }
 
 /* ── remember which folder went with which job (per machine) ── */
@@ -4009,15 +4050,14 @@ function renderFolderLanding() {
     return;
   }
   grid.innerHTML = `<div class="folder-landing">
-    <h3>Open a job from its ShareFile folder</h3>
-    <p class="muted">The register and every PDF live inside the folder. Changes save as you
-    make them; ShareFile syncs them to everyone.</p>
+    <h3>Load a job from its ShareFile folder</h3>
+    <p class="muted">The register and every PDF live inside the folder. Pick a folder that
+    already has a saved job to load it, or an empty folder to start a new one. Changes then
+    save as you make them, and ShareFile syncs them to everyone.</p>
     <div class="landing-btns">
-      <button class="btn primary lg" onclick="pickAndOpenFolder()">📁 Open a job folder…</button>
-      ${pendingFolderRec ? `<button class="btn lg" onclick="reopenPending()">↻ Reopen “${esc(pendingFolderRec.name || 'last job')}”</button>` : ''}
+      ${pendingFolderRec ? `<button class="btn primary lg" onclick="reopenPending()">↻ Reopen “${esc(pendingFolderRec.name || 'last job')}”</button>` : ''}
+      <button class="btn ${pendingFolderRec ? '' : 'primary '}lg" onclick="pickAndOpenFolder()">📁 Open a job folder…</button>
     </div>
-    <p class="muted sm">Pick an empty folder to start a new job in it, or a folder that already
-    has a register to open it.</p>
   </div>`;
 }
 
@@ -4051,6 +4091,8 @@ function applyStorageModeUI() {
   if (reload) reload.style.display = isFolder() ? '' : 'none';
   const saveSf = $('btnSaveSf');
   if (saveSf) saveSf.style.display = isFolder() ? 'none' : '';   // folder data is already in a folder
+  const openSf = $('btnOpenSf');
+  if (openSf) openSf.style.display = isFolder() ? 'none' : '';   // folder mode has its own landing button
   const sub = document.querySelector('#view-jobs .page-sub');
   if (sub) sub.textContent = isFolder()
     ? 'Each job is a ShareFile folder — open it to work, and it saves back there.'
