@@ -20,7 +20,10 @@ top-right. The choice is remembered per browser.
   no cloud database and no storage ceiling beyond the disk.
 - **Firebase (off by default).** The original shared-cloud store with live
   sync. Kept so jobs saved before the switch stay reachable — flip the toggle to
-  open them.
+  open them. A **Save to ShareFile** button (shown in Firebase mode) writes the
+  open job — register, spec text, and every PDF — into a folder you pick, so a
+  Firebase job can be seeded into ShareFile as a starting point. After it saves,
+  switch storage to *ShareFile folder* to work from the folder copy.
 
 ### ShareFile-folder mode
 
@@ -112,7 +115,10 @@ others, or deleted from scope — can have its release set to **N/A**.
 Lead time is free text and takes a range: `6`, `6-7`, `6 to 8`, `10 weeks`. A
 range gives a delivery window rather than a single date. Filling the lead time
 in after a release re-dates that release, unless the delivery date was typed in
-by hand — an override is never overwritten.
+by hand — an override is never overwritten. The expected arrival can be entered
+directly: with a single release the **Expected delivery** field in the section
+panel is a date you type into (marked *by hand*), and any release's date can be
+set in its own release editor.
 
 Recording a release asks whether it finishes the section (the default) or is
 only part of it — "Phase 1 — TU boxes". A section can hold as many releases as
@@ -124,10 +130,12 @@ section panel. It records only that the thing arrived — no date is asked for
 and none is invented.
 
 The main page carries the section number, title, a one-line description, the
-spec, the vendor, the status and the release — every one of them editable in
-place, straight from the row, without opening the panel. The manufacturer, the
-submittal and response counts, and the spec page reference live in the section
-panel, where they are actually used.
+spec, the vendor, the status and the release. Clicking a row opens the section;
+the small **pencil** on a row turns its title, description, spec and vendor into
+inline fields so you can edit them right there without opening the panel (the
+tick puts the row back). Status and release are always live on the row. The
+manufacturer, the submittal and response counts, and the spec page reference live
+in the section panel, where they are actually used.
 
 Rows are a uniform height, so a section with several releases is no taller than
 one with none: the main page shows the first couple of releases with a "+N more"
