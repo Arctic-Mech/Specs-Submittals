@@ -236,6 +236,15 @@ header {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 9px 11px; margin-bottom: 14px;
 }
+/* the per-job ShareFile folder status bar */
+.folder-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border-radius: var(--radius); padding: 9px 13px; margin-bottom: 14px; font-size: 13px;
+}
+.folder-bar .fb-ico { font-size: 15px; }
+.folder-bar .btn { margin-left: auto; }
+.folder-bar.on   { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+.folder-bar.warn { background: var(--amber-sf); border: 1px solid var(--amber); color: var(--text); }
 .spec-bar-label {
   font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); margin-right: 2px;
@@ -583,14 +592,10 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <span class="job-title" id="crumbJob"></span>
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
-    <span id="saveState" class="save-state" hidden></span>
-    <button class="btn ghost" id="btnReload" onclick="folderReload()" title="Re-read the folder for anyone else's saved changes" style="display:none">↻ Reload</button>
-    <button class="btn ghost" id="btnSaveSf" onclick="exportJobToFolder()" title="Save this job into a ShareFile folder" style="display:none">💾 Save to ShareFile</button>
     <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 Spec</button>
     <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ CSV</button>
     <button class="btn" onclick="promptImportSpec()">Import spec</button>
   </div>
-  <button class="btn ghost sm" id="storageBtn" onclick="storageMenu()" title="Where this register saves"></button>
   <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Light / dark">◐</button>
 </header>
 
@@ -600,10 +605,9 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <div class="page-head">
       <div>
         <div class="page-title">Jobs</div>
-        <div class="page-sub">One register per project, shared with everyone on this workspace.</div>
+        <div class="page-sub">One register per project, shared live with everyone. Each job's PDFs live in its ShareFile folder.</div>
       </div>
       <div class="spacer"></div>
-      <button class="btn" id="btnOpenSf" onclick="openShareFileJob()" style="display:none">📁 Open a ShareFile job</button>
       <button class="btn primary" onclick="newJob()">+ New job</button>
     </div>
     <div id="syncBanner"></div>
@@ -627,6 +631,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
       <button class="btn sm ghost" onclick="addSectionManually()">+ Add section</button>
     </div>
 
+    <div class="folder-bar" id="folderBar" hidden></div>
     <div class="spec-bar" id="specBar" hidden></div>
 
     <div class="toolbar">
@@ -1412,7 +1417,6 @@ function markPending(key) { if (key) pendingSections.add(key); }
 async function saveJobMeta(j) {
   const target = j || job;
   if (!target) return;
-  if (isFolder()) { target.updated = Date.now(); folderScheduleFlush(); return; }
   target.updated = Date.now();
   target.summary = jobSummary(target);
   await FB.setDoc(jobRef(target.id), clean({
@@ -1420,6 +1424,7 @@ async function saveJobMeta(j) {
     name: target.name,
     number: target.number || '',
     folderUrl: target.folderUrl || '',
+    sfFolderName: target.sfFolderName || '',
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -1429,7 +1434,6 @@ async function saveJobMeta(j) {
 
 async function saveSection(s) {
   if (!job || !s) return;
-  if (isFolder()) { folderScheduleFlush(); return; }
   markPending(s.key);
   try {
     await FB.setDoc(sectionRef(job.id, s.key), clean(logFields(s)));
@@ -1441,7 +1445,6 @@ async function saveSection(s) {
    every connected browser, which for the heaviest sections is tens of KB. */
 async function patchSection(key, fields) {
   if (!job) return;
-  if (isFolder()) { folderScheduleFlush(); return; }
   markPending(key);
   try {
     await FB.updateDoc(sectionRef(job.id, key), clean(fields));
@@ -1464,7 +1467,6 @@ function logFields(s) {
 
 async function saveSections(list) {
   if (!job || !list.length) return;
-  if (isFolder()) { folderScheduleFlush(); return; }
   list.forEach(s => markPending(s.key));
   try {
     for (let i = 0; i < list.length; i += 400) {         // Firestore caps a batch at 500
@@ -1477,7 +1479,6 @@ async function saveSections(list) {
 }
 
 async function deleteSectionDocs(jobId, keys) {
-  if (isFolder()) { folderScheduleFlush(); return; }
   for (let i = 0; i < keys.length; i += 400) {
     const batch = FB.writeBatch(FB.db);
     for (const k of keys.slice(i, i + 400)) {
@@ -1493,7 +1494,6 @@ async function deleteSectionDocs(jobId, keys) {
 const specDataCache = new Map();          // `${jobId}:${key}` -> { requirements, includes }
 
 async function saveSpecData(jobId, list) {
-  if (isFolder()) return;   // folder mode keeps spec text inline in register.json
   for (let i = 0; i < list.length; i += 400) {
     const batch = FB.writeBatch(FB.db);
     for (const s of list.slice(i, i + 400)) {
@@ -1536,7 +1536,6 @@ async function specDataFor(key) {
    replacement is verified, so an interrupted run leaves the data intact. */
 const specDataMigrated = new Set();
 async function migrateSpecData(jobId, sections) {
-  if (isFolder()) return;   // no separate specdata docs in folder mode
   if (specDataMigrated.has(jobId)) return;
   const stale = sections.filter(s =>
     (Array.isArray(s.requirements) && s.requirements.length) ||
@@ -1561,83 +1560,43 @@ async function migrateSpecData(jobId, sections) {
   }
 }
 
-/* ── PDFs, stored in Firestore ──────────────────────────────────────────────
-   Cloud Storage needs a billing account, so files go in Firestore instead:
+/* ── PDFs live in each job's ShareFile folder ───────────────────────────────
+   The register (statuses, vendors, sections) lives in the cloud and is shared
+   live, but the PDFs are never uploaded there — each job keeps them in a
+   ShareFile folder you load:
 
-     files/{fileId}              name, size, type, chunk count
-     files/{fileId}/chunks/{n}   ~600 KB of base64 each
+     <job folder>/job.json        marks which job the folder belongs to
+     <job folder>/files/<id>.pdf  one file per submittal / response / spec
 
-   A Firestore document holds just under 1 MiB, hence the chunking. Chunks are
-   written once and never change, so reads come from the local cache and cost
-   nothing after the first time.
+   The folder handle is remembered per machine; the first time on a machine you
+   pick it once, then it opens with a single permission click. To view or add a
+   job's PDFs, its folder has to be loaded.
    ────────────────────────────────────────────────────────────────────────── */
 const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-
-const CHUNK_CHARS = 600000;        // base64 characters per document; a multiple of 4
-const FREE_TIER_BYTES = 1024 * 1024 * 1024;
 const blobUrlCache = new Map();    // fileId -> object URL, for this session
+let jobFolder = null;              // the open job's ShareFile folder, or null if not loaded
 
-const fileRef = id => FB.doc(FB.db, 'files', id);
-const chunksCol = id => FB.collection(FB.db, 'files', id, 'chunks');
-
-function fileToBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result).split(',')[1] || '');
-    r.onerror = () => rej(r.error);
-    r.readAsDataURL(file);
-  });
-}
-
+/* A PDF is written to the open job's folder as files/<fileId>.pdf. The record
+   kept on the section (id, name, size, fileId) is what ties it back. */
 async function putFile(file, meta, onProgress) {
-  if (isFolder()) return folderPutFile(file, meta);
+  if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
   const id = uid('file');
-  const b64 = await fileToBase64(file);
-  const parts = [];
-  for (let i = 0; i < b64.length; i += CHUNK_CHARS) parts.push(b64.slice(i, i + CHUNK_CHARS));
-
-  // One document per chunk, a few at a time: a batch would blow the request
-  // size limit long before it hit the 500-operation limit.
-  let done = 0;
-  const queue = parts.map((text, i) => async () => {
-    await FB.setDoc(FB.doc(chunksCol(id), String(i).padStart(4, '0')), { i, b: text });
-    if (onProgress) onProgress(++done / parts.length);
-  });
-  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (queue.length) await (queue.shift())();
-  });
-  await Promise.all(workers);
-
-  await FB.setDoc(fileRef(id), clean(Object.assign({
-    id, name: file.name, size: file.size, type: file.type || 'application/pdf',
-    chunks: parts.length, created: Date.now()
-  }, meta || {})));
+  const dir = await jobFolder.getDirectoryHandle('files', { create: true });
+  const fh = await dir.getFileHandle(id + '.pdf', { create: true });
+  const w = await fh.createWritable();
+  await w.write(file);
+  await w.close();
+  if (onProgress) onProgress(1);
   return id;
 }
 
 async function readFileBlob(fileId) {
-  if (!fileId) return null;
-  if (isFolder()) return folderReadBlob(fileId);
-  const col = chunksCol(fileId);
-  let snap = null;
-  // Chunks never change, so a cache hit is always correct — and free.
+  if (!fileId || !jobFolder) return null;
   try {
-    snap = await FB.getDocsFromCache(col);
-    if (snap.empty) snap = null;
-  } catch (e) { snap = null; }
-  if (!snap) snap = await FB.getDocs(col);
-  if (snap.empty) return null;
-
-  const rows = snap.docs.map(d => d.data()).sort((a, b) => (a.i || 0) - (b.i || 0));
-  const parts = rows.map(r => {
-    const bin = atob(r.b || '');
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    return arr;
-  });
-  const meta = await FB.getDoc(fileRef(fileId));
-  const type = (meta.exists() && meta.data().type) || 'application/pdf';
-  return new Blob(parts, { type });
+    const dir = await jobFolder.getDirectoryHandle('files');
+    const fh = await dir.getFileHandle(fileId + '.pdf');
+    return await fh.getFile();          // a File is already a Blob
+  } catch (e) { return null; }
 }
 
 async function fileUrl(fileId) {
@@ -1656,44 +1615,17 @@ async function deleteStoredFile(fileId) {
     URL.revokeObjectURL(blobUrlCache.get(fileId));
     blobUrlCache.delete(fileId);
   }
-  if (isFolder()) return folderDeleteFile(fileId);
-  try {
-    const snap = await FB.getDocs(chunksCol(fileId));
-    const keys = snap.docs.map(d => d.id);
-    for (let i = 0; i < keys.length; i += 400) {
-      const batch = FB.writeBatch(FB.db);
-      for (const k of keys.slice(i, i + 400)) batch.delete(FB.doc(chunksCol(fileId), k));
-      await batch.commit();
-    }
-    await FB.deleteDoc(fileRef(fileId));
-  } catch (e) { /* already gone */ }
+  if (!jobFolder) return;               // not loaded → the file stays in ShareFile
+  try { const dir = await jobFolder.getDirectoryHandle('files'); await dir.removeEntry(fileId + '.pdf'); } catch (e) {}
 }
 
 function storageError(e) {
-  const code = (e && e.code) || '';
-  if (code.includes('permission-denied')) return 'Firestore refused the write — paste the security rules in the Firebase console.';
-  if (code.includes('resource-exhausted')) return 'This Firebase project has hit its free-tier limit for the day.';
-  if (code.includes('unavailable')) return 'No connection — the upload will finish when you are back online.';
-  return 'Upload failed: ' + (e && (e.message || e.code) || e);
+  return (e && (e.message || e.code)) ? String(e.message || e.code) : 'The file could not be saved to the folder.';
 }
-
-function usedBytes() {
-  if (isFolder()) return Object.values(folderFiles).reduce((n, f) => n + (f.size || 0), 0);
-  return jobs.reduce((n, j) => n + ((j.summary && j.summary.bytes) || 0), 0);
-}
-function headroomNote() {
-  return fmtBytes(Math.max(0, FREE_TIER_BYTES - usedBytes())) + ' of storage left — links use none of it';
-}
-const BIG_UPLOAD = 25 * 1024 * 1024;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    3. STATE
    ═══════════════════════════════════════════════════════════════════════════ */
-/* Two storage backends. Folder mode (the default) saves into a ShareFile job
-   folder; Firebase is kept behind a toggle for reaching pre-switch data. */
-let storageMode = (localStorage.getItem('sr_storage_mode') === 'firebase') ? 'firebase' : 'folder';
-const isFolder = () => storageMode === 'folder';
-
 let jobs = [];            // job metadata, newest first
 let job = null;           // open job
 let view = 'jobs';
@@ -1765,6 +1697,7 @@ function watchJobs() {
           const stale = (fresh.updated || 0) < (job.updated || 0);
           if (!jobEditDepth && !stale) {
             job.name = fresh.name; job.number = fresh.number; job.folderUrl = fresh.folderUrl;
+            job.sfFolderName = fresh.sfFolderName || '';
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -1940,7 +1873,7 @@ function go(where, id) {
   closeDrawer();
   if (where === 'jobs') {
     if (unsubSections) { unsubSections(); unsubSections = null; }
-    job = null; $('crumbJob').textContent = ''; renderJobs();
+    job = null; jobFolder = null; $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
   window.scrollTo(0, 0);
@@ -1955,6 +1888,7 @@ async function openJob(id) {
   $('crumbJob').textContent = j.name;
   go('job');
   watchSections(job.id);          // sections stream in and re-render
+  tryAutoLoadFolder(job.id);      // load this job's PDF folder if the grant stands
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1971,7 +1905,6 @@ function jobCount(j) {
 }
 
 function renderJobs() {
-  if (isFolder()) return renderFolderLanding();
   const grid = $('jobsGrid');
   if (!jobsLoaded) {
     grid.innerHTML = `<div class="job-card loading-card"><span class="muted">Loading jobs…</span></div>`;
@@ -2005,27 +1938,13 @@ function renderJobs() {
 function renderStorageNote() {
   const host = $('storageNote');
   if (!host) return;
-  if (isFolder()) {
-    const used = usedBytes();
-    host.innerHTML = folderHandle
-      ? `<span class="sync-dot"></span>Saving to the ShareFile folder. Changes are written as you make them; ShareFile syncs them up. `
-        + `Uploaded PDFs so far: <b>${fmtBytes(used)}</b>. Use <b>Reload</b> to pull in a coworker's saved changes.`
-      : `<span class="sync-dot wait"></span>Open a job folder to begin. The register and its PDFs are saved right in that ShareFile folder — no cloud database.`;
-    return;
-  }
   const state = syncState === 'live'
-    ? '<span class="sync-dot"></span>Synced — everyone on this workspace sees the same register, and changes appear live.'
+    ? '<span class="sync-dot"></span>The register is shared live — everyone sees the same statuses, and changes appear as they happen.'
     : syncState === 'error'
-      ? '<span class="sync-dot off"></span>Not syncing. Changes you make now are held in this browser until the connection is fixed.'
+      ? '<span class="sync-dot off"></span>Not connected. Changes you make now are held in this browser until the connection is fixed.'
       : '<span class="sync-dot wait"></span>Connecting…';
-  const used = usedBytes();
-  const pct = used / FREE_TIER_BYTES * 100;
-  let line = `<br>PDFs are stored in Firestore — <b>${fmtBytes(used)}</b> of the ${fmtBytes(FREE_TIER_BYTES)} free allowance`;
-  line += pct > 90 ? '. <b>Almost full</b> — delete a finished job before uploading more.'
-        : pct > 70 ? '. Getting full; delete finished jobs to make room.'
-        : '.';
-  host.innerHTML = state + line +
-    ' Export a CSV from any job for a copy of the register you can keep elsewhere.';
+  host.innerHTML = state +
+    '<br>Each job’s <b>PDFs live in its ShareFile folder</b>, not in the register — open a job and load its folder to view or add PDFs.';
 }
 
 function renderLegacyNotice() {
@@ -2084,7 +2003,7 @@ function jobFormModal(existing) {
   }
 }
 
-function newJob() { if (isFolder()) return pickAndOpenFolder(); jobFormModal(null); }
+function newJob() { jobFormModal(null); }
 function editJob() { if (job) jobFormModal(job); }
 
 async function submitJobForm(id) {
@@ -2104,20 +2023,6 @@ async function submitJobForm(id) {
       if (job && job.id === id) { $('crumbJob').textContent = name; renderJob(); }
       closePdf();
       toast('Job updated');
-    } else if (isFolder()) {
-      // A new job in the folder just picked: write the register and a launcher,
-      // then import the spec into it.
-      job = { id: uid('job'), name, number, folderUrl, created: Date.now(), updated: Date.now(),
-        specs: [], sections: [] };
-      folderFiles = {}; jobs = [job]; divPicked = false; openKey = null;
-      $('crumbJob').textContent = name;
-      closePdf();
-      go('job');
-      await folderWriteRegister();
-      await writeLauncher();
-      await rememberHandle(job.id, folderHandle);
-      pendingFolderRec = { handle: folderHandle, name, jobId: job.id };
-      promptImportSpec();
     } else {
       const j = {
         id: uid('job'), name, number, folderUrl, created: Date.now(), updated: Date.now(),
@@ -2153,23 +2058,16 @@ async function deleteJob(id) {
   const j = jobs.find(x => x.id === id);
   if (!j) return;
   const count = jobCount(j);
-  if (!confirm(`Delete "${j.name}"${count ? ` and its ${count} sections` : ''}, for everyone?\n\nEvery uploaded PDF goes with it. This cannot be undone.`)) return;
+  if (!confirm(`Delete "${j.name}"${count ? ` and its ${count} sections` : ''} from the register, for everyone?\n\nThis removes the log. The PDFs in this job's ShareFile folder are left untouched — delete that folder in ShareFile if you want them gone. This cannot be undone.`)) return;
   stickyToast(`Deleting ${j.name}…`);
   try {
-    // Sections carry the file paths, so read them before dropping the documents.
     const snap = await FB.getDocs(sectionsCol(id));
     const secs = snap.docs.map(d => d.data());
-    for (const sp of (j.specs || [])) await deleteStoredFile(sp.fileId);
-    for (const s of secs) {
-      for (const d of (s.submittals || []).concat(s.responses || [])) {
-        if (!isLink(d)) await deleteStoredFile(d.fileId);
-      }
-    }
     await deleteSectionDocs(id, secs.map(s => s.key));
     await FB.deleteDoc(jobRef(id));
     jobs = jobs.filter(x => x.id !== id);
     renderJobs();
-    toast('Job deleted');
+    toast('Job deleted from the register');
   } catch (e) {
     console.error(e);
     toast(writeError(e), true);
@@ -2242,6 +2140,7 @@ function renderJob() {
     : 'No spec imported yet');
   $('jobMeta').textContent = bits.join(' · ');
   $('btnSpec').style.display = specs.length ? '' : 'none';
+  updateFolderBar();
   renderSpecBar();
 
   /* division segmented control */
@@ -2529,7 +2428,7 @@ function renderDrawer() {
           <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></span></h4>
         <div id="listSub">${fileList(s, 'submittals')}</div>
         <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">
-          Drop submittal PDFs here<br><span class="muted">${esc(headroomNote())}</span></div>
+          Drop submittal PDFs here<br><span class="muted">Saved to this job’s ShareFile folder</span></div>
       </div>
 
       <div class="sec">
@@ -2731,36 +2630,6 @@ async function saveLink(key, kind, docId) {
   try { await patchSection(key, { [kind]: s[kind], status: s.status }); }
   catch (e) { toast(writeError(e), true); return; }
   toast(existing ? 'Link updated' : 'Link added');
-}
-
-function bigUploadPrompt(key, kind, files, bytes) {
-  const names = files.map(f => f.name).join(', ');
-  $('modalHost').innerHTML = `
-    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-      <div class="modal-head"><h3>That is ${esc(fmtBytes(bytes))}</h3>
-        <button class="icon-btn" onclick="closePdf()">✕</button></div>
-      <div class="modal-body">
-        <p class="muted" style="margin-bottom:14px">${esc(names)}</p>
-        <button class="choice-btn" onclick="closePdf();linkModal('${key}','${kind}',null)">
-          <b>Link it from ShareFile instead</b>
-          <span>Put the file in ShareFile and paste the link here. Uses none of the
-            ${esc(fmtBytes(FREE_TIER_BYTES))} allowance, and everyone opens it from where it already lives.</span>
-        </button>
-        <button class="choice-btn" onclick="closePdf();forceUpload('${key}','${kind}')">
-          <b>Upload it anyway</b>
-          <span>Stores it here so it views inline. ${esc(headroomNote())}.</span>
-        </button>
-      </div>
-    </div></div>`;
-  bigUploadPrompt._pending = { key, kind, files };
-}
-
-function forceUpload(key, kind) {
-  const p = bigUploadPrompt._pending;
-  if (!p || p.key !== key || p.kind !== kind) return;
-  bigUploadPrompt._pending = null;
-  addFiles._forced = true;
-  addFiles(key, kind, p.files);
 }
 
 function openDocLink(key, kind, docId) {
@@ -3021,7 +2890,10 @@ async function setField(key, field, value) {
 }
 
 /* ── uploads ── */
-function pickFiles(key, kind) {
+async function pickFiles(key, kind) {
+  // Load the folder first (this click is a clean user gesture for the picker);
+  // opening the file chooser only once the PDFs have somewhere to go.
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'application/pdf,.pdf';
@@ -3041,19 +2913,9 @@ function wireDrop(el, key, kind) {
 async function addFiles(key, kind, files) {
   const s = findSection(key);
   if (!s || !files.length) return;
+  // PDFs go into this job's ShareFile folder — make sure it is loaded first.
+  if (!jobFolder) { if (!(await ensureJobFolder())) return; }
   markPending(key);                 // uploads take a while; hold the section
-  const incoming = files.reduce((n, f) => n + f.size, 0);
-  if (!isFolder() && usedBytes() + incoming > FREE_TIER_BYTES) {
-    toast('That would go past the free Firestore allowance — link it from ShareFile instead', true);
-    return;
-  }
-  // A big package is exactly what ShareFile is for; offer that before spending
-  // a chunk of the allowance on it. (Folder mode has no such ceiling.)
-  if (!isFolder() && incoming > BIG_UPLOAD && !addFiles._forced) {
-    bigUploadPrompt(key, kind, files, incoming);
-    return;
-  }
-  addFiles._forced = false;
   s[kind] = s[kind] || [];
   let added = 0;
   for (const f of files) {
@@ -3102,10 +2964,11 @@ function docOf(key, kind, docId) {
 async function resolveDoc(key, kind, docId) {
   const d = docOf(key, kind, docId);
   if (!d) return null;
-  if (d.url) return { url: d.url, name: d.name };            // pre-Firestore upload
+  if (d.url) return { url: d.url, name: d.name };            // a ShareFile link
+  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
   stickyToast(`Opening ${d.name}…`);
   const url = await fileUrl(d.fileId);
-  if (!url) { toast('That file is missing', true); return null; }
+  if (!url) { toast('That PDF isn’t in the loaded folder — check you loaded the right ShareFile folder', true); return null; }
   toast(' ');
   return { url, name: d.name };
 }
@@ -3219,10 +3082,11 @@ async function openSpecViewer(specId, page) {
     chooseSpecModal(specs);
     return;
   }
-  if (sp.url) { showPdf(sp.url, sp.name, page); return; }     // pre-Firestore upload
+  if (sp.url) { showPdf(sp.url, sp.name, page); return; }     // a ShareFile link
+  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view the spec PDF', true); return; } }
   stickyToast(`Opening ${sp.name}…`);
   const url = await fileUrl(sp.fileId);
-  if (!url) { toast('The spec PDF is missing', true); return; }
+  if (!url) { toast('The spec PDF isn’t in the loaded folder', true); return; }
   toast(' ');
   showPdf(url, sp.name, page);
 }
@@ -3465,14 +3329,16 @@ function showImportReview(file, pageCount, result) {
 
 async function confirmImport() {
   if (!pendingImport) return;
+  // The spec PDF is saved into the job's ShareFile folder — load it first.
+  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the spec PDF', true); return; } }
   beginJobEdit();
   const { file, pageCount, result } = pendingImport;
   const ticked = Array.from(document.querySelectorAll('.review-row input[type=checkbox]')).filter(c => c.checked);
   const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
   const relink = new Set(ticked.filter(c => c.dataset.mode === 'update').map(c => c.dataset.key));
 
-  importModal(`<div class="modal-head"><h3>Uploading ${esc(file.name)}</h3></div>
-    <div class="modal-body"><div class="muted" id="upStep">Sending the spec PDF to the shared workspace…</div>
+  importModal(`<div class="modal-head"><h3>Saving ${esc(file.name)}</h3></div>
+    <div class="modal-body"><div class="muted" id="upStep">Saving the spec PDF to the ShareFile folder…</div>
     <div class="progress"><div id="upBar"></div></div></div>`);
 
   try {
@@ -3610,293 +3476,20 @@ document.addEventListener('keydown', e => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   12. SHAREFILE-FOLDER STORAGE
-   The register and its PDFs live in one ShareFile job folder:
+   12. PER-JOB SHAREFILE FOLDER (for PDFs)
+   The register is in the cloud, but a job's PDFs live in a ShareFile folder you
+   load. Each job keeps its own folder:
 
-     register.json        the whole job — meta + sections (spec text inline) + file index
-     files/<fileId>.pdf   each uploaded PDF as a real file
-     Open Register.url    a launcher that opens this app straight to this job
+     <job folder>/job.json        marks which job the folder belongs to
+     <job folder>/files/<id>.pdf  each submittal / response / spec PDF
 
-   A browser can only touch these through the File System Access API, and only
-   from a hosted (https) page — never a double-clicked file:// page — which is
-   why each job folder carries the launcher rather than the app itself.
+   The folder handle is remembered per machine (IndexedDB). Loading it needs a
+   user gesture and a single permission click; after that the job's PDFs open
+   and upload straight to the folder. Nothing here touches the cloud register.
    ═══════════════════════════════════════════════════════════════════════════ */
-let folderHandle = null;         // FileSystemDirectoryHandle for the open job
-let folderFiles = {};            // fileId -> { name, size, type, kind, ext }
-let folderFlushTimer = null;
-let folderDirty = false;
-let pendingFolderRec = null;     // a remembered handle offered on the landing
-
 const fsSupported = () => !!(window.showDirectoryPicker);
 
-function setSaveState(txt, spin) {
-  const el = $('saveState');
-  if (!el) return;
-  if (!isFolder() || !txt) { el.hidden = true; return; }
-  el.hidden = false;
-  el.textContent = txt;
-  el.classList.toggle('spin', !!spin);
-}
-
-/* ── register.json ── */
-function jobToRegister() {
-  return {
-    version: 1,
-    job: {
-      id: job.id, name: job.name, number: job.number || '', folderUrl: job.folderUrl || '',
-      created: job.created, updated: job.updated, specs: job.specs || []
-    },
-    sections: job.sections || [],       // full records, spec text inline
-    files: folderFiles
-  };
-}
-async function folderWriteRegister() {
-  if (!folderHandle || !job) return;
-  job.updated = Date.now();
-  const data = jobToRegister();
-  const fh = await folderHandle.getFileHandle('register.json', { create: true });
-  const w = await fh.createWritable();
-  await w.write(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  await w.close();
-  folderDirty = false;
-  setSaveState('Saved ✓', false);
-}
-function folderScheduleFlush() {
-  if (!isFolder()) return;
-  folderDirty = true;
-  setSaveState('Saving…', true);
-  clearTimeout(folderFlushTimer);
-  folderFlushTimer = setTimeout(() => {
-    folderWriteRegister().catch(e => { setSaveState('Not saved', false); toast('Could not save to the folder: ' + (e.message || e), true); });
-  }, 600);
-}
-async function folderFlushNow() {
-  clearTimeout(folderFlushTimer);
-  if (folderDirty) await folderWriteRegister();
-}
-/* Read register.json from a folder, reporting WHY it could not be read rather
-   than lumping every failure into "empty folder" — a ShareFile file that is still
-   a cloud-only placeholder reads back empty, and treating that as empty would
-   offer to start a new job right on top of real data. Returns a status:
-   ok | missing | empty | corrupt | error. */
-async function readRegisterFrom(handle) {
-  let fh;
-  try { fh = await handle.getFileHandle('register.json'); }
-  catch (e) { return { status: (e && e.name === 'NotFoundError') ? 'missing' : 'error', error: e }; }
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let txt;
-    try { txt = await (await handle.getFileHandle('register.json')).getFile().then(f => f.text()); }
-    catch (e) { return { status: 'error', error: e }; }
-    if (txt && txt.trim()) {
-      try { return { status: 'ok', data: JSON.parse(txt) }; }
-      catch (e) { return { status: 'corrupt', error: e }; }
-    }
-    // Empty content: a cloud-only file may still be downloading — wait and retry.
-    if (attempt === 0) await new Promise(r => setTimeout(r, 1200));
-  }
-  return { status: 'empty' };
-}
-async function folderReadRegister() {
-  const res = await readRegisterFrom(folderHandle);
-  return res.status === 'ok' ? res.data : null;
-}
-async function folderHasDir(handle, name) {
-  try { await handle.getDirectoryHandle(name); return true; } catch (e) { return false; }
-}
-/* If the parent folder was picked by mistake, the job folder is one level down. */
-async function findRegisterInSubfolders(handle) {
-  try {
-    for await (const entry of handle.values()) {
-      if (entry.kind === 'directory' && entry.name !== 'files') {
-        const res = await readRegisterFrom(entry);
-        if (res.status === 'ok' && res.data && res.data.job) return { handle: entry, data: res.data };
-      }
-    }
-  } catch (e) { /* values() unsupported, or iteration failed — fall through */ }
-  return null;
-}
-
-/* The on-disk name is <fileId><ext>; the real name is kept in the file index, so
-   the extension is cosmetic. Force a safe one — the File System Access API
-   refuses shortcut/executable extensions (.url, .lnk, .exe, …) with "Name is not
-   allowed", and a document could carry one. */
-const BLOCKED_EXT = /^\.(url|lnk|scf|exe|dll|com|scr|pif|bat|cmd|msi|msc|vbs|vbe|js|jse|ws|wsf|wsh|jar|reg|ps1|hta|cpl|inf|scb)$/i;
-function safeExt(name) {
-  const m = String(name || '').match(/\.[a-z0-9]{1,8}$/i);
-  const ext = m ? m[0].toLowerCase() : '.pdf';
-  return BLOCKED_EXT.test(ext) ? '.pdf' : ext;
-}
-
-/* ── PDFs as real files under files/ ── */
-async function filesDir(create) {
-  return folderHandle.getDirectoryHandle('files', { create: !!create });
-}
-async function folderPutFile(file, meta) {
-  const id = uid('file');
-  const ext = safeExt(file.name);
-  const dir = await filesDir(true);
-  const fh = await dir.getFileHandle(id + ext, { create: true });
-  const w = await fh.createWritable();
-  await w.write(file);
-  await w.close();
-  folderFiles[id] = { name: file.name, size: file.size, type: file.type || 'application/pdf',
-    kind: (meta && meta.kind) || '', ext };
-  folderScheduleFlush();
-  return id;
-}
-async function folderReadBlob(fileId) {
-  const rec = folderFiles[fileId];
-  if (!rec) return null;
-  try {
-    const dir = await filesDir(false);
-    const fh = await dir.getFileHandle(fileId + (rec.ext || '.pdf'));
-    return await fh.getFile();          // a File is already a Blob
-  } catch (e) { return null; }
-}
-async function folderDeleteFile(fileId) {
-  const rec = folderFiles[fileId];
-  if (!rec) return;
-  try { const dir = await filesDir(false); await dir.removeEntry(fileId + (rec.ext || '.pdf')); } catch (e) {}
-  delete folderFiles[fileId];
-  folderScheduleFlush();
-}
-
-/* ── the launcher dropped into each job folder ──
-   A Windows ".url" / ".lnk" shortcut is REFUSED by the File System Access API —
-   it blocks shortcut and executable extensions and throws "Name is not allowed".
-   So the launcher is a tiny ".html" page that redirects to the hosted app for
-   this job; double-clicking it in the folder opens the default browser and lands
-   on the register. It also shows a plain link in case the redirect is blocked. */
-function launcherHtml(url) {
-  const u = String(url);
-  return '<!doctype html><html><head><meta charset="utf-8">'
-    + '<title>Opening submittal register…</title>'
-    + '<meta http-equiv="refresh" content="0;url=' + esc(u) + '">'
-    + '</head><body style="font-family:system-ui,Segoe UI,Arial,sans-serif;padding:48px;color:#16191d">'
-    + '<p style="font-size:16px">Opening the submittal register…</p>'
-    + '<p><a href="' + esc(u) + '">Click here</a> if it does not open automatically.</p>'
-    + '<script>location.replace(' + JSON.stringify(u) + ')<\/script>'
-    + '</body></html>';
-}
-async function writeLauncherInto(dirHandle, jobId) {
-  if (!dirHandle || !jobId) return false;
-  const url = location.origin + location.pathname + '?job=' + encodeURIComponent(jobId);
-  try {
-    const fh = await dirHandle.getFileHandle('Open Register.html', { create: true });
-    const w = await fh.createWritable();
-    await w.write(new Blob([launcherHtml(url)], { type: 'text/html' }));
-    await w.close();
-    return true;
-  } catch (e) { return false; }        // non-fatal: the app still opens from its URL
-}
-async function writeLauncher() {
-  if (!folderHandle || !job) return;
-  await writeLauncherInto(folderHandle, job.id);
-}
-
-/* ── Save the open job (from any backend) into a ShareFile folder ──
-   Loads the current job's PDFs and spec text, then writes a complete
-   register.json + files/ + launcher into a folder you pick. Used to seed a
-   ShareFile folder from a job that currently lives in Firebase. */
-async function exportJobToFolder() {
-  if (!job) return;
-  if (!fsSupported()) { toast('Saving to a folder needs Chrome or Edge', true); return; }
-  let dir;
-  try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
-  catch (e) { return; }                       // picker dismissed
-  if (!(await ensureRW(dir))) { toast('Folder permission is needed to save', true); return; }
-
-  stickyToast('Saving to ShareFile…');
-  try {
-    // Every PDF the job references, copied in as a real file.
-    const filesDirH = await dir.getDirectoryHandle('files', { create: true });
-    const files = {};
-    const pdfs = [];
-    for (const sp of (job.specs || [])) if (sp.fileId) pdfs.push({ fileId: sp.fileId, name: sp.name, kind: 'spec' });
-    for (const s of sectionsOf(job)) for (const kind of ['submittals', 'responses'])
-      for (const d of (s[kind] || [])) if (!isLink(d) && d.fileId) pdfs.push({ fileId: d.fileId, name: d.name, kind });
-    let n = 0;
-    for (const p of pdfs) {
-      stickyToast(`Saving to ShareFile… file ${++n} of ${pdfs.length}`);
-      const blob = await readFileBlob(p.fileId);
-      if (!blob) continue;
-      const ext = safeExt(p.name);
-      const fh = await filesDirH.getFileHandle(p.fileId + ext, { create: true });
-      const w = await fh.createWritable(); await w.write(blob); await w.close();
-      files[p.fileId] = { name: p.name, size: blob.size, type: blob.type || 'application/pdf', kind: p.kind, ext };
-    }
-
-    // Sections with their spec text inlined (it lives apart in Firebase mode).
-    stickyToast('Saving to ShareFile… writing the register');
-    const sections = [];
-    for (const s of sectionsOf(job)) {
-      const sd = await specDataFor(s.key).catch(() => ({ requirements: [], includes: [] }));
-      sections.push(Object.assign({}, s, { requirements: sd.requirements || [], includes: sd.includes || [] }));
-    }
-    const data = {
-      version: 1,
-      job: { id: job.id, name: job.name, number: job.number || '', folderUrl: job.folderUrl || '',
-        created: job.created, updated: Date.now(), specs: job.specs || [] },
-      sections, files
-    };
-    const rf = await dir.getFileHandle('register.json', { create: true });
-    const rw = await rf.createWritable();
-    await rw.write(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    await rw.close();
-
-    // Launcher (best-effort) + remember the folder so folder mode can reopen it.
-    const launcherOk = await writeLauncherInto(dir, job.id);
-    try { const db = await handleDb(); await idbPut(db, 'job:' + job.id, { handle: dir, name: job.name }); await idbPut(db, 'lastJob', job.id); } catch (e) {}
-
-    // Offer to switch to the folder copy right now — that is the whole point.
-    lastSavedExport = { dir, data };
-    savedToShareFileModal(pdfs.length, launcherOk);
-  } catch (e) {
-    console.error(e);
-    toast('Could not save to the folder: ' + (e.message || e), true);
-  }
-}
-
-let lastSavedExport = null;
-function savedToShareFileModal(pdfCount, launcherOk) {
-  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-    <div class="modal-head"><h3>Saved to ShareFile ✓</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
-    <div class="modal-body">
-      <p>Wrote <b>register.json</b>, ${pdfCount} PDF${pdfCount === 1 ? '' : 's'}${launcherOk ? ', and a launcher' : ''} into the folder.</p>
-      <p class="muted" style="margin-top:8px">From now on, open this job by loading that ShareFile folder — no need to go through Firebase again. Do that now?</p>
-    </div>
-    <div class="modal-foot">
-      <button class="btn" onclick="closePdf()">Later</button>
-      <button class="btn primary" onclick="closePdf();openSavedFolderNow()">Open the ShareFile job now</button>
-    </div></div></div>`;
-}
-function openSavedFolderNow() {
-  if (!lastSavedExport) return;
-  switchToFolderMode();
-  openLoadedRegister(lastSavedExport.dir, lastSavedExport.data);
-}
-
-/* Flip to folder mode in place (no reload) and stop the Firebase listeners, so
-   "Open a ShareFile job" works straight from the Firebase view. */
-function switchToFolderMode() {
-  storageMode = 'folder';
-  localStorage.setItem('sr_storage_mode', 'folder');
-  if (unsubJobs) { unsubJobs(); unsubJobs = null; }
-  if (unsubSections) { unsubSections(); unsubSections = null; }
-  applyStorageModeUI();
-}
-/* One-click "load a job from its ShareFile folder", available from any mode. */
-async function openShareFileJob() {
-  if (!fsSupported()) { toast('Opening a folder needs Chrome or Edge', true); return; }
-  switchToFolderMode();
-  closePdf();
-  let handle;
-  try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
-  catch (e) { go('jobs'); return; }          // dismissed → show the folder landing
-  await openFolderHandle(handle);
-}
-
-/* ── remember which folder went with which job (per machine) ── */
+/* remember which folder went with which job, per machine */
 const HANDLE_DB = 'sr_folder_handles';
 function handleDb() {
   return new Promise((res, rej) => {
@@ -3928,213 +3521,119 @@ function idbGet(db, key) {
   });
 }
 async function rememberHandle(jobId, handle) {
-  try {
-    const db = await handleDb();
-    await idbPut(db, 'job:' + jobId, { handle, name: (job && job.name) || '' });
-    await idbPut(db, 'lastJob', jobId);
-  } catch (e) { /* remembering is an optimisation, never required */ }
+  try { const db = await handleDb(); await idbPut(db, 'job:' + jobId, { handle, name: (job && job.name) || '' }); }
+  catch (e) { /* remembering is an optimisation, never required */ }
 }
 async function recallHandle(jobId) {
-  try {
-    const db = await handleDb();
-    const v = await idbGet(db, 'job:' + jobId);
-    return v && v.handle ? { handle: v.handle, name: v.name, jobId } : null;
-  } catch (e) { return null; }
-}
-async function recallLast() {
-  try {
-    const db = await handleDb();
-    const id = await idbGet(db, 'lastJob');
-    return id ? recallHandle(id) : null;
-  } catch (e) { return null; }
+  try { const db = await handleDb(); const v = await idbGet(db, 'job:' + jobId);
+    return v && v.handle ? v.handle : null; }
+  catch (e) { return null; }
 }
 
-/* ── open / create / reload ── */
 async function ensureRW(handle) {
   const opts = { mode: 'readwrite' };
   try {
     if ((await handle.queryPermission(opts)) === 'granted') return true;
     return (await handle.requestPermission(opts)) === 'granted';
-  } catch (e) { return true; }          // older shims without the permission API
-}
-async function pickAndOpenFolder() {
-  let handle;
-  try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
-  catch (e) { return; }                 // the picker was dismissed
-  await openFolderHandle(handle);
-}
-function reopenPending() { if (pendingFolderRec) openFolderHandle(pendingFolderRec.handle); }
-async function openFolderHandle(handle) {
-  if (!(await ensureRW(handle))) { toast('Folder permission is needed to open the job', true); return; }
-  folderHandle = handle;
-  const res = await readRegisterFrom(handle);
-  if (res.status === 'ok' && res.data && res.data.job) { openLoadedRegister(handle, res.data); return; }
-
-  if (res.status === 'missing') {
-    // Maybe the parent folder was picked — the job folder may be one level down.
-    const sub = await findRegisterInSubfolders(handle);
-    if (sub) { openLoadedRegister(sub.handle, sub.data); return; }
-    if (await folderHasDir(handle, 'files')) { folderProblemModal('has-files-no-register'); return; }
-    jobFormModal(null);                 // genuinely empty → start a new job here
-    return;
-  }
-  // register.json is present but unreadable/empty/corrupt — never overwrite it.
-  folderProblemModal(res.status, res.error);
-}
-function openLoadedRegister(handle, data) {
-  folderHandle = handle;
-  hydrateFromRegister(data);
-  pendingFolderRec = { handle, name: job.name, jobId: job.id };
-  rememberHandle(job.id, handle);
-  go('job');
-  setSaveState('Saved ✓', false);
-}
-function folderProblemModal(kind, err) {
-  const msg = kind === 'has-files-no-register'
-    ? `This folder has a <b>files</b> folder but no <b>register.json</b> the app can open. It may be the wrong folder (pick the exact job folder), or the register is still syncing down from ShareFile.`
-    : kind === 'corrupt'
-      ? `This folder's <b>register.json</b> could not be read — it looks corrupted or was written incompletely.`
-      : `This folder has a <b>register.json</b>, but it read back empty. If it lives in ShareFile it is most likely still a cloud-only file that hasn't downloaded yet — in ShareFile, right-click the job folder and choose <b>Make available offline</b> (or open register.json once so it downloads), then try again.`;
-  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-    <div class="modal-head"><h3>Couldn’t open this folder</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
-    <div class="modal-body"><p>${msg}</p>${err ? `<p class="muted" style="margin-top:8px">${esc(String((err && err.message) || err))}</p>` : ''}
-      <p class="muted" style="margin-top:10px">Nothing was changed — the app never writes to a folder until it has opened successfully.</p></div>
-    <div class="modal-foot"><button class="btn" onclick="closePdf()">Cancel</button>
-      <button class="btn primary" onclick="closePdf();pickAndOpenFolder()">Pick the folder again</button></div>
-  </div></div>`;
-}
-function hydrateFromRegister(reg) {
-  const j = reg.job || {};
-  job = { id: j.id, name: j.name, number: j.number || '', folderUrl: j.folderUrl || '',
-    created: j.created, updated: j.updated, specs: j.specs || [], sections: reg.sections || [] };
-  folderFiles = reg.files || {};
-  jobs = [job];
-  statusFilter = null; releaseFilter = null; query = ''; divPicked = false; openKey = null;
-  if ($('searchBox')) $('searchBox').value = '';
-  $('crumbJob').textContent = job.name;
-  sortSections();
-  if (!job.sections.some(x => x.division === divFilter)) {
-    const f = DIVISIONS.find(d => job.sections.some(x => x.division === d));
-    if (f) divFilter = f;
-  }
-}
-async function folderReload() {
-  if (!folderHandle) return;
-  try { await folderFlushNow(); } catch (e) {}
-  const res = await readRegisterFrom(folderHandle);
-  if (res.status !== 'ok' || !res.data || !res.data.job) {
-    toast(res.status === 'empty' ? 'register.json read back empty — it may still be downloading from ShareFile'
-        : res.status === 'missing' ? 'register.json is missing from this folder'
-        : 'register.json could not be read', true);
-    return;
-  }
-  const reg = res.data;
-  const openWas = openKey;
-  hydrateFromRegister(reg);
-  renderJob();
-  if (openWas && findSection(openWas)) { openKey = openWas; renderDrawer(); renderTable(); }
-  setSaveState('Saved ✓', false);
-  toast('Reloaded from the folder');
+  } catch (e) { return true; }          // shims without the permission API
 }
 
-/* ── landing screen (folder mode replaces the multi-job grid) ── */
-function renderFolderLanding() {
-  const grid = $('jobsGrid');
-  if (!grid) return;
-  renderStorageNote();
-  if (!fsSupported()) {
-    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
-      <h3>This browser can't open folders</h3>
-      <p>ShareFile-folder mode needs Chrome or Edge. Open this page there, or switch to
-      Firebase from the storage button in the top-right.</p></div>`;
-    return;
+/* the marker file that ties a folder to a job */
+async function readJobMarker(handle) {
+  try {
+    const fh = await handle.getFileHandle('job.json');
+    const t = await (await fh.getFile()).text();
+    return t && t.trim() ? JSON.parse(t) : null;
+  } catch (e) { return null; }
+}
+async function writeJobMarker(handle, j) {
+  try {
+    const fh = await handle.getFileHandle('job.json', { create: true });
+    const w = await fh.createWritable();
+    await w.write(new Blob([JSON.stringify({ id: j.id, name: j.name })], { type: 'application/json' }));
+    await w.close();
+  } catch (e) { /* non-fatal */ }
+}
+
+/* On opening a job, load its folder silently if the grant already stands;
+   otherwise leave it unloaded and let the folder bar prompt for one click. */
+async function tryAutoLoadFolder(jobId) {
+  jobFolder = null;
+  updateFolderBar();
+  if (!fsSupported()) return;
+  const handle = await recallHandle(jobId);
+  if (!handle) return;
+  try {
+    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') {
+      jobFolder = handle;
+      updateFolderBar();
+      if (openKey) renderDrawer();
+      renderTable();
+    }
+  } catch (e) {}
+}
+
+/* Make sure the open job's folder is loaded before a PDF action. */
+async function ensureJobFolder() {
+  if (jobFolder) return true;
+  return loadJobFolder();
+}
+async function loadJobFolder() {
+  if (!job) return false;
+  if (!fsSupported()) { toast('Loading a ShareFile folder needs Chrome or Edge', true); return false; }
+  let handle = await recallHandle(job.id);
+  if (handle && !(await ensureRW(handle))) handle = null;
+  if (!handle) {
+    try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+    catch (e) { return false; }         // picker dismissed
+    if (!(await ensureRW(handle))) { toast('Folder permission is needed', true); return false; }
+    const marker = await readJobMarker(handle);
+    if (marker && marker.id && marker.id !== job.id &&
+        !confirm(`That folder is marked for a different job (“${marker.name || marker.id}”).\n\nUse it for “${job.name}” anyway?`)) return false;
   }
-  grid.innerHTML = `<div class="folder-landing">
-    <h3>Load a job from its ShareFile folder</h3>
-    <p class="muted">The register and every PDF live inside the folder. Pick a folder that
-    already has a saved job to load it, or an empty folder to start a new one. Changes then
-    save as you make them, and ShareFile syncs them to everyone.</p>
-    <div class="landing-btns">
-      ${pendingFolderRec ? `<button class="btn primary lg" onclick="reopenPending()">↻ Reopen “${esc(pendingFolderRec.name || 'last job')}”</button>` : ''}
-      <button class="btn ${pendingFolderRec ? '' : 'primary '}lg" onclick="pickAndOpenFolder()">📁 Open a job folder…</button>
-    </div>
-  </div>`;
+  jobFolder = handle;
+  await writeJobMarker(handle, job);
+  await rememberHandle(job.id, handle);
+  const fname = handle.name || '';
+  if (fname && job.sfFolderName !== fname) { job.sfFolderName = fname; try { await saveJobMeta(); } catch (e) {} }
+  updateFolderBar();
+  if (openKey) renderDrawer();
+  renderTable();
+  toast('ShareFile folder loaded — PDFs are available');
+  return true;
 }
 
-/* ── the storage-mode toggle ── */
-function storageMenu() {
-  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-    <div class="modal-head"><h3>Where does this register save?</h3>
-      <button class="icon-btn" onclick="closePdf()">✕</button></div>
-    <div class="modal-body">
-      <button class="choice-btn ${isFolder() ? 'sel' : ''}" onclick="chooseStorage('folder')">
-        <b>ShareFile folder${isFolder() ? ' · current' : ''}</b>
-        <span>Saves register.json and the PDFs into the job's folder. Chrome/Edge, one folder per job, syncs through ShareFile.</span></button>
-      <button class="choice-btn ${!isFolder() ? 'sel' : ''}" onclick="chooseStorage('firebase')">
-        <b>Firebase — shared cloud${!isFolder() ? ' · current' : ''}</b>
-        <span>The original live-sync store. Use this to reach jobs saved before the switch to folders.</span></button>
-    </div>
-    <div class="modal-foot"><button class="btn" onclick="closePdf()">Close</button></div>
-  </div></div>`;
-}
-function chooseStorage(m) {
-  if (m === storageMode) { closePdf(); return; }
-  localStorage.setItem('sr_storage_mode', m);
-  location.reload();
-}
-
-function applyStorageModeUI() {
-  const btn = $('storageBtn');
-  if (btn) btn.textContent = isFolder() ? '📁 Folder' : '☁ Firebase';
-  // Toggle via inline display — the .btn rule overrides the [hidden] attribute.
-  const reload = $('btnReload');
-  if (reload) reload.style.display = isFolder() ? '' : 'none';
-  const saveSf = $('btnSaveSf');
-  if (saveSf) saveSf.style.display = isFolder() ? 'none' : '';   // folder data is already in a folder
-  const openSf = $('btnOpenSf');
-  if (openSf) openSf.style.display = isFolder() ? 'none' : '';   // folder mode has its own landing button
-  const sub = document.querySelector('#view-jobs .page-sub');
-  if (sub) sub.textContent = isFolder()
-    ? 'Each job is a ShareFile folder — open it to work, and it saves back there.'
-    : 'One register per project, shared with everyone on this workspace.';
-  const newBtn = document.querySelector('#view-jobs .page-head .btn.primary');
-  if (newBtn) newBtn.textContent = isFolder() ? '📁 Open a job folder' : '+ New job';
+/* the bar in the job workspace that shows folder status */
+function updateFolderBar() {
+  const bar = $('folderBar');
+  if (!bar) return;
+  if (!job) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  if (jobFolder) {
+    const nm = jobFolder.name || job.sfFolderName || 'this job’s folder';
+    bar.className = 'folder-bar on';
+    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>.</span>
+      <button class="btn sm ghost" onclick="loadJobFolder()">Change folder…</button>`;
+  } else if (!fsSupported()) {
+    bar.className = 'folder-bar warn';
+    bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
+  } else {
+    const nm = job.sfFolderName ? ` (“${esc(job.sfFolderName)}”)` : '';
+    bar.className = 'folder-bar warn';
+    bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs live in its ShareFile folder${nm}. <b>Load the folder</b> to view or add PDFs.</span>
+      <button class="btn sm primary" onclick="loadJobFolder()">Load ShareFile folder</button>`;
+  }
 }
 
 /* The Firebase bootstrap lives in a type="module" script, which runs after the
    classic script is parsed. Wait for it before asking it to connect. */
 async function ensureFirebase() {
   for (let i = 0; i < 300 && !window.__initFirebase; i++) await new Promise(r => setTimeout(r, 10));
-  if (!window.__initFirebase) throw new Error('the Firebase bootstrap did not load');
+  if (!window.__initFirebase) throw new Error('the register bootstrap did not load');
   return window.__initFirebase();
 }
 
 async function boot() {
-  applyStorageModeUI();
-
-  if (isFolder()) {
-    jobsLoaded = true;
-    go('jobs');
-    if (!fsSupported()) return;
-    const params = new URLSearchParams(location.search);
-    const wanted = params.get('job');
-    const rec = wanted ? await recallHandle(wanted) : await recallLast();
-    if (rec && rec.handle) {
-      pendingFolderRec = rec;
-      // Reopen without a click only if the grant already stands; otherwise the
-      // landing's Reopen button carries the (gesture-requiring) permission ask.
-      try {
-        if ((await rec.handle.queryPermission({ mode: 'readwrite' })) === 'granted') {
-          await openFolderHandle(rec.handle);
-          return;
-        }
-      } catch (e) {}
-      renderFolderLanding();
-    }
-    return;
-  }
-
-  // Firebase mode
   go('jobs');
   let ready = null;
   try {
@@ -4144,7 +3643,7 @@ async function boot() {
     ]);
   } catch (e) {
     jobsLoaded = true;
-    setSync('error', ' — the Firebase library did not load. Check the connection and reload.');
+    setSync('error', ' — the register could not load. Check the connection and reload.');
     renderJobs();
     return;
   }

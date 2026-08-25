@@ -7,72 +7,40 @@ come back, and what has been released to site.
 
 The whole app is `index.html`. There is no build step.
 
-## Where it saves — two modes
+## Where it saves
 
-The register has two storage backends, chosen with the **storage button** in the
-top-right. The choice is remembered per browser.
+Two places, split by what the data is:
 
-- **ShareFile folder (default).** Each job is one folder in ShareFile. The whole
-  register is a `register.json` file in that folder and every uploaded PDF is a
-  real file beside it, so ShareFile Drive syncs them to everyone exactly like a
-  saved spreadsheet. **Chrome or Edge only**, and each machine needs ShareFile
-  Drive (or any sync that makes the job folder a normal local folder). There is
-  no cloud database and no storage ceiling beyond the disk.
-- **Firebase (off by default).** The original shared-cloud store with live
-  sync. Kept so jobs saved before the switch stay reachable — flip the toggle to
-  open them. A **Save to ShareFile** button (shown in Firebase mode) writes the
-  open job — register, spec text, and every PDF — into a folder you pick, so a
-  Firebase job can be seeded into ShareFile as a starting point; when it finishes
-  it offers to **open the folder right away**. The Firebase jobs page also carries
-  an **Open a ShareFile job** button, so you can load a saved folder without first
-  hunting for the storage toggle. Both switch to folder mode for you.
+- **The register — statuses, vendors, dates, tags, releases — lives in the cloud
+  (Firestore).** It is the default: the app opens on the jobs grid, everyone sees
+  the same register, and changes appear live. It is small text, so it is free
+  forever on the Spark plan.
+- **A job's PDFs live only in that job's ShareFile folder.** Submittals,
+  responses and spec PDFs are never uploaded to the cloud — they are written into
+  a ShareFile folder you load. **To view or add a job's PDFs, load its folder
+  first.** The app shows a bar on every job saying whether the folder is loaded,
+  with a **Load ShareFile folder** button when it isn't.
 
-### ShareFile-folder mode
+### Loading a job's ShareFile folder
 
-Opening the app shows **Open a job folder**. Pick a job's folder:
+Open a job, then **Load ShareFile folder** and pick that job's folder. The app
+drops a small `job.json` marker and keeps its PDFs under `files/` there. The
+folder is remembered per machine, so after the first time it opens with a single
+permission click. This needs **Chrome or Edge** and the folder available locally
+(ShareFile Drive, or any sync that makes it a normal folder).
 
-- A folder that already has a `register.json` opens straight into the job. If you
-  pick the *parent* by mistake, the app looks one level down and opens the job
-  folder it finds there.
-- An empty folder starts a new job — name it, import the spec, and the app writes
-  `register.json`, the spec PDF, and a launcher into the folder.
-
-If a folder has a `register.json` that can't be read, the app says so and does
-**not** offer to start a new job over it — nothing is written until a folder
-opens cleanly. The usual cause is ShareFile keeping the file **cloud-only**: in
-ShareFile, right-click the job folder and choose **Make available offline** (or
-open `register.json` once so it downloads), then try again.
-
-**Saving is automatic.** Every change writes `register.json` as you work (the
-header shows *Saving… → Saved ✓*); ShareFile syncs it up. There is no Save
-button. To pull in a coworker's synced changes, press **Reload** — folder mode
-doesn't push live like Firebase did. Two people editing at once is last-write-
-wins; ShareFile may occasionally leave a `register (conflicted copy).json` to
-tidy up.
-
-**Launching from the folder.** Each job folder carries an `Open Register.html`
-launcher pointing at the hosted app with that job's id. Double-clicking it opens
-the default browser and redirects to the app on that job — as close to "open it
-from the folder" as a browser allows. (It is a `.html` redirect rather than a
-Windows `.url` shortcut because the File System Access API refuses to create
-`.url`/`.lnk` files — it blocks shortcut and executable extensions.) A browser
-still can't *save* from a double-clicked `file://` page, so the app itself is
-always opened from its web address. The launcher opens in the machine's default
-browser, which must be Chrome or Edge. The first time each person opens a given
-job they pick its folder once; after that it's a single permission click. If the
-launcher can't be written for any reason, the folder is still fully usable — just
-open the app and use **Open a job folder**.
+Because the folder is per machine, **each person loads it once on their own
+computer** — the register syncs live through the cloud, but the PDFs come from
+whoever's machine has the folder loaded. If you open a job and its PDFs won't
+show, that just means the folder isn't loaded yet: click **Load ShareFile
+folder**. If a PDF still won't open after loading, check you picked the right
+folder (the app warns if the folder is marked for a different job), and in
+ShareFile make the folder **available offline** so its files have downloaded.
 
 ## Firebase setup
 
-Firebase is the alternate backend. These steps only matter if you use it.
-
-
-The register lives in Firestore, and so do any uploaded PDFs. Cloud Storage
-would be the natural home for the files, but it needs a billing account —
-Firestore does not, so uploads are split across chunk documents instead. Bigger
-documents are better linked from ShareFile than uploaded. Nothing here costs
-anything on the free Spark plan.
+The register lives in Firestore. Nothing here costs anything on the free Spark
+plan — the register is text, and the PDFs are in ShareFile, not the cloud.
 
 1. **Firestore** — Firebase console → Build → Firestore Database → Create
    database. Any location; the rules below replace whatever mode you pick.
@@ -161,37 +129,28 @@ A submittal or a response can be either an uploaded PDF or a link to where the
 file already lives — ShareFile, or anything else with a URL. A link can point at
 one file or at a whole folder.
 
-Uploads view inline and are good for the small things: a stamped response, a
-two-page letter. Links are for the big vendor packages, and they use none of the
-storage allowance. Each section's panel offers both, and a job can carry a link
-to its ShareFile folder, shown as a button beside the spec files.
+An uploaded PDF is written into the job's ShareFile folder (so the folder has to
+be loaded first) and views inline. A link is just a URL kept on the section — it
+opens in a new tab and needs no folder loaded, which is handy for big vendor
+packages that already live in ShareFile. Each section's panel offers both.
 
 ShareFile's own API is not used and cannot be: its OAuth needs a server-side
 client secret and its endpoints send no CORS headers, so a static page is
-blocked. A link needs none of that.
+blocked. A link, and the File System Access folder, need none of that.
 
 ## Data
 
-**ShareFile-folder mode** — one job folder holds:
+**The register — Firestore documents:**
 
 ```
-register.json          the whole job: meta + sections (spec text inline) + file index
-files/<fileId>.pdf     each uploaded submittal / response / spec PDF, as a real file
-Open Register.html     the launcher (a redirect) that opens the hosted app for this job
-```
-
-**Firebase mode** — Firestore documents:
-
-```
-jobs/{jobId}                        name, number, ShareFile folder, spec files, roll-up
-jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, documents
+jobs/{jobId}                        name, number, ShareFile folder name, spec files, roll-up
+jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, document refs
 jobs/{jobId}/specdata/{sectionKey}  the spec text for that section
-files/{fileId}                      an uploaded PDF's name, size and chunk count
-files/{fileId}/chunks/{n}           ~600 KB of that PDF, base64 encoded
 ```
 
 Sections are separate documents so two people editing different sections at the
-same time cannot overwrite each other.
+same time cannot overwrite each other. The section record keeps only a *reference*
+to each PDF (its id, name and size) — never the bytes.
 
 The spec text — the submittal requirements and the scope list — sits in its own
 document rather than on the section. It never changes and is only needed when a
@@ -200,25 +159,24 @@ light: across the sample manual that is 197 KB of text against 12 KB of actual
 log data. Sections are also written field by field, so ticking a status sends
 the status, not the whole record.
 
-A Firestore document holds just under 1 MiB, so each uploaded PDF is base64
-encoded and split across chunk documents of 600 KB. Chunks are written once and
-never change, which means reads are served from the SDK's local cache and cost
-nothing after the first time.
+**The PDFs — in each job's ShareFile folder:**
 
-Anything written by an earlier version still works. Sections that carry their
-spec text inline are moved across the first time the job is opened: the copy is
-written and read back from the server before the inline fields are removed, so
-an interrupted run leaves the data exactly as it was.
+```
+<job folder>/job.json        { id, name } — marks which job the folder belongs to
+<job folder>/files/<id>.pdf  one file per submittal / response / spec, named by its id
+```
 
-### The free-tier ceiling (Firebase mode only)
+The PDFs never go to Firestore, so the register stays tiny and there is no storage
+ceiling beyond the disk. Reading or writing a PDF goes through the File System
+Access API against the loaded folder; a section's document reference (`fileId`)
+is the name of the file on disk. Deleting a job removes only the register — the
+PDFs in ShareFile are left alone.
 
-Folder mode has no such ceiling — files live on disk and in ShareFile.
-Firestore's free plan stores **1 GiB total**, and only uploads count against it.
-The jobs page shows what is used and warns past 70%, each upload area shows the
-headroom, an upload over 25 MB offers the link route first, and anything that
-would cross the line is refused rather than half-written. Keeping submittal
-packages in ShareFile and linking them is what keeps this comfortable — spec
-PDFs stay uploaded because the page jumper needs the bytes.
+### Storage cost
+
+There is effectively none. The register is text and lives well inside Firestore's
+free plan; the PDFs are in ShareFile, not the cloud, so they never count against
+any allowance. The only ceiling on PDFs is the ShareFile folder's own disk.
 
 ## Local development
 
@@ -226,9 +184,11 @@ PDFs stay uploaded because the page jumper needs the bytes.
 npx firebase emulators:start --project specs-submittals
 ```
 
-`index.html` calls `window.__fbConnect(...)` if something has defined it, which
-is where a test harness points the app at the emulators (in Firebase mode).
-Nothing defines it in production. The Firebase suite sets
-`localStorage.sr_storage_mode = 'firebase'` before load; the folder-mode suite
-(`jstest/folder.js`) injects a mock `showDirectoryPicker` and drives the whole
-register.json / files / launcher / Reload flow without a real folder dialog.
+`index.html` calls `window.__fbConnect(...)` if something has defined it, which is
+where a test harness points the app at the Firestore emulator. Nothing defines it
+in production. The test suite also injects a mock `showDirectoryPicker`
+(`jstest/mockfs.js`) so the per-job ShareFile folder — `job.json`, `files/<id>.pdf`
+— can be driven without a real folder dialog. `jstest/flow.js` is the end-to-end
+test: import stores the spec in the folder, uploads/views go through it, PDFs
+never reach Firestore, and a second browser sees the register live but is prompted
+to load the folder for PDFs.
