@@ -1576,47 +1576,82 @@ const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toS
 const blobUrlCache = new Map();    // fileId -> object URL, for this session
 let jobFolder = null;              // the open job's ShareFile folder, or null if not loaded
 
-/* A PDF is written to the open job's folder as files/<fileId>.pdf. The record
-   kept on the section (id, name, size, fileId) is what ties it back. */
-async function putFile(file, meta, onProgress) {
+/* PDFs are filed under files/<status>/, keeping their original name, so the
+   ShareFile folder is organised by what each PDF is. The section keeps a doc
+   record { id, name, size, status, uploaded, dir, file } that points at it.
+   'spec' files go under files/Specs/. */
+const STATUS_DIR = {
+  submitted_gc:     'Submitted to GC',
+  partial_approval: 'Partial Approval',
+  approved:         'Approved',
+  revise_resubmit:  'Revise and Resubmit',
+  waiting_vendor:   'Waiting on Vendor',
+  na:               'Not Required',
+  spec:             'Specs'
+};
+function statusDirName(id) { return STATUS_DIR[id] || 'Filed'; }
+function sanitizeFileName(name) {
+  let n = String(name || 'document.pdf').replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').trim();
+  if (!/\.pdf$/i.test(n)) n += '.pdf';
+  return n || 'document.pdf';
+}
+async function uniqueFileName(dirHandle, name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '.pdf';
+  let candidate = name, n = 2;
+  for (;;) {
+    try { await dirHandle.getFileHandle(candidate); candidate = `${base} (${n++})${ext}`; }
+    catch (e) { return candidate; }     // NotFound → the name is free
+  }
+}
+/* Write a PDF into files/<statusDir>/, keeping its name; returns { dir, file }. */
+async function putFile(file, statusId) {
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
-  const id = uid('file');
-  const dir = await jobFolder.getDirectoryHandle('files', { create: true });
-  const fh = await dir.getFileHandle(id + '.pdf', { create: true });
+  const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+  const dirName = statusDirName(statusId);
+  const dirHandle = await filesRoot.getDirectoryHandle(dirName, { create: true });
+  const fname = await uniqueFileName(dirHandle, sanitizeFileName(file.name));
+  const fh = await dirHandle.getFileHandle(fname, { create: true });
   const w = await fh.createWritable();
   await w.write(file);
   await w.close();
-  if (onProgress) onProgress(1);
-  return id;
+  return { dir: dirName, file: fname };
 }
-
-async function readFileBlob(fileId) {
-  if (!fileId || !jobFolder) return null;
+async function readDocBlob(doc) {
+  if (!doc || !jobFolder) return null;
   try {
-    const dir = await jobFolder.getDirectoryHandle('files');
-    const fh = await dir.getFileHandle(fileId + '.pdf');
-    return await fh.getFile();          // a File is already a Blob
-  } catch (e) { return null; }
+    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    if (doc.dir && doc.file) {
+      const dirHandle = await filesRoot.getDirectoryHandle(doc.dir);
+      return await (await dirHandle.getFileHandle(doc.file)).getFile();
+    }
+    if (doc.fileId) return await (await filesRoot.getFileHandle(doc.fileId + '.pdf')).getFile();
+  } catch (e) {}
+  return null;
 }
-
-async function fileUrl(fileId) {
-  if (!fileId) return null;
-  if (blobUrlCache.has(fileId)) return blobUrlCache.get(fileId);
-  const blob = await readFileBlob(fileId);
+async function docUrl(doc) {
+  if (!doc) return null;
+  if (blobUrlCache.has(doc.id)) return blobUrlCache.get(doc.id);
+  const blob = await readDocBlob(doc);
   if (!blob) return null;
   const url = URL.createObjectURL(blob);
-  blobUrlCache.set(fileId, url);
+  blobUrlCache.set(doc.id, url);
   return url;
 }
-
-async function deleteStoredFile(fileId) {
-  if (!fileId) return;
-  if (blobUrlCache.has(fileId)) {
-    URL.revokeObjectURL(blobUrlCache.get(fileId));
-    blobUrlCache.delete(fileId);
-  }
+async function deleteStoredDoc(doc) {
+  if (!doc) return;
+  if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
   if (!jobFolder) return;               // not loaded → the file stays in ShareFile
-  try { const dir = await jobFolder.getDirectoryHandle('files'); await dir.removeEntry(fileId + '.pdf'); } catch (e) {}
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    if (doc.dir && doc.file) {
+      const dirHandle = await filesRoot.getDirectoryHandle(doc.dir);
+      await dirHandle.removeEntry(doc.file);
+    } else if (doc.fileId) {
+      await filesRoot.removeEntry(doc.fileId + '.pdf');
+    }
+  } catch (e) {}
 }
 
 function storageError(e) {
@@ -1816,28 +1851,12 @@ async function uploadCarryover() {
     for (const lj of list) {
       const prev = job;
       job = lj;                                    // saveSection/saveJobMeta act on `job`
-      for (const sp of (lj.specs || [])) {
-        const blob = sp.blobId ? await readLocalBlob(sp.blobId) : null;
-        if (blob) {
-          step(`Uploading ${sp.name}…`);
-          sp.fileId = await putFile(new File([blob], sp.name, { type: 'application/pdf' }),
-            { jobId: lj.id, kind: 'spec' }, pct => step(`Uploading ${sp.name}… ${Math.round(pct * 100)}%`));
-          sp.size = sp.size || blob.size; files++;
-        }
-        delete sp.blobId;
-      }
+      // Only the log carries over — old browser-stored PDFs can't move into a
+      // ShareFile folder automatically. Their records drop their local blob ids.
+      for (const sp of (lj.specs || [])) delete sp.blobId;
       for (const s of sectionsOf(lj)) {
         for (const kind of ['submittals', 'responses']) {
-          for (const d of (s[kind] || [])) {
-            const blob = d.blobId ? await readLocalBlob(d.blobId) : null;
-            if (blob) {
-              step(`Uploading ${d.name}…`);
-              d.fileId = await putFile(new File([blob], d.name, { type: 'application/pdf' }),
-                { jobId: lj.id, sectionKey: s.key, kind }, pct => step(`Uploading ${d.name}… ${Math.round(pct * 100)}%`));
-              d.size = d.size || blob.size; files++;
-            }
-            delete d.blobId;
-          }
+          for (const d of (s[kind] || [])) delete d.blobId;
         }
       }
       step(`Saving ${lj.name}… (${++done} of ${list.length})`);
@@ -1848,7 +1867,7 @@ async function uploadCarryover() {
     localStorage.setItem('sr_carryover_done', '1');
     localCarryover = [];
     renderLegacyNotice();
-    toast(`${list.length} job${list.length === 1 ? '' : 's'} and ${files} PDF${files === 1 ? '' : 's'} uploaded`);
+    toast(`${list.length} job${list.length === 1 ? '' : 's'} carried over`);
   } catch (e) {
     console.error(e);
     toast(storageError(e), true);
@@ -2341,21 +2360,28 @@ function restoreCellFocus(body, f) {
   try { el.setSelectionRange(f.start, f.end); } catch (_) {}
 }
 
-async function setStatus(key, value) {
-  const s = findSection(key);
-  if (!s) return;
+/* Move a section to a status, recording the transition and its side effects.
+   Returns true if the status actually changed. Shared by the dropdown and by
+   a PDF upload (which files itself under the status it represents). */
+function applyStatus(s, value) {
   const from = s.status || 'not_started';
-  if (from === value) return;
-  markPending(key);
-  s.status = value;
   s.history = s.history || [];
-  s.history.push({ ts: Date.now(), from, to: value });
+  if (from !== value) s.history.push({ ts: Date.now(), from, to: value });
+  s.status = value;
   if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = today();
   if ((value === 'approved' || value === 'partial_approval' || value === 'revise_resubmit') && !s.returnedDate) {
     s.returnedDate = today();
   }
   // Once it is approved it is ready to go out, unless a release already happened.
   if (value === 'approved' && (s.releaseState || 'not_ready') === 'not_ready') s.releaseState = 'ready';
+  return from !== value;
+}
+async function setStatus(key, value) {
+  const s = findSection(key);
+  if (!s) return;
+  if ((s.status || 'not_started') === value) return;
+  markPending(key);
+  applyStatus(s, value);
   sortSections();
   renderJob();
   if (openKey === key) renderDrawer();
@@ -2544,7 +2570,8 @@ function fileList(s, kind) {
     </div>` : `<div class="file-row">
       <span class="fi">${kind === 'responses' ? '✔' : '📄'}</span>
       <span class="fn"><b title="${esc(f.name)}">${esc(f.name)}</b>
-        <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}</small></span>
+        <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}${f.dir ? ' · in ' + esc(f.dir) : ''}</small></span>
+      ${f.status && ST[f.status] ? `<span class="pill" style="color:${cvar(ST[f.status].color)};background:${csf(ST[f.status].color)}"><i></i>${esc(ST[f.status].short)}</span>` : ''}
       ${f.rev ? `<span class="rev-tag">${esc(f.rev)}</span>` : ''}
       <button class="btn sm" onclick="viewDoc('${s.key}','${kind}','${f.id}')">View</button>
       <button class="btn sm ghost" onclick="downloadDoc('${s.key}','${kind}','${f.id}')" title="Download">⤓</button>
@@ -2910,26 +2937,52 @@ function wireDrop(el, key, kind) {
     addFiles(key, kind, Array.from(e.dataTransfer.files));
   });
 }
+/* The statuses a PDF can be filed under — the outgoing package and the ways it
+   comes back. Picking one is required on every upload. */
+const DOC_STATUSES = ['submitted_gc', 'partial_approval', 'approved', 'revise_resubmit'];
+let _uploadStatusResolve = null;
+function pickUploadStatus(kind) {
+  return new Promise(resolve => {
+    _uploadStatusResolve = resolve;
+    const def = kind === 'responses' ? 'approved' : 'submitted_gc';
+    const what = kind === 'responses' ? 'response' : 'submittal';
+    $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)chooseUploadStatus(null)"><div class="modal">
+      <div class="modal-head"><h3>File this ${what} under…</h3>
+        <button class="icon-btn" onclick="chooseUploadStatus(null)">✕</button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Pick the status this PDF represents. It becomes the section's current status (the newest one always shows on the main page), and the file is saved in a ShareFile subfolder named for it.</p>
+        <div class="status-grid">${DOC_STATUSES.map(id => { const st = ST[id]; return `
+          <button class="status-opt ${id === def ? 'on' : ''}" style="${id === def ? 'color:' + cvar(st.color) + ';background:' + csf(st.color) : ''}"
+            onclick="chooseUploadStatus('${id}')"><i style="background:${cvar(st.color)}"></i><span>${esc(st.label)}</span></button>`; }).join('')}</div>
+      </div></div></div>`;
+  });
+}
+function chooseUploadStatus(id) {
+  const r = _uploadStatusResolve; _uploadStatusResolve = null;
+  closePdf();
+  if (r) r(id);
+}
 async function addFiles(key, kind, files) {
   const s = findSection(key);
   if (!s || !files.length) return;
   // PDFs go into this job's ShareFile folder — make sure it is loaded first.
   if (!jobFolder) { if (!(await ensureJobFolder())) return; }
-  markPending(key);                 // uploads take a while; hold the section
+  const pdfs = files.filter(f => !(f.type && f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)));
+  if (pdfs.length < files.length) toast('Non-PDF files were skipped', true);
+  if (!pdfs.length) return;
+  // A status must be chosen for the upload — this is what tracks history.
+  const status = await pickUploadStatus(kind);
+  if (!status) return;
+  markPending(key);
   s[kind] = s[kind] || [];
   let added = 0;
-  for (const f of files) {
-    if (f.type && f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) {
-      toast(`${f.name} is not a PDF — skipped`, true);
-      continue;
-    }
+  for (const f of pdfs) {
     const docId = uid('doc');
     try {
-      const fileId = await putFile(f, { jobId: job.id, sectionKey: s.key, kind },
-        pct => stickyToast(`Uploading ${f.name}… ${Math.round(pct * 100)}%`));
+      stickyToast(`Saving ${f.name}…`);
+      const { dir, file } = await putFile(f, status);
       s[kind].push({
-        id: docId, name: f.name, size: f.size, type: f.type || 'application/pdf',
-        uploaded: Date.now(), fileId,
+        id: docId, name: f.name, size: f.size, status, uploaded: Date.now(), dir, file,
         rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : ''
       });
       added++;
@@ -2939,12 +2992,17 @@ async function addFiles(key, kind, files) {
     }
   }
   if (!added) return;
-  // Uploading the first submittal on an untouched section moves it along.
-  if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
-  renderDrawer(); renderTable();
-  try { await patchSection(key, { [kind]: s[kind], status: s.status }); }
-  catch (e) { toast(writeError(e), true); return; }
-  toast(added + ' file' + (added === 1 ? '' : 's') + ' uploaded');
+  applyStatus(s, status);           // the section's status becomes the newest upload's
+  sortSections(); renderJob();
+  if (openKey === key) renderDrawer();
+  try {
+    await patchSection(key, {
+      [kind]: s[kind], status: s.status, history: s.history || [],
+      submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || '',
+      releaseState: s.releaseState || 'not_ready'
+    });
+  } catch (e) { toast(writeError(e), true); return; }
+  toast(`${added} PDF${added === 1 ? '' : 's'} filed under ${ST[status].label}`);
 }
 async function removeDoc(key, kind, docId) {
   const s = findSection(key);
@@ -2952,7 +3010,7 @@ async function removeDoc(key, kind, docId) {
   if (!d) return;
   if (!confirm(`Remove "${d.name}" for everyone?`)) return;
   markPending(key);
-  if (!isLink(d)) await deleteStoredFile(d.fileId);
+  if (!isLink(d)) await deleteStoredDoc(d);
   s[kind] = s[kind].filter(x => x.id !== docId);
   renderDrawer(); renderTable();
   try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
@@ -2967,7 +3025,7 @@ async function resolveDoc(key, kind, docId) {
   if (d.url) return { url: d.url, name: d.name };            // a ShareFile link
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
   stickyToast(`Opening ${d.name}…`);
-  const url = await fileUrl(d.fileId);
+  const url = await docUrl(d);
   if (!url) { toast('That PDF isn’t in the loaded folder — check you loaded the right ShareFile folder', true); return null; }
   toast(' ');
   return { url, name: d.name };
@@ -3085,7 +3143,7 @@ async function openSpecViewer(specId, page) {
   if (sp.url) { showPdf(sp.url, sp.name, page); return; }     // a ShareFile link
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view the spec PDF', true); return; } }
   stickyToast(`Opening ${sp.name}…`);
-  const url = await fileUrl(sp.fileId);
+  const url = await docUrl(sp);
   if (!url) { toast('The spec PDF isn’t in the loaded folder', true); return; }
   toast(' ');
   showPdf(url, sp.name, page);
@@ -3147,7 +3205,7 @@ async function removeSpec(specId, dropSections) {
   if (dropSections) {
     for (const s of owned) {
       for (const d of (s.submittals || []).concat(s.responses || [])) {
-        if (!isLink(d)) await deleteStoredFile(d.fileId);
+        if (!isLink(d)) await deleteStoredDoc(d);
       }
     }
     const gone = new Set(owned.map(s => s.key));
@@ -3156,7 +3214,7 @@ async function removeSpec(specId, dropSections) {
     for (const s of owned) { s.specId = null; s.startPage = null; s.endPage = null; }
     keptSections = owned;
   }
-  await deleteStoredFile(sp.fileId);
+  await deleteStoredDoc(sp);
   job.specs = job.specs.filter(x => x.id !== specId);
   closeDrawer();
   renderJob();
@@ -3343,14 +3401,14 @@ async function confirmImport() {
 
   try {
     const specId = uid('spec');
-    const fileId = await putFile(file, { jobId: job.id, kind: 'spec' }, pct => {
-      const bar = $('upBar'), step = $('upStep');
-      if (bar) bar.style.width = Math.round(pct * 100) + '%';
-      if (step) step.textContent = `Uploading… ${Math.round(pct * 100)}%`;
-    });
+    const step = $('upStep'), bar = $('upBar');
+    if (bar) bar.style.width = '60%';
+    const { dir, file: onDisk } = await putFile(file, 'spec');   // files/Specs/<name>
+    if (bar) bar.style.width = '100%';
+    if (step) step.textContent = 'Saved. Filing the sections…';
     job.specs = job.specs || [];
     job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
-      fileId, added: Date.now() });
+      dir, file: onDisk, added: Date.now() });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
     const relinked = [];

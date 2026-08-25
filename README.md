@@ -134,6 +134,14 @@ be loaded first) and views inline. A link is just a URL kept on the section — 
 opens in a new tab and needs no folder loaded, which is handy for big vendor
 packages that already live in ShareFile. Each section's panel offers both.
 
+**Every upload picks a status.** When you add a PDF you must say what it is —
+Submitted to GC, Partial Approval, Approved, or Revise & Resubmit. That does
+three things: it becomes the **section's current status** (the newest upload
+always wins, so the main page shows the most recent), it is recorded in the
+section's history so the trail of what happened is kept, and it sorts the PDF
+into a subfolder named for that status inside the ShareFile folder. Each file
+row shows its status and which folder it landed in.
+
 ShareFile's own API is not used and cannot be: its OAuth needs a server-side
 client secret and its endpoints send no CORS headers, so a static page is
 blocked. A link, and the File System Access folder, need none of that.
@@ -159,18 +167,23 @@ light: across the sample manual that is 197 KB of text against 12 KB of actual
 log data. Sections are also written field by field, so ticking a status sends
 the status, not the whole record.
 
-**The PDFs — in each job's ShareFile folder:**
+**The PDFs — in each job's ShareFile folder, sorted by status:**
 
 ```
-<job folder>/job.json        { id, name } — marks which job the folder belongs to
-<job folder>/files/<id>.pdf  one file per submittal / response / spec, named by its id
+<job folder>/job.json                         { id, name } — which job this folder is
+<job folder>/files/Specs/<name>.pdf           the imported spec PDFs
+<job folder>/files/Submitted to GC/<name>.pdf submittals sent to the GC
+<job folder>/files/Approved/<name>.pdf        approved responses
+<job folder>/files/Revise and Resubmit/<name>.pdf
+<job folder>/files/Partial Approval/<name>.pdf
 ```
 
-The PDFs never go to Firestore, so the register stays tiny and there is no storage
-ceiling beyond the disk. Reading or writing a PDF goes through the File System
-Access API against the loaded folder; a section's document reference (`fileId`)
-is the name of the file on disk. Deleting a job removes only the register — the
-PDFs in ShareFile are left alone.
+Each PDF keeps its uploaded filename and sits in the subfolder for the status it
+was filed under, so the folder reads like a filing cabinet. The section's document
+record keeps the subfolder and filename (`dir` + `file`) to find it again. PDFs
+never go to Firestore, so the register stays tiny and there is no storage ceiling
+beyond the disk. Deleting a job removes only the register — the PDFs in ShareFile
+are left alone.
 
 ### Storage cost
 
