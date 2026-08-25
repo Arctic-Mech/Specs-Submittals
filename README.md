@@ -37,6 +37,23 @@ folder**. If a PDF still won't open after loading, check you picked the right
 folder (the app warns if the folder is marked for a different job), and in
 ShareFile make the folder **available offline** so its files have downloaded.
 
+### Save to folder
+
+The **Save to folder** button (top of a job) writes a complete copy of the
+register into the ShareFile folder, overwriting the previous one:
+
+- **`register.json`** — a full machine-readable snapshot of the job (every
+  section, its statuses, releases, tags, spec text, and PDF references).
+- **`register.csv`** — the same register as a spreadsheet you can open in Excel.
+- It also **re-files the PDFs** so each one sits under the status subfolder it
+  belongs to, keeping its original name — repairing anything that got moved, and
+  pulling any older flat files into the sorted layout.
+
+The register already syncs live to the cloud, so this is for keeping a
+self-contained, offline copy in ShareFile alongside the PDFs. It overwrites
+`register.json`/`register.csv` each time and never deletes PDFs it doesn't
+recognise.
+
 ## Firebase setup
 
 The register lives in Firestore. Nothing here costs anything on the free Spark

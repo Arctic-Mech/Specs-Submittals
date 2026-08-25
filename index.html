@@ -592,6 +592,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <span class="job-title" id="crumbJob"></span>
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
+    <button class="btn ghost" onclick="saveToFolder()" title="Overwrite this job's ShareFile folder with the current register (register.json + register.csv) and re-file the PDFs by status">💾 Save to folder</button>
     <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 Spec</button>
     <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ CSV</button>
     <button class="btn" onclick="promptImportSpec()">Import spec</button>
@@ -3472,8 +3473,7 @@ function csvCell(v) {
   const s = String(v == null ? '' : v);
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
-function exportCsv() {
-  if (!job) return;
+function buildCsv() {
   const head = ['Division', 'Section', 'Title', 'Description', 'Spec', 'Manufacturer', 'Status', 'Vendor', 'Package', 'Sent to GC',
     'Returned', 'Lead time (weeks)', 'Release status', 'Released on', 'Expected from', 'Expected to',
     'Delivered', 'Releases', 'Tags', 'Submittal files', 'Response files', 'Links',
@@ -3504,11 +3504,17 @@ function exportCsv() {
     s.startPage ? (s.startPage + (s.endPage && s.endPage !== s.startPage ? '-' + s.endPage : '')) : '',
     (s.notes || '').replace(/\s+/g, ' ')
   ]);
-  const csv = [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
-  const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  return [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+}
+function jobFileBase() {
+  return (job.name || 'job').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'job';
+}
+function exportCsv() {
+  if (!job) return;
+  const url = URL.createObjectURL(new Blob(['﻿' + buildCsv()], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = job.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '_submittal_register.csv';
+  a.download = jobFileBase() + '_submittal_register.csv';
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 20000);
 }
@@ -3680,6 +3686,91 @@ function updateFolderBar() {
     bar.className = 'folder-bar warn';
     bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs live in its ShareFile folder${nm}. <b>Load the folder</b> to view or add PDFs.</span>
       <button class="btn sm primary" onclick="loadJobFolder()">Load ShareFile folder</button>`;
+  }
+}
+
+/* ── manual "Save to folder": overwrite the folder's copy of the register and
+   re-file every PDF so the folder exactly reflects the current register.
+   register.json + register.csv are rewritten each time; PDFs are moved to match
+   the status they are filed under (keeping their names). ── */
+async function writeFolderFile(name, text, type) {
+  const fh = await jobFolder.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(new Blob([text], { type: type || 'text/plain' }));
+  await w.close();
+}
+async function buildRegisterSnapshot() {
+  const sections = [];
+  for (const s of sectionsOf(job)) {
+    const sd = await specDataFor(s.key).catch(() => ({ requirements: [], includes: [] }));
+    sections.push(Object.assign({}, s, { requirements: sd.requirements || [], includes: sd.includes || [] }));
+  }
+  return {
+    version: 2, savedAt: Date.now(),
+    job: { id: job.id, name: job.name, number: job.number || '', folderUrl: job.folderUrl || '',
+      sfFolderName: job.sfFolderName || '', created: job.created, updated: job.updated, specs: job.specs || [] },
+    sections
+  };
+}
+/* Move one document so it sits under files/<wantDir>/, keeping its name. */
+async function refileDoc(filesRoot, doc, wantDir) {
+  const curDir = doc.dir || null;
+  const curFile = doc.file || (doc.fileId ? doc.fileId + '.pdf' : null);
+  if (!curFile) return false;
+  if (curDir === wantDir) return false;               // already in place
+  let blob = null;
+  try {
+    if (curDir) { const d = await filesRoot.getDirectoryHandle(curDir); blob = await (await d.getFileHandle(curFile)).getFile(); }
+    else { blob = await (await filesRoot.getFileHandle(curFile)).getFile(); }   // legacy flat file
+  } catch (e) { return false; }                       // source missing → leave the record
+  const targetDir = await filesRoot.getDirectoryHandle(wantDir, { create: true });
+  const targetName = await uniqueFileName(targetDir, sanitizeFileName(doc.name || curFile));
+  const fh = await targetDir.getFileHandle(targetName, { create: true });
+  const w = await fh.createWritable(); await w.write(blob); await w.close();
+  try {
+    if (curDir) { const d = await filesRoot.getDirectoryHandle(curDir); await d.removeEntry(curFile); }
+    else await filesRoot.removeEntry(curFile);
+  } catch (e) {}
+  if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
+  doc.dir = wantDir; doc.file = targetName; delete doc.fileId;
+  return true;
+}
+async function refilePdfs() {
+  const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+  const touched = new Set();
+  let moved = 0, specChanged = false;
+  for (const s of sectionsOf(job)) {
+    for (const kind of ['submittals', 'responses']) {
+      for (const d of (s[kind] || [])) {
+        if (isLink(d)) continue;
+        const want = statusDirName(d.status || s.status || 'submitted_gc');
+        if (await refileDoc(filesRoot, d, want)) { moved++; touched.add(s); }
+      }
+    }
+  }
+  for (const sp of (job.specs || [])) {
+    if (isLink(sp)) continue;
+    if (await refileDoc(filesRoot, sp, statusDirName('spec'))) { moved++; specChanged = true; }
+  }
+  return { moved, touched: [...touched], specChanged };
+}
+async function saveToFolder() {
+  if (!job) return;
+  if (!jobFolder) { if (!(await ensureJobFolder())) return; }
+  stickyToast('Saving to the ShareFile folder…');
+  try {
+    const { moved, touched, specChanged } = await refilePdfs();
+    const snap = await buildRegisterSnapshot();
+    await writeFolderFile('register.json', JSON.stringify(snap, null, 2), 'application/json');
+    await writeFolderFile('register.csv', '﻿' + buildCsv(), 'text/csv;charset=utf-8');
+    if (touched.length) { try { await saveSections(touched); } catch (e) {} }
+    if (specChanged) { try { await saveJobMeta(); } catch (e) {} }
+    if (openKey) renderDrawer();
+    renderTable();
+    toast(`Saved to the ShareFile folder — register.json + register.csv written${moved ? `, ${moved} PDF${moved === 1 ? '' : 's'} re-filed` : ''}`);
+  } catch (e) {
+    console.error(e);
+    toast('Could not save to the folder: ' + (e.message || e), true);
   }
 }
 
