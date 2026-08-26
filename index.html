@@ -714,7 +714,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.0';
+const APP_VERSION = 'v3.1';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1626,6 +1626,7 @@ const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toS
 const blobUrlCache = new Map();    // fileId -> object URL, for this session
 let jobFolder = null;              // the open job's ShareFile folder, or null if not loaded
 let folderRemembered = null;      // a known handle from a past session, awaiting a one-click reconnect
+let jobFolderCount = null;         // how many PDFs the loaded folder actually holds (null = unknown)
 
 /* PDFs are filed under files/<status>/, keeping their original name, so the
    ShareFile folder is organised by what each PDF is. The section keeps a doc
@@ -1689,6 +1690,45 @@ async function docUrl(doc) {
   const url = URL.createObjectURL(blob);
   blobUrlCache.set(doc.id, url);
   return url;
+}
+/* Why a PDF wouldn't open, in plain terms the user can act on. */
+async function docReadError(doc) {
+  if (!jobFolder) return 'Load this job’s ShareFile folder first.';
+  let filesRoot;
+  try { filesRoot = await jobFolder.getDirectoryHandle('files'); }
+  catch (e) { return 'The loaded folder has no “files” folder in it — it’s probably the wrong folder, or the PDFs haven’t downloaded from ShareFile yet. Try “Change folder…” and pick the exact job folder.'; }
+  const dir = doc.dir, file = doc.file || (doc.fileId ? doc.fileId + '.pdf' : null);
+  if (!file) return 'This document has no stored file (it may have been added on an old version that kept PDFs in the cloud).';
+  try {
+    const dh = dir ? await filesRoot.getDirectoryHandle(dir) : filesRoot;
+    await dh.getFileHandle(file);
+    return 'The PDF is in the folder but couldn’t be read — in ShareFile, make the folder “available offline” so it fully downloads, then try again.';
+  } catch (e) {
+    return `“${esc(doc.name || file)}” isn’t in this folder yet${dir ? ` (looked in files/${esc(dir)})` : ''}. It may still be syncing from ShareFile, or it was uploaded to a different folder.`;
+  }
+}
+/* Count the PDFs actually present in files/ so the bar can say how many are
+   readable — 0 immediately reveals a wrong or unsynced folder. */
+async function refreshFolderCount() {
+  jobFolderCount = null;
+  if (!jobFolder) return;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    let n = 0;
+    for await (const entry of filesRoot.values()) {
+      if (entry.kind === 'file') { if (/\.pdf$/i.test(entry.name)) n++; }
+      else if (entry.kind === 'directory') {
+        for await (const f of entry.values()) if (f.kind === 'file' && /\.pdf$/i.test(f.name)) n++;
+      }
+    }
+    jobFolderCount = n;
+  } catch (e) { jobFolderCount = 0; }   // no files/ folder → nothing readable here
+}
+/* Recompute the PDF count and refresh the bar after the folder's files change. */
+async function noteFolderChanged() {
+  if (!jobFolder) return;
+  await refreshFolderCount();
+  updateFolderBar();
 }
 async function deleteStoredDoc(doc) {
   if (!doc) return;
@@ -3035,6 +3075,7 @@ async function addFiles(key, kind, files) {
       releaseState: s.releaseState || 'not_ready'
     });
   } catch (e) { toast(writeError(e), true); return; }
+  noteFolderChanged();
   toast(`${added} PDF${added === 1 ? '' : 's'} filed under ${ST[status].label}`);
 }
 async function removeDoc(key, kind, docId) {
@@ -3047,6 +3088,7 @@ async function removeDoc(key, kind, docId) {
   s[kind] = s[kind].filter(x => x.id !== docId);
   renderDrawer(); renderTable();
   try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
+  noteFolderChanged();
 }
 function docOf(key, kind, docId) {
   const s = findSection(key);
@@ -3059,7 +3101,7 @@ async function resolveDoc(key, kind, docId) {
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
   stickyToast(`Opening ${d.name}…`);
   const url = await docUrl(d);
-  if (!url) { toast('That PDF isn’t in the loaded folder — check you loaded the right ShareFile folder', true); return null; }
+  if (!url) { toast(await docReadError(d), true); return null; }
   toast(' ');
   return { url, name: d.name };
 }
@@ -3177,7 +3219,7 @@ async function openSpecViewer(specId, page) {
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view the spec PDF', true); return; } }
   stickyToast(`Opening ${sp.name}…`);
   const url = await docUrl(sp);
-  if (!url) { toast('The spec PDF isn’t in the loaded folder', true); return; }
+  if (!url) { toast(await docReadError(sp), true); return; }
   toast(' ');
   showPdf(url, sp.name, page);
 }
@@ -3489,6 +3531,7 @@ async function confirmImport() {
     const bits = [];
     if (added) bits.push(`${added} section${added === 1 ? '' : 's'} imported`);
     if (updated) bits.push(`${updated} re-pointed at this file`);
+    noteFolderChanged();
     toast(bits.length ? bits.join(' · ') : `${file.name} added`);
     nextImport();                        // review the next queued file, or close
   } catch (e) {
@@ -3684,19 +3727,22 @@ async function writeJobMarker(handle, j) {
 
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
+async function markFolderLoaded(handle) {
+  jobFolder = handle; folderRemembered = null;
+  await refreshFolderCount();
+  updateFolderBar();
+  if (openKey) renderDrawer();
+  renderTable();
+}
 async function tryAutoLoadFolder(jobId) {
-  jobFolder = null; folderRemembered = null;
+  jobFolder = null; folderRemembered = null; jobFolderCount = null;
   updateFolderBar();
   if (!fsSupported()) return;
   const handle = await recallHandle(jobId);
   if (!handle) return;                    // never paired on this machine → pick when needed
   // The grant may already stand (same session) — then load silently.
   try {
-    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') {
-      jobFolder = handle; updateFolderBar();
-      if (openKey) renderDrawer(); renderTable();
-      return;
-    }
+    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') { await markFolderLoaded(handle); return; }
   } catch (e) {}
   // We know the folder from before — offer a one-click reconnect, and try to
   // confirm right now using the click that opened this job (best effort; if the
@@ -3704,22 +3750,16 @@ async function tryAutoLoadFolder(jobId) {
   folderRemembered = handle;
   updateFolderBar();
   try {
-    if ((await handle.requestPermission({ mode: 'readwrite' })) === 'granted') {
-      jobFolder = handle; folderRemembered = null; updateFolderBar();
-      if (openKey) renderDrawer(); renderTable();
-    }
+    if ((await handle.requestPermission({ mode: 'readwrite' })) === 'granted') await markFolderLoaded(handle);
   } catch (e) { /* no user activation — the Reconnect button handles it */ }
 }
 /* One-click reconnect to the folder we already know for this job. */
 async function reconnectJobFolder() {
   const handle = folderRemembered || await recallHandle(job && job.id);
-  if (!handle) return loadJobFolder();    // nothing remembered → fall back to picking
-  if (!(await ensureRW(handle))) { toast('Folder permission is needed', true); return; }
-  jobFolder = handle; folderRemembered = null;
+  if (!handle) return loadJobFolder(true);
+  if (!(await ensureRW(handle))) return loadJobFolder(true);   // handle dead (e.g. folder moved) → let them pick
+  await markFolderLoaded(handle);
   await writeJobMarker(handle, job).catch(() => {});
-  updateFolderBar();
-  if (openKey) renderDrawer();
-  renderTable();
   toast('Reconnected to the ShareFile folder');
 }
 
@@ -3728,10 +3768,13 @@ async function ensureJobFolder() {
   if (jobFolder) return true;
   return loadJobFolder();
 }
-async function loadJobFolder() {
+/* forcePick=true always opens the folder picker (used by "Change folder…"), so a
+   renamed or moved folder can be re-selected instead of silently reusing the old
+   handle. */
+async function loadJobFolder(forcePick) {
   if (!job) return false;
   if (!fsSupported()) { toast('Loading a ShareFile folder needs Chrome or Edge', true); return false; }
-  let handle = await recallHandle(job.id);
+  let handle = forcePick ? null : await recallHandle(job.id);
   if (handle && !(await ensureRW(handle))) handle = null;
   if (!handle) {
     try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
@@ -3741,15 +3784,13 @@ async function loadJobFolder() {
     if (marker && marker.id && marker.id !== job.id &&
         !confirm(`That folder is marked for a different job (“${marker.name || marker.id}”).\n\nUse it for “${job.name}” anyway?`)) return false;
   }
-  jobFolder = handle;
   await writeJobMarker(handle, job);
   await rememberHandle(job.id, handle);
   const fname = handle.name || '';
   if (fname && job.sfFolderName !== fname) { job.sfFolderName = fname; try { await saveJobMeta(); } catch (e) {} }
-  updateFolderBar();
-  if (openKey) renderDrawer();
-  renderTable();
-  toast('ShareFile folder loaded — PDFs are available');
+  await markFolderLoaded(handle);
+  toast(jobFolderCount ? `Folder loaded — ${jobFolderCount} PDF${jobFolderCount === 1 ? '' : 's'} available`
+                       : 'Folder loaded, but it has no PDFs in it yet — check it’s the right folder.');
   return true;
 }
 
@@ -3761,9 +3802,12 @@ function updateFolderBar() {
   bar.hidden = false;
   if (jobFolder) {
     const nm = jobFolder.name || job.sfFolderName || 'this job’s folder';
+    const cnt = jobFolderCount == null ? ''
+      : jobFolderCount ? ` · ${jobFolderCount} PDF${jobFolderCount === 1 ? '' : 's'}`
+      : ' · <b style="color:var(--amber)">no PDFs found here</b>';
     bar.className = 'folder-bar on';
-    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>.</span>
-      <button class="btn sm ghost" onclick="loadJobFolder()">Change folder…</button>`;
+    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.</span>
+      <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>`;
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';
     bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
@@ -3893,6 +3937,7 @@ async function saveToFolder() {
 
     if (openKey) renderDrawer();
     renderTable();
+    await noteFolderChanged();
     const moved = moves.length;
     toast(`Saved to the ShareFile folder — register.json + register.csv written${moved ? `, ${moved} PDF${moved === 1 ? '' : 's'} re-filed` : ''}`);
   } catch (e) {
