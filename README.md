@@ -29,10 +29,16 @@ Two places, split by what the data is:
 ### Loading a job's ShareFile folder
 
 Open a job, then **Load ShareFile folder** and pick that job's folder. The app
-drops a small `job.json` marker and keeps its PDFs under `files/` there. The
-folder is remembered per machine, so after the first time it opens with a single
-permission click. This needs **Chrome or Edge** and the folder available locally
-(ShareFile Drive, or any sync that makes it a normal folder).
+drops a small `job.json` marker and keeps its PDFs under `files/` there. This
+needs **Chrome or Edge** and the folder available locally (ShareFile Drive, or
+any sync that makes it a normal folder).
+
+The folder is **remembered per machine**, so you only pick it once. When you
+reopen the site later, opening the job recognises that folder: the browser can't
+silently reuse the permission across sessions, so the app tries to confirm it
+right away (a one-time "let this site edit files?" prompt), and if that doesn't
+fire it shows a **Reconnect to "&lt;folder&gt;"** bar — a single click, no
+re-picking. Only the very first time on a machine do you browse to the folder.
 
 Because the folder is per machine, **each person loads it once on their own
 computer** — the register syncs live through the cloud, but the PDFs come from

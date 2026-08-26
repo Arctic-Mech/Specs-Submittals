@@ -1615,6 +1615,7 @@ async function migrateSpecData(jobId, sections) {
 const uid = p => (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const blobUrlCache = new Map();    // fileId -> object URL, for this session
 let jobFolder = null;              // the open job's ShareFile folder, or null if not loaded
+let folderRemembered = null;      // a known handle from a past session, awaiting a one-click reconnect
 
 /* PDFs are filed under files/<status>/, keeping their original name, so the
    ShareFile folder is organised by what each PDF is. The section keeps a doc
@@ -1932,7 +1933,7 @@ function go(where, id) {
   closeDrawer();
   if (where === 'jobs') {
     if (unsubSections) { unsubSections(); unsubSections = null; }
-    job = null; jobFolder = null; $('crumbJob').textContent = ''; renderJobs();
+    job = null; jobFolder = null; folderRemembered = null; $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
   window.scrollTo(0, 0);
@@ -3674,19 +3675,42 @@ async function writeJobMarker(handle, j) {
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function tryAutoLoadFolder(jobId) {
-  jobFolder = null;
+  jobFolder = null; folderRemembered = null;
   updateFolderBar();
   if (!fsSupported()) return;
   const handle = await recallHandle(jobId);
-  if (!handle) return;
+  if (!handle) return;                    // never paired on this machine → pick when needed
+  // The grant may already stand (same session) — then load silently.
   try {
     if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') {
-      jobFolder = handle;
-      updateFolderBar();
-      if (openKey) renderDrawer();
-      renderTable();
+      jobFolder = handle; updateFolderBar();
+      if (openKey) renderDrawer(); renderTable();
+      return;
     }
   } catch (e) {}
+  // We know the folder from before — offer a one-click reconnect, and try to
+  // confirm right now using the click that opened this job (best effort; if the
+  // browser won't allow it without a fresh click, the bar's button will).
+  folderRemembered = handle;
+  updateFolderBar();
+  try {
+    if ((await handle.requestPermission({ mode: 'readwrite' })) === 'granted') {
+      jobFolder = handle; folderRemembered = null; updateFolderBar();
+      if (openKey) renderDrawer(); renderTable();
+    }
+  } catch (e) { /* no user activation — the Reconnect button handles it */ }
+}
+/* One-click reconnect to the folder we already know for this job. */
+async function reconnectJobFolder() {
+  const handle = folderRemembered || await recallHandle(job && job.id);
+  if (!handle) return loadJobFolder();    // nothing remembered → fall back to picking
+  if (!(await ensureRW(handle))) { toast('Folder permission is needed', true); return; }
+  jobFolder = handle; folderRemembered = null;
+  await writeJobMarker(handle, job).catch(() => {});
+  updateFolderBar();
+  if (openKey) renderDrawer();
+  renderTable();
+  toast('Reconnected to the ShareFile folder');
 }
 
 /* Make sure the open job's folder is loaded before a PDF action. */
@@ -3733,6 +3757,12 @@ function updateFolderBar() {
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';
     bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
+  } else if (folderRemembered) {
+    // We already know this job's folder from a previous session — one click to reconnect.
+    const nm = folderRemembered.name || job.sfFolderName || 'this job’s folder';
+    bar.className = 'folder-bar warn';
+    bar.innerHTML = `<span class="fb-ico">📎</span><span>Reconnect to <b>${esc(nm)}</b> to view or add this job’s PDFs.</span>
+      <button class="btn sm primary" onclick="reconnectJobFolder()">Reconnect folder</button>`;
   } else {
     const nm = job.sfFolderName ? ` (“${esc(job.sfFolderName)}”)` : '';
     bar.className = 'folder-bar warn';
