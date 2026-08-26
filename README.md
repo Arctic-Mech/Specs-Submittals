@@ -7,6 +7,11 @@ come back, and what has been released to site.
 
 The whole app is `index.html`. There is no build step.
 
+It works on a phone as well as a desktop: on narrow screens the header collapses
+to icon buttons and the register table becomes a stack of tap-to-open cards, each
+showing the section, status and releases without any sideways scrolling. (Loading
+a ShareFile folder to view or add PDFs still needs desktop Chrome or Edge.)
+
 ## Where it saves
 
 Two places, split by what the data is:

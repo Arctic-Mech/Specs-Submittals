@@ -566,10 +566,49 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 .notice span { flex: 1; }
 
 @media (max-width: 720px) {
-  .wrap { padding: 16px 12px 60px; }
-  thead th { top: 56px; }
+  .wrap { padding: 14px 10px 60px; }
   .hide-sm { display: none; }
   .grid2, .status-grid { grid-template-columns: 1fr; }
+
+  /* ── compact header: SR mark + icon actions only ── */
+  header { gap: 6px; padding: 0 10px; }
+  .brand-name, .brand-sub, .crumb, .job-title { display: none; }
+  .job-actions { gap: 3px; }
+  .job-actions .lbl { display: none; }
+  .job-actions .btn { padding: 6px 8px; font-size: 15px; }
+
+  /* ── toolbar: division tabs scroll, search drops to its own line ── */
+  .toolbar { flex-wrap: wrap; gap: 8px; }
+  .seg { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .seg button { white-space: nowrap; }
+  .search { flex: 1 1 100%; order: 3; }
+  #countLabel { order: 2; }
+
+  /* ── the register table becomes stacked cards ── */
+  .table-card { border: none; background: transparent; }
+  table, tbody, tr { display: block; width: 100%; }
+  thead { display: none; }
+  #secBody tr {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 11px 13px; margin-bottom: 10px; height: auto;
+  }
+  #secBody tr.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  #secBody tr:hover td, tbody tr:hover td { background: transparent; }
+  #secBody tr.divhead { background: transparent !important; border: none; padding: 12px 2px 2px; margin: 0; }
+  #secBody tr.divhead td { padding: 0; height: auto; }
+  #secBody td { display: block; height: auto; border: none; padding: 2px 0; }
+  tbody tr:last-child td { border-bottom: none; }
+  #secBody td.is-empty { display: none; }         /* hide empty spec / vendor / release */
+  #secBody td[data-label]::before {
+    content: attr(data-label); display: block;
+    font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); margin: 8px 0 3px;
+  }
+  .c-num { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+  .c-title, .cell-title { font-size: 15px; }
+  .st-select { width: 100%; max-width: none; padding: 8px; font-size: 13.5px; }
+  .c-rel { padding-top: 0; }
+  .cell-in { font-size: 15px; }
 }
 @media print {
   header, .toolbar, .chips, .btn, .icon-btn, .scrim, .drawer, .modal-scrim { display: none !important; }
@@ -593,10 +632,10 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <span class="job-title" id="crumbJob"></span>
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
-    <button class="btn ghost" onclick="saveToFolder()" title="Overwrite this job's ShareFile folder with the current register (register.json + register.csv) and re-file the PDFs by status">💾 Save to folder</button>
-    <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 Spec</button>
-    <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ CSV</button>
-    <button class="btn" onclick="promptImportSpec()">Import spec</button>
+    <button class="btn ghost" onclick="saveToFolder()" title="Save to ShareFile folder — overwrite register.json + register.csv and re-file the PDFs by status">💾 <span class="lbl">Save to folder</span></button>
+    <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 <span class="lbl">Spec</span></button>
+    <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ <span class="lbl">CSV</span></button>
+    <button class="btn" onclick="promptImportSpec()" title="Import a spec PDF">📥 <span class="lbl">Import spec</span></button>
   </div>
   <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Light / dark">◐</button>
 </header>
@@ -2302,19 +2341,20 @@ function secRowHtml(s) {
     : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : '');
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
+  const specEmpty = !editing && !s.spec, vendorEmpty = !editing && !s.vendor;
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title">
         <div class="t-line">${title}${pencil}</div>
         ${tags}${desc}</td>
-      <td>${spec}</td>
-      <td>${vendor}</td>
-      <td onclick="event.stopPropagation()">
+      <td class="c-spec${specEmpty ? ' is-empty' : ''}" data-label="Spec">${spec}</td>
+      <td class="c-vendor${vendorEmpty ? ' is-empty' : ''}" data-label="Vendor">${vendor}</td>
+      <td class="c-status" data-label="Status" onclick="event.stopPropagation()">
         <select class="st-select" style="color:${cvar(st.color)};background:${csf(st.color)};border-color:${cvar(st.color)}"
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
-      <td class="c-rel">${releaseCell(s, rl)}</td>
+      <td class="c-rel${rl.id === 'not_ready' ? ' is-empty' : ''}" data-label="Release">${releaseCell(s, rl)}</td>
     </tr>`;
 }
 
