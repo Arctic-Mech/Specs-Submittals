@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Submittal Register — Divisions 22 &amp; 23</title>
 <!-- Firebase: the register and the PDFs both live in Firestore, so every
      device on the job sees the same log. Cloud Storage is deliberately not
@@ -711,8 +714,15 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v2.1';
+const APP_VERSION = 'v3.0';
 document.getElementById('verLabel').textContent = APP_VERSION;
+
+/* A network-first service worker so a reopened tab always loads the latest
+   deploy instead of a stale cached copy. Only in production (https) — the http
+   test harness skips it. */
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
 /* pdf.js is ~350 KB and only ever used to import a spec, so it is fetched on
    first use rather than on every page view. */
