@@ -714,7 +714,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.1';
+const APP_VERSION = 'v3.2';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1475,6 +1475,7 @@ async function saveJobMeta(j) {
     number: target.number || '',
     folderUrl: target.folderUrl || '',
     sfFolderName: target.sfFolderName || '',
+    ignoredFiles: target.ignoredFiles || [],
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -1627,6 +1628,7 @@ const blobUrlCache = new Map();    // fileId -> object URL, for this session
 let jobFolder = null;              // the open job's ShareFile folder, or null if not loaded
 let folderRemembered = null;      // a known handle from a past session, awaiting a one-click reconnect
 let jobFolderCount = null;         // how many PDFs the loaded folder actually holds (null = unknown)
+let jobUnassigned = [];            // PDFs found in the folder that no section references yet
 
 /* PDFs are filed under files/<status>/, keeping their original name, so the
    ShareFile folder is organised by what each PDF is. The section keeps a doc
@@ -1724,11 +1726,182 @@ async function refreshFolderCount() {
     jobFolderCount = n;
   } catch (e) { jobFolderCount = 0; }   // no files/ folder → nothing readable here
 }
-/* Recompute the PDF count and refresh the bar after the folder's files change. */
+/* Recompute the PDF count + look for unassigned PDFs, then refresh the bar. */
 async function noteFolderChanged() {
   if (!jobFolder) return;
   await refreshFolderCount();
+  jobUnassigned = await scanUnassignedPdfs();
   updateFolderBar();
+}
+
+/* Which on-disk PDF paths the register already knows about. */
+function trackedPaths() {
+  const set = new Set();
+  const add = d => {
+    if (!d || isLink(d)) return;
+    if (d.dir && d.file) set.add('files/' + d.dir + '/' + d.file);
+    else if (d.fileId) set.add('files/' + d.fileId + '.pdf');
+  };
+  for (const s of sectionsOf(job)) { (s.submittals || []).forEach(add); (s.responses || []).forEach(add); }
+  (job.specs || []).forEach(add);
+  return set;
+}
+/* PDFs sitting in the ShareFile folder that no section references — someone
+   dropped them in directly. Looks at the job-folder root and inside files/. */
+async function scanUnassignedPdfs() {
+  if (!jobFolder) return [];
+  const tracked = trackedPaths();
+  const ignored = new Set(job.ignoredFiles || []);
+  const found = [];
+  const consider = (path, name, loc) => {
+    if (!/\.pdf$/i.test(name)) return;
+    if (tracked.has(path) || ignored.has(path)) return;
+    if (/^register\.(json|csv)$/i.test(name) || /^job\.json$/i.test(name)) return;
+    found.push(Object.assign({ path, name }, loc));
+  };
+  try {                                   // loose files at the job-folder root
+    for await (const e of jobFolder.values()) {
+      if (e.kind === 'file') consider(e.name, e.name, { at: 'root', file: e.name });
+    }
+  } catch (e) {}
+  try {                                   // anything inside files/ the register doesn't know
+    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    for await (const e of filesRoot.values()) {
+      if (e.kind === 'file') consider('files/' + e.name, e.name, { at: 'files', file: e.name });
+      else if (e.kind === 'directory') {
+        for await (const f of e.values()) {
+          if (f.kind === 'file') consider('files/' + e.name + '/' + f.name, f.name, { at: 'dir', dir: e.name, file: f.name });
+        }
+      }
+    }
+  } catch (e) {}
+  return found;
+}
+async function looseDirHandle(item, create) {
+  if (item.at === 'root') return jobFolder;
+  const filesRoot = await jobFolder.getDirectoryHandle('files', { create: !!create });
+  if (item.at === 'dir') return filesRoot.getDirectoryHandle(item.dir, { create: !!create });
+  return filesRoot;                       // item.at === 'files'
+}
+async function readLooseBlob(item) {
+  try { const dh = await looseDirHandle(item); return await (await dh.getFileHandle(item.file)).getFile(); }
+  catch (e) { return null; }
+}
+async function deleteLoose(item) {
+  try { const dh = await looseDirHandle(item); await dh.removeEntry(item.file); } catch (e) {}
+}
+
+/* ── assign loose PDFs, one at a time ── */
+function specSectionOptions(selected) {
+  return DIVISIONS.map(div => {
+    const secs = sectionsOf(job).filter(s => s.division === div).sort(sectionOrder);
+    if (!secs.length) return '';
+    return `<optgroup label="Division ${div} — ${DIVISION_NAMES[div] || ''}">${
+      secs.map(s => `<option value="${esc(s.key)}" ${s.key === selected ? 'selected' : ''}>${esc(s.number)} — ${esc(s.title || 'untitled')}</option>`).join('')
+    }</optgroup>`;
+  }).join('');
+}
+let _assignQueue = [];
+function startAssignUnassigned() {
+  _assignQueue = jobUnassigned.slice();
+  assignModal(0);
+}
+function assignModal(i) {
+  const total = _assignQueue.length;
+  const item = _assignQueue[i];
+  if (!item) { closePdf(); noteFolderChanged(); return; }   // done → re-scan + refresh bar
+  const dv = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
+  const firstKey = (sectionsOf(job).filter(s => s.division === dv).sort(sectionOrder)[0] || {}).key || '';
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
+    <div class="modal-head"><h3>New PDF ${i + 1} of ${total}</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <div class="file-row" style="margin-bottom:14px"><span class="fi">📄</span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : item.at === 'dir' ? 'files/' + esc(item.dir) : 'files/'}</small></span>
+        <button class="btn sm" onclick="viewLoose(${i})">View</button></div>
+      <div class="field"><label class="fl">Spec section</label>
+        <select class="input" id="asgSection">${specSectionOptions(firstKey)}</select></div>
+      <div class="grid2">
+        <div class="field"><label class="fl">What is it</label>
+          <select class="input" id="asgKind">
+            <option value="submittals">Submittal (sent to GC)</option>
+            <option value="responses">Response (came back)</option>
+          </select></div>
+        <div class="field"><label class="fl">Status</label>
+          <select class="input" id="asgStatus">${DOC_STATUSES.map(id => `<option value="${id}">${esc(ST[id].label)}</option>`).join('')}</select></div>
+      </div>
+      <div class="muted" style="margin-top:4px">It becomes the section's current status, and the PDF moves into the matching status folder.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
+      <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
+      <button class="btn primary" onclick="assignUnassigned(${i})">Assign &amp; file</button>
+    </div></div></div>`;
+  // default the status to match the kind
+  const kindSel = document.getElementById('asgKind'), stSel = document.getElementById('asgStatus');
+  kindSel.onchange = () => { stSel.value = kindSel.value === 'responses' ? 'approved' : 'submitted_gc'; };
+  stSel.value = 'submitted_gc';
+}
+async function viewLoose(i) {
+  const item = _assignQueue[i];
+  const blob = await readLooseBlob(item);
+  if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
+  showPdf(URL.createObjectURL(blob), item.name);
+}
+function ignoreUnassigned(i) {
+  const item = _assignQueue[i];
+  if (item) {
+    job.ignoredFiles = (job.ignoredFiles || []).concat(item.path);
+    saveJobMeta().catch(() => {});
+  }
+  assignModal(i + 1);
+}
+async function assignUnassigned(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const key = document.getElementById('asgSection').value;
+  const kind = document.getElementById('asgKind').value;
+  const status = document.getElementById('asgStatus').value;
+  const s = findSection(key);
+  if (!s) { toast('Pick a spec section', true); return; }
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
+    const wantDir = statusDirName(status);
+    const already = (item.at === 'dir' && item.dir === wantDir);
+    let dir = item.dir, file = item.file;
+    if (!already) {                        // copy into the status folder (keep the name)
+      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const targetDir = await filesRoot.getDirectoryHandle(wantDir, { create: true });
+      const targetName = await uniqueFileName(targetDir, sanitizeFileName(item.name));
+      const fh = await targetDir.getFileHandle(targetName, { create: true });
+      const w = await fh.createWritable(); await w.write(blob); await w.close();
+      dir = wantDir; file = targetName;
+    }
+    // record it on the section, then persist BEFORE deleting the loose original
+    s[kind] = s[kind] || [];
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, status, uploaded: Date.now(), dir, file,
+      rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' };
+    s[kind].push(doc);
+    applyStatus(s, status);
+    markPending(key);
+    try {
+      await patchSection(key, { [kind]: s[kind], status: s.status, history: s.history || [],
+        submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || '', releaseState: s.releaseState || 'not_ready' });
+    } catch (e) {
+      s[kind] = s[kind].filter(x => x.id !== doc.id);   // roll back the record
+      if (!already) await deleteLoose({ at: 'dir', dir: wantDir, file });   // remove the copy we wrote
+      throw e;
+    }
+    if (!already) await deleteLoose(item);  // record is durable — remove the original
+    sortSections(); renderJob();
+    toast(`Filed “${item.name}” under ${s.number} · ${ST[status].label}`);
+    assignModal(i + 1);
+  } catch (e) {
+    console.error(e);
+    toast('Could not file that PDF: ' + (e.message || e), true);
+  }
 }
 async function deleteStoredDoc(doc) {
   if (!doc) return;
@@ -1824,6 +1997,7 @@ function watchJobs() {
           if (!jobEditDepth && !stale) {
             job.name = fresh.name; job.number = fresh.number; job.folderUrl = fresh.folderUrl;
             job.sfFolderName = fresh.sfFolderName || '';
+            job.ignoredFiles = fresh.ignoredFiles || [];
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -3730,6 +3904,7 @@ async function writeJobMarker(handle, j) {
 async function markFolderLoaded(handle) {
   jobFolder = handle; folderRemembered = null;
   await refreshFolderCount();
+  jobUnassigned = await scanUnassignedPdfs();
   updateFolderBar();
   if (openKey) renderDrawer();
   renderTable();
@@ -3805,8 +3980,11 @@ function updateFolderBar() {
     const cnt = jobFolderCount == null ? ''
       : jobFolderCount ? ` · ${jobFolderCount} PDF${jobFolderCount === 1 ? '' : 's'}`
       : ' · <b style="color:var(--amber)">no PDFs found here</b>';
+    const un = jobUnassigned.length;
     bar.className = 'folder-bar on';
-    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.</span>
+    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.${
+      un ? ` <b style="color:var(--amber)">${un} new PDF${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
+      ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new PDF${un === 1 ? '' : 's'}</button>` : ''}
       <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>`;
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';

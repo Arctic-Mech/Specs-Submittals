@@ -48,6 +48,23 @@ folder**. If a PDF still won't open after loading, check you picked the right
 folder (the app warns if the folder is marked for a different job), and in
 ShareFile make the folder **available offline** so its files have downloaded.
 
+The loaded-folder bar shows how many PDFs it can actually read — a count, or a
+highlighted **no PDFs found here** if you've connected to the wrong or unsynced
+folder.
+
+### Dropping PDFs into the folder directly
+
+You can also work from the other direction: drop PDFs straight into the job's
+ShareFile folder (from Explorer/Finder, or ShareFile itself). Next time the folder
+loads, the app notices any PDF that no section references and the bar shows
+**"N new PDFs to assign."** The **Assign** button walks them one at a time — you
+can **View** the PDF, pick its **spec section**, whether it's a **submittal or
+response**, and its **status** — and on *Assign & file* it moves the PDF into the
+matching status subfolder and records it on that section (setting the section's
+status). **Skip** leaves one for later; **Ignore** marks a file as "not a
+submittal" so it stops asking. Files already filed under `files/<status>/` by the
+app are left alone.
+
 ### Save to folder
 
 The **Save to folder** button (top of a job) writes a complete copy of the
