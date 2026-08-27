@@ -298,6 +298,12 @@ header {
 .pay-row { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; }
 .pay-row input { width: 17px; height: 17px; cursor: pointer; }
 .pay-row input:checked + span { color: var(--green); font-weight: 600; }
+.note-show { display: inline-flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.note-show input { width: 15px; height: 15px; cursor: pointer; }
+.rfi-note {
+  margin-top: 5px; font-size: 12.5px; color: var(--text-2); white-space: pre-wrap;
+  background: var(--amber-sf); border-left: 3px solid var(--amber); border-radius: 4px; padding: 4px 8px;
+}
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -887,7 +893,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.5';
+const APP_VERSION = 'v3.6';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2940,13 +2946,14 @@ function rfiRowHtml(r) {
   const st = rsOf(r);
   const openAc = (r.checklist || []).filter(i => !i.done).length;
   const docNote = openAc ? `<small>☐ ${openAc} action item${openAc === 1 ? '' : 's'}</small>` : '';
+  const noteLine = (r.showNote && r.notes) ? `<div class="rfi-note">📌 ${esc(r.notes)}</div>` : '';
   const dates = [];
   if (r.dateSent) dates.push('Sent ' + fmtShort(r.dateSent));
   if (r.dateDue) dates.push('Due ' + fmtShort(r.dateDue));
   if (r.dateAnswered) dates.push('Answered ' + fmtShort(r.dateAnswered));
   return `<tr onclick="openRfiDrawer('${r.id}')">
     <td class="c-rfinum" data-label="RFI"><b>${esc(r.number || '—')}</b></td>
-    <td class="c-rfisubj" data-label="Subject">${esc(r.subject || '(no subject)')}${docNote}</td>
+    <td class="c-rfisubj" data-label="Subject">${esc(r.subject || '(no subject)')}${docNote}${noteLine}</td>
     <td class="c-rfigc${r.gcNumber ? '' : ' is-empty'}" data-label="GC #">${r.gcNumber ? esc(r.gcNumber) : '<span class="muted">—</span>'}</td>
     <td class="c-rfistatus" data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
     <td class="c-rfidates${dates.length ? '' : ' is-empty'}" data-label="Dates">${dates.length ? '<small>' + dates.map(esc).join('<br>') + '</small>' : '<span class="muted">—</span>'}</td>
@@ -2955,7 +2962,7 @@ function rfiRowHtml(r) {
 function newRfi() {
   if (!job) return;
   const r = { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: '',
-    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', docs: [], checklist: [],
+    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', showNote: false, docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
   rfis.unshift(r);
   openRfi = r.id;
@@ -3135,6 +3142,8 @@ function renderRfiDrawer() {
         <h4>Notes</h4>
         <textarea class="input" rows="4" placeholder="Anything worth remembering about this RFI"
           onchange="patchRfi('${r.id}',{notes:this.value})">${esc(r.notes || '')}</textarea>
+        <label class="note-show"><input type="checkbox" ${r.showNote ? 'checked' : ''}
+          onchange="patchRfi('${r.id}',{showNote:this.checked})"> Show this note on the RFI log</label>
       </div>
     </div>
   </aside>`;
