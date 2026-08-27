@@ -1,9 +1,17 @@
 # Submittal Register — Divisions 22 & 23
 
-A submittal log for mechanical spec sections. Import a project spec PDF, it is
-split into its individual Division 22 and 23 sections, and each section carries
-a status, searchable tags, the submittal PDFs sent out, the response PDFs that
-come back, and what has been released to site.
+A job workspace for mechanical projects. Each job has three tabs:
+
+- **Submittals** — import a project spec PDF, it is split into its individual
+  Division 22 and 23 sections, and each section carries a status, searchable
+  tags, the submittal PDFs sent out, the response PDFs that come back, and what
+  has been released to site.
+- **RFIs** — a register of RFIs, each holding the question PDF you sent and the
+  response PDF that came back, with a status (Open → Submitted → Answered →
+  Closed) and the sent / due / answered dates.
+- **Job Tracking** — categories you create (change orders, scheduling, owner
+  correspondence, whatever the job needs), each holding emails and files you drop
+  in, action-item checklists, and notes.
 
 The whole app is `index.html`. There is no build step.
 
@@ -84,6 +92,39 @@ The register already syncs live to the cloud, so this is for keeping a
 self-contained, offline copy in ShareFile alongside the PDFs. It overwrites
 `register.json`/`register.csv` each time and never deletes PDFs it doesn't
 recognise.
+
+## RFIs
+
+The **RFIs** tab is a lightweight RFI log that works like the submittal log. Each
+RFI has a number (auto-suggested, editable), a subject, who it went to, a status
+that runs **Open → Submitted → Answered → Closed**, and the sent / due / answered
+dates. It holds two kinds of PDF: the **question** (the RFI as you sent it out)
+and the **response** (the stamped answer that came back). Uploading a question
+PDF moves an open RFI to **Submitted**; uploading a response moves it to
+**Answered** and stamps the answered date. The PDFs are filed into the job's
+ShareFile folder under `files/RFI Questions/` and `files/RFI Answers/`. Search and
+the status chips work the same as on the submittal tab.
+
+## Job Tracking
+
+The **Job Tracking** tab is for everything on a job that isn't a submittal or an
+RFI. You make **categories** — change orders, scheduling, owner correspondence,
+long-lead tracking, whatever the job needs — and each category holds three
+things:
+
+- **Emails & files** — drop email conversations or any file onto the drop zone,
+  or use **Upload**. Browsers can't accept a message dragged straight out of the
+  Outlook inbox, so first drag the message to your desktop (Outlook saves it as a
+  `.msg`) or use **Save As**, then drop that file in. `.msg`/`.eml` emails, their
+  attachments and PDFs all work. Files land under
+  `files/Emails/<category>/` in the ShareFile folder — a PDF opens in the viewer,
+  an email downloads so Outlook can open it.
+- **Action items** — a checklist you can tick off; the category shows how many are
+  still open.
+- **Notes** — quick dated notes.
+
+Categories, checklists and notes sync live through the cloud like the rest of the
+register; only the uploaded files live in the ShareFile folder.
 
 ## Firebase setup
 
@@ -206,6 +247,8 @@ blocked. A link, and the File System Access folder, need none of that.
 jobs/{jobId}                        name, number, ShareFile folder name, spec files, roll-up
 jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, document refs
 jobs/{jobId}/specdata/{sectionKey}  the spec text for that section
+jobs/{jobId}/rfis/{rfiId}           an RFI: number, subject, status, dates, question/response PDF refs
+jobs/{jobId}/tracking/{catId}       a tracking category: files, checklist, notes
 ```
 
 Sections are separate documents so two people editing different sections at the
@@ -228,7 +271,14 @@ the status, not the whole record.
 <job folder>/files/Approved/<name>.pdf        approved responses
 <job folder>/files/Revise and Resubmit/<name>.pdf
 <job folder>/files/Partial Approval/<name>.pdf
+<job folder>/files/RFI Questions/<name>.pdf    RFIs as sent out
+<job folder>/files/RFI Answers/<name>.pdf      RFI responses that came back
+<job folder>/files/Emails/<category>/<name>    tracking emails and files, by category
 ```
+
+The submittal "new PDFs to assign" scanner leaves the `RFI Questions`,
+`RFI Answers` and `Emails` folders alone — files there are RFIs and tracking
+emails, not stray submittals.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
 was filed under, so the folder reads like a filing cabinet. The section's document

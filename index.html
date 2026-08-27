@@ -248,6 +248,60 @@ header {
 .folder-bar .btn { margin-left: auto; }
 .folder-bar.on   { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .folder-bar.warn { background: var(--amber-sf); border: 1px solid var(--amber); color: var(--text); }
+
+/* ── job-level tabs (Submittals / RFIs / Job Tracking) ── */
+.job-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.job-tabs button {
+  border: none; background: none; cursor: pointer; padding: 9px 14px; font-size: 13.5px; font-weight: 600;
+  color: var(--text-3); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.job-tabs button:hover { color: var(--text-2); }
+.job-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.job-tabs button .n { font-size: 11px; color: var(--text-3); margin-left: 5px; font-weight: 600; }
+
+/* ── job tracking board ── */
+.track-wrap { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.track-cats { display: flex; flex-direction: column; gap: 4px; }
+.track-cat {
+  display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent; font-size: 13.5px; color: var(--text-2);
+}
+.track-cat:hover { background: var(--surface-2); }
+.track-cat.on { background: var(--accent-sf); border-color: var(--accent); color: var(--text); font-weight: 600; }
+.track-cat .n { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.track-panel { min-width: 0; }
+.track-sec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+.track-sec h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
+  margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.track-sec h4 .spacer { flex: 1; }
+.check-row { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
+.check-row input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; flex: none; }
+.check-row .ct { flex: 1; font-size: 13.5px; }
+.check-row.done .ct { text-decoration: line-through; color: var(--text-3); }
+.check-row .x { opacity: 0; cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 13px; }
+.check-row:hover .x { opacity: 1; }
+.note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
+.note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
+.note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
+.note-item .nm button { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; }
+.email-drop {
+  border: 1.5px dashed var(--border-2); border-radius: 8px; padding: 20px; text-align: center;
+  color: var(--text-3); font-size: 13px; cursor: pointer;
+}
+.email-drop.over { border-color: var(--accent); background: var(--accent-sf); color: var(--text); }
+.email-drop code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+.email-drop b { color: var(--text); font-size: 13.5px; }
+.track-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.track-head h3 { font-size: 17px; margin: 0; }
+.track-head .spacer { flex: 1; }
+.track-cat.add { color: var(--text-3); border-style: dashed; justify-content: center; margin-top: 4px; }
+.track-cat .tc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-cat .tc-n { font-size: 11px; color: var(--text-3); flex: none; }
+.add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.add-row .input { flex: 1; }
+.check-row .ct { word-break: break-word; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 11px; }
+.file-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .spec-bar-label {
   font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); margin-right: 2px;
@@ -612,6 +666,29 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   .st-select { width: 100%; max-width: none; padding: 8px; font-size: 13.5px; }
   .c-rel { padding-top: 0; }
   .cell-in { font-size: 15px; }
+
+  /* ── RFI table also becomes stacked cards ── */
+  #rfiBody tr {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 11px 13px; margin-bottom: 10px; height: auto; display: block;
+  }
+  #rfiBody td { display: block; height: auto; border: none; padding: 2px 0; }
+  #rfiBody td.is-empty { display: none; }
+  #rfiBody td[data-label]::before {
+    content: attr(data-label); display: block;
+    font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); margin: 8px 0 3px;
+  }
+  .c-rfinum { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+  .c-rfisubj { font-size: 15px; }
+
+  /* ── job tracking stacks: categories above the panel ── */
+  .track-wrap { grid-template-columns: 1fr; }
+  .track-cats { flex-direction: row; flex-wrap: wrap; }
+  .track-cat { flex: 0 0 auto; }
+  .grid3 { grid-template-columns: 1fr; }
+  .job-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .job-tabs button { white-space: nowrap; }
 }
 @media print {
   header, .toolbar, .chips, .btn, .icon-btn, .scrim, .drawer, .modal-scrim { display: none !important; }
@@ -672,32 +749,65 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <div class="page-sub" id="jobMeta"></div>
       </div>
       <div class="spacer"></div>
-      <button class="btn sm ghost" onclick="addSectionManually()">+ Add section</button>
+      <button class="btn sm ghost" id="tabAction" onclick="tabAction()">+ Add section</button>
     </div>
 
     <div class="folder-bar" id="folderBar" hidden></div>
 
-    <div class="toolbar">
-      <div class="seg" id="divSeg"></div>
-      <div class="search"><input class="input" id="searchBox" placeholder="Search section number or title…" autocomplete="off"></div>
-      <div class="spacer"></div>
-      <span class="muted" id="countLabel"></span>
+    <div class="job-tabs" id="jobTabs"></div>
+
+    <!-- SUBMITTALS TAB -->
+    <div id="tab-submittals">
+      <div class="toolbar">
+        <div class="seg" id="divSeg"></div>
+        <div class="search"><input class="input" id="searchBox" placeholder="Search section number or title…" autocomplete="off"></div>
+        <div class="spacer"></div>
+        <span class="muted" id="countLabel"></span>
+      </div>
+      <div class="chips" id="statusChips"></div>
+      <div class="chips" id="releaseChips"></div>
+      <div class="table-card"><table>
+        <thead><tr>
+          <th style="width:96px">Section</th>
+          <th>Title</th>
+          <th style="width:150px">Spec</th>
+          <th style="width:160px">Vendor</th>
+          <th style="width:168px">Status</th>
+          <th style="width:300px">Release</th>
+        </tr></thead>
+        <tbody id="secBody"></tbody>
+      </table></div>
+      <div id="jobEmpty"></div>
     </div>
 
-    <div class="chips" id="statusChips"></div>
-    <div class="chips" id="releaseChips"></div>
-    <div class="table-card"><table>
-      <thead><tr>
-        <th style="width:96px">Section</th>
-        <th>Title</th>
-        <th style="width:150px">Spec</th>
-        <th style="width:160px">Vendor</th>
-        <th style="width:168px">Status</th>
-        <th style="width:300px">Release</th>
-      </tr></thead>
-      <tbody id="secBody"></tbody>
-    </table></div>
-    <div id="jobEmpty"></div>
+    <!-- RFI TAB -->
+    <div id="tab-rfis" hidden>
+      <div class="toolbar">
+        <div class="search"><input class="input" id="rfiSearch" placeholder="Search RFIs…" autocomplete="off"></div>
+        <div class="spacer"></div>
+        <span class="muted" id="rfiCount"></span>
+      </div>
+      <div class="chips" id="rfiChips"></div>
+      <div class="table-card"><table>
+        <thead><tr>
+          <th style="width:90px">RFI</th>
+          <th>Subject</th>
+          <th style="width:180px">To</th>
+          <th style="width:180px">Status</th>
+          <th style="width:200px">Dates</th>
+        </tr></thead>
+        <tbody id="rfiBody"></tbody>
+      </table></div>
+      <div id="rfiEmpty"></div>
+    </div>
+
+    <!-- JOB TRACKING TAB -->
+    <div id="tab-tracking" hidden>
+      <div class="track-wrap">
+        <div class="track-cats" id="trackCats"></div>
+        <div class="track-panel" id="trackPanel"></div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -714,7 +824,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.2';
+const APP_VERSION = 'v3.3';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -768,6 +878,17 @@ const RELEASES = [
 ];
 const RL = Object.fromEntries(RELEASES.map(r => [r.id, r]));
 const relOf = s => RL[s.releaseState || 'not_ready'] || RL.not_ready;
+
+/* RFI workflow: raised, sent out, answered, closed. */
+const RFI_STATUSES = [
+  { id: 'open',      label: 'Open',      short: 'Open',      color: 'amber' },
+  { id: 'submitted', label: 'Submitted', short: 'Submitted', color: 'blue'  },
+  { id: 'answered',  label: 'Answered',  short: 'Answered',  color: 'green' },
+  { id: 'closed',    label: 'Closed',    short: 'Closed',    color: 'grey'  }
+];
+const RS = Object.fromEntries(RFI_STATUSES.map(s => [s.id, s]));
+/* which status a folder subfolder is named for when filing an RFI PDF */
+const RFI_DOC_KINDS = { question: 'RFI Questions', answer: 'RFI Answers' };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -1428,6 +1549,10 @@ const jobRef = id => FB.doc(FB.db, 'jobs', id);
 const sectionsCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'sections');
 const sectionRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'sections', String(key));
 const specDataRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'specdata', String(key));
+const rfisCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'rfis');
+const rfiRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'rfis', String(id));
+const trackingCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'tracking');
+const trackingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'tracking', String(id));
 
 /* Firestore rejects undefined; strip it rather than let a write fail. */
 function clean(v) {
@@ -1644,10 +1769,20 @@ const STATUS_DIR = {
   spec:             'Specs'
 };
 function statusDirName(id) { return STATUS_DIR[id] || 'Filed'; }
+/* Folders the submittal scanner must leave alone — RFIs and tracking emails are
+   filed here on purpose and are not stray submittals. */
+const RESERVED_DIRS = new Set(['RFI Questions', 'RFI Answers', 'Emails']);
+const EMAIL_DIR = 'Emails';
 function sanitizeFileName(name) {
   let n = String(name || 'document.pdf').replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').trim();
   if (!/\.pdf$/i.test(n)) n += '.pdf';
   return n || 'document.pdf';
+}
+/* Like sanitizeFileName but keeps whatever extension the file has (emails come
+   in as .msg/.eml/.pdf, RFI packages as .pdf). */
+function sanitizeAnyName(name, fallback) {
+  let n = String(name || fallback || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').trim();
+  return n || fallback || 'file';
 }
 async function uniqueFileName(dirHandle, name) {
   const dot = name.lastIndexOf('.');
@@ -1659,25 +1794,46 @@ async function uniqueFileName(dirHandle, name) {
     catch (e) { return candidate; }     // NotFound → the name is free
   }
 }
-/* Write a PDF into files/<statusDir>/, keeping its name; returns { dir, file }. */
-async function putFile(file, statusId) {
+/* Write a file into files/<relDir>/, keeping its name; returns { dir, file }.
+   relDir may be nested (e.g. "Emails/RFI Answers"); each level is created. */
+async function putFileInDir(file, relDir, cleanName) {
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
-  const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
-  const dirName = statusDirName(statusId);
-  const dirHandle = await filesRoot.getDirectoryHandle(dirName, { create: true });
-  const fname = await uniqueFileName(dirHandle, sanitizeFileName(file.name));
+  let dirHandle = await jobFolder.getDirectoryHandle('files', { create: true });
+  for (const part of relDir.split('/').filter(Boolean)) {
+    dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
+  }
+  const fname = await uniqueFileName(dirHandle, cleanName);
   const fh = await dirHandle.getFileHandle(fname, { create: true });
   const w = await fh.createWritable();
   await w.write(file);
   await w.close();
-  return { dir: dirName, file: fname };
+  return { dir: relDir, file: fname };
+}
+/* Write a PDF into files/<statusDir>/, keeping its name; returns { dir, file }. */
+async function putFile(file, statusId) {
+  return putFileInDir(file, statusDirName(statusId), sanitizeFileName(file.name));
+}
+/* RFI PDFs live under files/RFI Questions/ or files/RFI Answers/. */
+async function putRfiFile(file, docKind) {
+  const dir = RFI_DOC_KINDS[docKind] || RFI_DOC_KINDS.question;
+  return putFileInDir(file, dir, sanitizeFileName(file.name));
+}
+/* Tracking files (emails, attachments) live under files/Emails/<category>/. */
+async function putEmailFile(file, catName) {
+  const dir = EMAIL_DIR + '/' + sanitizeAnyName(catName, 'Uncategorised');
+  return putFileInDir(file, dir, sanitizeAnyName(file.name, 'email'));
+}
+async function walkDir(root, relDir) {
+  let dh = root;
+  for (const part of String(relDir).split('/').filter(Boolean)) dh = await dh.getDirectoryHandle(part);
+  return dh;
 }
 async function readDocBlob(doc) {
   if (!doc || !jobFolder) return null;
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files');
     if (doc.dir && doc.file) {
-      const dirHandle = await filesRoot.getDirectoryHandle(doc.dir);
+      const dirHandle = await walkDir(filesRoot, doc.dir);
       return await (await dirHandle.getFileHandle(doc.file)).getFile();
     }
     if (doc.fileId) return await (await filesRoot.getFileHandle(doc.fileId + '.pdf')).getFile();
@@ -1744,6 +1900,8 @@ function trackedPaths() {
   };
   for (const s of sectionsOf(job)) { (s.submittals || []).forEach(add); (s.responses || []).forEach(add); }
   (job.specs || []).forEach(add);
+  for (const r of rfis) { (r.docs || []).forEach(add); }
+  for (const c of tracking) { (c.files || []).forEach(add); }
   return set;
 }
 /* PDFs sitting in the ShareFile folder that no section references — someone
@@ -1769,6 +1927,7 @@ async function scanUnassignedPdfs() {
     for await (const e of filesRoot.values()) {
       if (e.kind === 'file') consider('files/' + e.name, e.name, { at: 'files', file: e.name });
       else if (e.kind === 'directory') {
+        if (RESERVED_DIRS.has(e.name)) continue;   // RFIs and emails aren't submittals
         for await (const f of e.values()) {
           if (f.kind === 'file') consider('files/' + e.name + '/' + f.name, f.name, { at: 'dir', dir: e.name, file: f.name });
         }
@@ -1910,7 +2069,7 @@ async function deleteStoredDoc(doc) {
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files');
     if (doc.dir && doc.file) {
-      const dirHandle = await filesRoot.getDirectoryHandle(doc.dir);
+      const dirHandle = await walkDir(filesRoot, doc.dir);
       await dirHandle.removeEntry(doc.file);
     } else if (doc.fileId) {
       await filesRoot.removeEntry(doc.fileId + '.pdf');
@@ -1938,6 +2097,15 @@ let editRow = null;       // section whose row is in inline-edit mode (pencil to
 let unsubJobs = null;
 let unsubSections = null;
 let jobsLoaded = false;      // false until the first snapshot lands
+
+/* job-level tabs beyond submittals */
+let jobTab = 'submittals';   // 'submittals' | 'rfis' | 'tracking'
+let rfis = [];               // RFI records for the open job
+let openRfi = null;          // RFI open in the drawer
+let rfiQuery = '', rfiStatusFilter = null;
+let tracking = [];           // job-tracking categories (each with files/notes/checklist)
+let trackCat = null;         // selected category id
+let unsubRfis = null, unsubTracking = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -2053,6 +2221,38 @@ function watchSections(jobId) {
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
 
+function watchRfis(jobId) {
+  if (unsubRfis) { unsubRfis(); unsubRfis = null; }
+  unsubRfis = FB.onSnapshot(rfisCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      rfis = snap.docs.map(d => d.data());
+      rfis.sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true })
+        || String(b.created || '').localeCompare(String(a.created || '')));
+      if (view === 'job' && jobTab === 'rfis') {
+        renderJob();
+        const ae = document.activeElement;
+        if (openRfi && !(ae && ae.closest && ae.closest('.drawer'))) renderRfiDrawer();
+      }
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
+function watchTracking(jobId) {
+  if (unsubTracking) { unsubTracking(); unsubTracking = null; }
+  unsubTracking = FB.onSnapshot(trackingCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      tracking = snap.docs.map(d => d.data());
+      tracking.sort((a, b) => (a.order || 0) - (b.order || 0)
+        || String(a.created || '').localeCompare(String(b.created || '')));
+      if (trackCat && !tracking.some(c => c.id === trackCat)) trackCat = null;
+      if (!trackCat && tracking.length) trackCat = tracking[0].id;
+      if (view === 'job' && jobTab === 'tracking') renderJob();
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
 /* ── carry-over from the browser-only version ── */
 const LOCAL_DB = 'submittal_register';
 
@@ -2157,7 +2357,10 @@ function go(where, id) {
   closeDrawer();
   if (where === 'jobs') {
     if (unsubSections) { unsubSections(); unsubSections = null; }
-    job = null; jobFolder = null; folderRemembered = null; $('crumbJob').textContent = ''; renderJobs();
+    if (unsubRfis) { unsubRfis(); unsubRfis = null; }
+    if (unsubTracking) { unsubTracking(); unsubTracking = null; }
+    job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = [];
+    $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
   window.scrollTo(0, 0);
@@ -2168,10 +2371,14 @@ async function openJob(id) {
   if (!j) { toast('Job not found', true); return; }
   job = Object.assign({}, j, { sections: [] });
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false;
+  jobTab = 'submittals'; rfis = []; tracking = []; openRfi = null; trackCat = null;
+  rfiQuery = ''; rfiStatusFilter = null;
   $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
   go('job');
   watchSections(job.id);          // sections stream in and re-render
+  watchRfis(job.id);              // RFIs for this job
+  watchTracking(job.id);          // job-tracking categories
   tryAutoLoadFolder(job.id);      // load this job's PDF folder if the grant stands
 }
 
@@ -2405,13 +2612,19 @@ function renderJob() {
   const specs = specsOf(job);
   const bits = [];
   if (job.number) bits.push('Job ' + job.number);
-  bits.push(secs.length
+  if (jobTab === 'submittals') bits.push(secs.length
     ? `${secs.length} spec section${secs.length === 1 ? '' : 's'} · ${specs.length} spec file${specs.length === 1 ? '' : 's'}`
     : 'No spec imported yet');
+  else if (jobTab === 'rfis') bits.push(`${rfis.length} RFI${rfis.length === 1 ? '' : 's'}`);
+  else bits.push(`${tracking.length} categor${tracking.length === 1 ? 'y' : 'ies'}`);
   $('jobMeta').textContent = bits.join(' · ');
-  $('btnSpec').style.display = specs.length ? '' : 'none';
   updateFolderBar();
-  renderSpecBar();
+  renderJobTabs();
+  applyTabVisibility();
+  if (jobTab === 'rfis') { renderRfis(); return; }
+  if (jobTab === 'tracking') { renderTracking(); return; }
+
+  $('btnSpec').style.display = specs.length ? '' : 'none';
 
   /* division segmented control */
   const counts = {};
@@ -2445,9 +2658,475 @@ function setDiv(d) { divFilter = d; renderJob(); }
 function setStatusFilter(s) { statusFilter = (statusFilter === s) ? null : s; renderJob(); }
 function setReleaseFilter(r) { releaseFilter = (releaseFilter === r) ? null : r; renderJob(); }
 $('searchBox').addEventListener('input', e => { query = e.target.value; renderTable(); $('countLabel').textContent = countLabel(); });
+$('rfiSearch').addEventListener('input', e => { rfiQuery = e.target.value; renderRfis(); });
 function countLabel() {
   const n = visibleSections().length, t = sectionsOf(job).filter(s => divFilter === 'all' || s.division === divFilter).length;
   return n === t ? `${t} sections` : `${n} of ${t} sections`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6a. JOB TABS  —  Submittals · RFIs · Job Tracking
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderJobTabs() {
+  const tabs = [
+    { id: 'submittals', label: 'Submittals',   n: sectionsOf(job).length },
+    { id: 'rfis',       label: 'RFIs',          n: rfis.length },
+    { id: 'tracking',   label: 'Job Tracking',  n: tracking.length }
+  ];
+  $('jobTabs').innerHTML = tabs.map(t =>
+    `<button class="${jobTab === t.id ? 'on' : ''}" onclick="setJobTab('${t.id}')">${esc(t.label)}<span class="n">${t.n}</span></button>`
+  ).join('');
+}
+function applyTabVisibility() {
+  $('tab-submittals').hidden = jobTab !== 'submittals';
+  $('tab-rfis').hidden       = jobTab !== 'rfis';
+  $('tab-tracking').hidden   = jobTab !== 'tracking';
+  const act = $('tabAction');
+  act.textContent = jobTab === 'submittals' ? '+ Add section'
+    : jobTab === 'rfis' ? '+ New RFI' : '+ New category';
+}
+function setJobTab(t) {
+  if (jobTab === t) return;
+  jobTab = t;
+  closeDrawer(); closeRfiDrawer();
+  renderJob();
+  window.scrollTo(0, 0);
+}
+function tabAction() {
+  if (jobTab === 'submittals') addSectionManually();
+  else if (jobTab === 'rfis') newRfi();
+  else newTrackCategory();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6b. RFIs  —  a lightweight register of RFI questions and their answers
+   ═══════════════════════════════════════════════════════════════════════════ */
+function rfiById(id) { return rfis.find(r => r.id === id); }
+function rsOf(r) { return RS[r.status || 'open'] || RS.open; }
+function nextRfiNumber() {
+  let max = 0;
+  for (const r of rfis) { const m = String(r.number || '').match(/(\d+)/); if (m) max = Math.max(max, parseInt(m[1], 10)); }
+  return String(max + 1).padStart(3, '0');
+}
+async function saveRfi(r) {
+  r.updated = Date.now();
+  try { await FB.setDoc(rfiRef(job.id, r.id), clean(r)); }
+  catch (e) { toast(writeError(e), true); }
+}
+
+function matchRfi(r, q) {
+  if (!q) return true;
+  const hay = [r.number, r.subject, r.to, r.from, r.notes,
+    ...(r.docs || []).map(d => d.name)].join(' ').toLowerCase();
+  return hay.includes(q.toLowerCase());
+}
+function visibleRfis() {
+  return rfis.filter(r => (!rfiStatusFilter || (r.status || 'open') === rfiStatusFilter) && matchRfi(r, rfiQuery));
+}
+function setRfiFilter(id) { rfiStatusFilter = (rfiStatusFilter === id) ? null : id; renderRfis(); }
+
+function renderRfis() {
+  if (!job) return;
+  const tally = {}; RFI_STATUSES.forEach(s => tally[s.id] = 0);
+  rfis.forEach(r => tally[r.status || 'open']++);
+  $('rfiChips').innerHTML = RFI_STATUSES.map(s =>
+    `<button class="chip ${rfiStatusFilter === s.id ? 'on' : ''}" style="${rfiStatusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
+      onclick="setRfiFilter('${s.id}')"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id]}</span></button>`
+  ).join('') + (rfiStatusFilter ? `<button class="chip" onclick="setRfiFilter(null)">Clear ✕</button>` : '');
+
+  const list = visibleRfis();
+  $('rfiCount').textContent = list.length === rfis.length ? `${rfis.length} RFI${rfis.length === 1 ? '' : 's'}` : `${list.length} of ${rfis.length}`;
+  $('rfiBody').innerHTML = list.map(rfiRowHtml).join('');
+  $('rfiEmpty').innerHTML = rfis.length ? (list.length ? '' :
+      `<div class="empty">No RFIs match. <button class="btn sm ghost" onclick="rfiQuery='';rfiStatusFilter=null;$('rfiSearch').value='';renderRfis()">Clear</button></div>`)
+    : `<div class="empty"><b>No RFIs yet.</b><br><span class="muted">Track RFI questions and the answers that come back. Each RFI holds the question and response PDFs, filed into this job’s ShareFile folder.</span><br><br>
+        <button class="btn primary" onclick="newRfi()">+ New RFI</button></div>`;
+}
+function rfiRowHtml(r) {
+  const st = rsOf(r);
+  const q = (r.docs || []).filter(d => d.kind === 'question').length;
+  const a = (r.docs || []).filter(d => d.kind === 'answer').length;
+  const docNote = (q || a) ? `<small>${q ? q + ' question PDF' + (q === 1 ? '' : 's') : ''}${q && a ? ' · ' : ''}${a ? a + ' answer PDF' + (a === 1 ? '' : 's') : ''}</small>` : '';
+  const dates = [];
+  if (r.dateSent) dates.push('Sent ' + fmtShort(r.dateSent));
+  if (r.dateDue) dates.push('Due ' + fmtShort(r.dateDue));
+  if (r.dateAnswered) dates.push('Answered ' + fmtShort(r.dateAnswered));
+  return `<tr onclick="openRfiDrawer('${r.id}')">
+    <td class="c-rfinum" data-label="RFI"><b>${esc(r.number || '—')}</b></td>
+    <td class="c-rfisubj" data-label="Subject">${esc(r.subject || '(no subject)')}${docNote}</td>
+    <td class="c-rfito${r.to ? '' : ' is-empty'}" data-label="To">${r.to ? esc(r.to) : '<span class="muted">—</span>'}</td>
+    <td class="c-rfistatus" data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
+    <td class="c-rfidates${dates.length ? '' : ' is-empty'}" data-label="Dates">${dates.length ? '<small>' + dates.map(esc).join('<br>') + '</small>' : '<span class="muted">—</span>'}</td>
+  </tr>`;
+}
+function newRfi() {
+  if (!job) return;
+  const r = { id: uid('rfi'), number: nextRfiNumber(), subject: '', to: '', from: '',
+    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', docs: [],
+    created: Date.now(), updated: Date.now() };
+  rfis.unshift(r);
+  openRfi = r.id;
+  renderRfis(); renderRfiDrawer();
+  saveRfi(r);
+}
+async function patchRfi(id, fields) {
+  const r = rfiById(id); if (!r) return;
+  Object.assign(r, fields);
+  renderRfis();
+  await saveRfi(r);
+}
+function setRfiStatus(id, statusId) {
+  const r = rfiById(id); if (!r) return;
+  const fields = { status: statusId };
+  if (statusId === 'answered' && !r.dateAnswered) fields.dateAnswered = today();
+  patchRfi(id, fields);
+  renderRfiDrawer();
+}
+async function deleteRfi(id) {
+  const r = rfiById(id); if (!r) return;
+  if (!confirm(`Delete RFI ${r.number || ''}? This removes the record for everyone. The PDFs stay in the ShareFile folder.`)) return;
+  rfis = rfis.filter(x => x.id !== id);
+  if (openRfi === id) closeRfiDrawer();
+  renderRfis();
+  try { await FB.deleteDoc(rfiRef(job.id, id)); await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+}
+
+/* ── RFI PDFs (question / answer) into files/RFI Questions|Answers/ ── */
+async function addRfiDoc(id, kind) {
+  const r = rfiById(id); if (!r) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
+  inp.onchange = async () => {
+    const files = Array.from(inp.files).filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    if (files.length < inp.files.length) toast('Non-PDF files were skipped', true);
+    if (!files.length) return;
+    r.docs = r.docs || [];
+    let added = 0;
+    for (const f of files) {
+      try {
+        stickyToast(`Saving ${f.name}…`);
+        const { dir, file } = await putRfiFile(f, kind);
+        r.docs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, added: Date.now() });
+        added++;
+      } catch (e) { console.error(e); toast(storageError(e), true); }
+    }
+    if (!added) return;
+    if (kind === 'answer' && r.status !== 'closed') { r.status = 'answered'; if (!r.dateAnswered) r.dateAnswered = today(); }
+    else if (kind === 'question' && r.status === 'open') { r.status = 'submitted'; if (!r.dateSent) r.dateSent = today(); }
+    renderRfis(); if (openRfi === id) renderRfiDrawer();
+    await saveRfi(r);
+    noteFolderChanged();
+    toast(`${added} PDF${added === 1 ? '' : 's'} added`);
+  };
+  inp.click();
+}
+async function removeRfiDoc(id, docId) {
+  const r = rfiById(id); if (!r) return;
+  const d = (r.docs || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  await deleteStoredDoc(d);
+  r.docs = r.docs.filter(x => x.id !== docId);
+  renderRfiDrawer(); renderRfis();
+  await saveRfi(r);
+  noteFolderChanged();
+}
+async function viewRfiDoc(id, docId) {
+  const r = rfiById(id); if (!r) return;
+  const d = (r.docs || []).find(x => x.id === docId);
+  if (d) openStoredDoc(d);
+}
+
+/* A file stored in the ShareFile folder — open a PDF in the viewer, download
+   anything else (an .msg/.eml email can’t render in the browser). */
+async function openStoredDoc(doc) {
+  if (!doc) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) { toast('Load this job’s ShareFile folder to open files', true); return; } }
+  stickyToast(`Opening ${doc.name}…`);
+  const url = await docUrl(doc);
+  if (!url) { toast(await docReadError(doc), true); return; }
+  toast(' ');
+  if (/\.pdf$/i.test(doc.name)) showPdf(url, doc.name);
+  else { const a = document.createElement('a'); a.href = url; a.download = doc.name; a.click(); }
+}
+
+function closeRfiDrawer() { openRfi = null; $('drawerHost').innerHTML = ''; }
+function openRfiDrawer(id) { openRfi = id; openKey = null; renderRfiDrawer(); }
+function rfiDocList(r, kind) {
+  const docs = (r.docs || []).filter(d => d.kind === kind);
+  if (!docs.length) return '';
+  return `<div class="file-list">` + docs.map(d => `
+    <div class="file-row"><span class="fi">📄</span>
+      <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}</small></span>
+      <button class="btn sm" onclick="viewRfiDoc('${r.id}','${d.id}')">Open</button>
+      <button class="icon-btn" title="Remove" onclick="removeRfiDoc('${r.id}','${d.id}')">🗑</button>
+    </div>`).join('') + `</div>`;
+}
+function renderRfiDrawer() {
+  const r = rfiById(openRfi);
+  if (!r) { closeRfiDrawer(); return; }
+  const st = rsOf(r);
+  const statusButtons = RFI_STATUSES.map(o => `
+    <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
+      onclick="setRfiStatus('${r.id}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
+  $('drawerHost').innerHTML = `
+  <div class="scrim" onclick="closeRfiDrawer()"></div>
+  <aside class="drawer" role="dialog" aria-label="RFI">
+    <div class="drawer-head">
+      <div style="flex:1;min-width:0">
+        <div class="num">RFI</div>
+        <h2>${esc(r.number || 'New RFI')}</h2>
+      </div>
+      <button class="icon-btn" onclick="deleteRfi('${r.id}')" title="Delete RFI">🗑</button>
+      <button class="icon-btn" onclick="closeRfiDrawer()" title="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="sec">
+        <div class="grid2">
+          <div class="field"><label class="fl">RFI number</label>
+            <input class="input" id="rfiNum" value="${esc(r.number || '')}" onchange="patchRfi('${r.id}',{number:this.value.trim()})"></div>
+          <div class="field"><label class="fl">To (GC / architect / engineer)</label>
+            <input class="input" id="rfiTo" value="${esc(r.to || '')}" onchange="patchRfi('${r.id}',{to:this.value.trim()})"></div>
+        </div>
+        <div class="field"><label class="fl">Subject</label>
+          <input class="input" value="${esc(r.subject || '')}" onchange="patchRfi('${r.id}',{subject:this.value.trim()})" placeholder="What the RFI is about"></div>
+      </div>
+
+      <div class="sec">
+        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
+        <div class="status-grid">${statusButtons}</div>
+      </div>
+
+      <div class="sec">
+        <div class="grid3">
+          <div class="field"><label class="fl">Date sent</label>
+            <input class="input" type="date" value="${esc(r.dateSent || '')}" onchange="patchRfi('${r.id}',{dateSent:this.value})"></div>
+          <div class="field"><label class="fl">Response due</label>
+            <input class="input" type="date" value="${esc(r.dateDue || '')}" onchange="patchRfi('${r.id}',{dateDue:this.value})"></div>
+          <div class="field"><label class="fl">Answered</label>
+            <input class="input" type="date" value="${esc(r.dateAnswered || '')}" onchange="patchRfi('${r.id}',{dateAnswered:this.value})"></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h4>RFI question <button class="btn sm" onclick="addRfiDoc('${r.id}','question')">+ Upload PDF</button></h4>
+        ${rfiDocList(r, 'question') || '<div class="muted">The RFI as sent out. Upload the PDF you submitted.</div>'}
+      </div>
+
+      <div class="sec">
+        <h4>RFI response <button class="btn sm" onclick="addRfiDoc('${r.id}','answer')">+ Upload PDF</button></h4>
+        ${rfiDocList(r, 'answer') || '<div class="muted">The answer that came back. Upload the stamped / returned PDF.</div>'}
+      </div>
+
+      <div class="sec">
+        <h4>Notes</h4>
+        <textarea class="input" rows="4" placeholder="Anything worth remembering about this RFI"
+          onchange="patchRfi('${r.id}',{notes:this.value})">${esc(r.notes || '')}</textarea>
+      </div>
+    </div>
+  </aside>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6c. JOB TRACKING  —  user-made categories holding emails, notes, checklists
+   ═══════════════════════════════════════════════════════════════════════════ */
+function catById(id) { return tracking.find(c => c.id === id); }
+async function saveTrackCat(c) {
+  c.updated = Date.now();
+  try { await FB.setDoc(trackingRef(job.id, c.id), clean(c)); }
+  catch (e) { toast(writeError(e), true); }
+}
+function newTrackCategory() {
+  if (!job) return;
+  const name = prompt('Category name (e.g. Change Orders, Scheduling, Owner correspondence):');
+  if (!name || !name.trim()) return;
+  const c = { id: uid('cat'), name: name.trim(), order: tracking.length,
+    files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
+  tracking.push(c);
+  trackCat = c.id;
+  renderTracking();
+  saveTrackCat(c);
+}
+function selectTrackCat(id) { trackCat = id; renderTracking(); }
+async function renameTrackCat(id) {
+  const c = catById(id); if (!c) return;
+  const name = prompt('Category name:', c.name || '');
+  if (name === null || !name.trim()) return;
+  c.name = name.trim();
+  renderTracking();
+  await saveTrackCat(c);
+}
+async function deleteTrackCat(id) {
+  const c = catById(id); if (!c) return;
+  if (!confirm(`Delete category "${c.name}"? Its notes and checklist go too. The uploaded files stay in the ShareFile folder.`)) return;
+  tracking = tracking.filter(x => x.id !== id);
+  if (trackCat === id) trackCat = tracking.length ? tracking[0].id : null;
+  renderTracking();
+  try { await FB.deleteDoc(trackingRef(job.id, id)); } catch (e) { toast(writeError(e), true); }
+}
+
+function renderTracking() {
+  if (!job) return;
+  if (trackCat && !catById(trackCat)) trackCat = null;
+  if (!trackCat && tracking.length) trackCat = tracking[0].id;
+  $('trackCats').innerHTML = tracking.map(c =>
+    `<button class="track-cat ${trackCat === c.id ? 'on' : ''}" onclick="selectTrackCat('${c.id}')">
+       <span class="tc-name">${esc(c.name)}</span>
+       <span class="tc-n">${(c.files || []).length + (c.checklist || []).filter(i => !i.done).length ? ((c.files || []).length ? '📎' + (c.files || []).length + ' ' : '') + ((c.checklist || []).filter(i => !i.done).length ? '☐' + (c.checklist || []).filter(i => !i.done).length : '') : ''}</span>
+     </button>`).join('') +
+    `<button class="track-cat add" onclick="newTrackCategory()">+ New category</button>`;
+
+  const c = catById(trackCat);
+  if (!c) {
+    $('trackPanel').innerHTML = `<div class="empty"><b>No categories yet.</b><br>
+      <span class="muted">Make categories for anything on the job — change orders, scheduling, owner emails — then drop the email conversations, notes and action items into each.</span><br><br>
+      <button class="btn primary" onclick="newTrackCategory()">+ New category</button></div>`;
+    return;
+  }
+  const files = c.files || [], notes = c.notes || [], checklist = c.checklist || [];
+  const doneN = checklist.filter(i => i.done).length;
+  $('trackPanel').innerHTML = `
+    <div class="track-head">
+      <h3>${esc(c.name)}</h3>
+      <div class="spacer"></div>
+      <button class="btn sm ghost" onclick="renameTrackCat('${c.id}')">Rename</button>
+      <button class="btn sm ghost" onclick="deleteTrackCat('${c.id}')">Delete</button>
+    </div>
+
+    <div class="track-sec">
+      <h4>Emails &amp; files <button class="btn sm" onclick="pickEmailFiles('${c.id}')">+ Upload</button></h4>
+      <div class="email-drop" id="emailDrop">
+        <b>Drop email conversations or files here</b><br>
+        <span class="muted">In Outlook, drag the message to your desktop first (that saves a <code>.msg</code>), then drop it here — or use “Save As”. Attachments and PDFs work too.</span>
+      </div>
+      ${files.length ? `<div class="file-list">` + files.map(f => `
+        <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
+          <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
+          <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
+          <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
+        </div>`).join('') + `</div>` : ''}
+    </div>
+
+    <div class="track-sec">
+      <h4>Action items ${checklist.length ? `<span class="muted" style="font-weight:400">${doneN}/${checklist.length} done</span>` : ''}</h4>
+      <div class="add-row">
+        <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')addCheck('${c.id}')">
+        <button class="btn sm" onclick="addCheck('${c.id}')">Add</button>
+      </div>
+      ${checklist.map(i => `
+        <div class="check-row ${i.done ? 'done' : ''}">
+          <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="toggleCheck('${c.id}','${i.id}',this.checked)"></label>
+          <span class="ct">${esc(i.text)}</span>
+          <button class="x" title="Remove" onclick="deleteCheck('${c.id}','${i.id}')">✕</button>
+        </div>`).join('') || '<div class="muted">No action items yet.</div>'}
+    </div>
+
+    <div class="track-sec">
+      <h4>Notes</h4>
+      <div class="add-row">
+        <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}')">
+        <button class="btn sm" onclick="addNote('${c.id}')">Add</button>
+      </div>
+      ${notes.map(n => `
+        <div class="note-item">
+          <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
+          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
+            <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
+        </div>`).join('') || '<div class="muted">No notes yet.</div>'}
+    </div>`;
+
+  const drop = $('emailDrop');
+  if (drop) {
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', e => {
+      e.preventDefault(); drop.classList.remove('over');
+      addEmailFiles(c.id, Array.from(e.dataTransfer.files));
+    });
+    drop.addEventListener('click', () => pickEmailFiles(c.id));
+  }
+}
+
+async function pickEmailFiles(catId) {
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true;
+  inp.accept = '.msg,.eml,.pdf,application/pdf,message/rfc822';
+  inp.onchange = () => addEmailFiles(catId, Array.from(inp.files));
+  inp.click();
+}
+async function addEmailFiles(catId, files) {
+  const c = catById(catId); if (!c || !files.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  c.files = c.files || [];
+  let added = 0;
+  for (const f of files) {
+    try {
+      stickyToast(`Saving ${f.name}…`);
+      const { dir, file } = await putEmailFile(f, c.name);
+      c.files.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+      added++;
+    } catch (e) { console.error(e); toast(storageError(e), true); }
+  }
+  if (!added) return;
+  renderTracking();
+  await saveTrackCat(c);
+  noteFolderChanged();
+  toast(`${added} file${added === 1 ? '' : 's'} added to ${c.name}`);
+}
+async function removeEmailDoc(catId, fileId) {
+  const c = catById(catId); if (!c) return;
+  const d = (c.files || []).find(x => x.id === fileId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  await deleteStoredDoc(d);
+  c.files = c.files.filter(x => x.id !== fileId);
+  renderTracking();
+  await saveTrackCat(c);
+  noteFolderChanged();
+}
+async function viewEmailDoc(catId, fileId) {
+  const c = catById(catId); if (!c) return;
+  const d = (c.files || []).find(x => x.id === fileId);
+  if (d) openStoredDoc(d);
+}
+function addCheck(catId) {
+  const c = catById(catId); if (!c) return;
+  const el = $('checkInput'); const text = (el.value || '').trim();
+  if (!text) return;
+  c.checklist = c.checklist || [];
+  c.checklist.push({ id: uid('chk'), text, done: false, created: Date.now() });
+  renderTracking();
+  saveTrackCat(c);
+  const ne = $('checkInput'); if (ne) ne.focus();
+}
+function toggleCheck(catId, itemId, done) {
+  const c = catById(catId); if (!c) return;
+  const it = (c.checklist || []).find(x => x.id === itemId); if (!it) return;
+  it.done = done;
+  renderTracking();
+  saveTrackCat(c);
+}
+function deleteCheck(catId, itemId) {
+  const c = catById(catId); if (!c) return;
+  c.checklist = (c.checklist || []).filter(x => x.id !== itemId);
+  renderTracking();
+  saveTrackCat(c);
+}
+function addNote(catId) {
+  const c = catById(catId); if (!c) return;
+  const el = $('noteInput'); const text = (el.value || '').trim();
+  if (!text) return;
+  c.notes = c.notes || [];
+  c.notes.unshift({ id: uid('note'), text, created: Date.now() });
+  renderTracking();
+  saveTrackCat(c);
+  const ne = $('noteInput'); if (ne) ne.focus();
+}
+function deleteNote(catId, noteId) {
+  const c = catById(catId); if (!c) return;
+  c.notes = (c.notes || []).filter(x => x.id !== noteId);
+  renderTracking();
+  saveTrackCat(c);
 }
 
 /* Once something is out the door the dates matter more than the label, so the
