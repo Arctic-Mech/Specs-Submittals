@@ -274,12 +274,27 @@ header {
 .track-sec h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
   margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .track-sec h4 .spacer { flex: 1; }
-.check-row { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
+.check-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
 .check-row input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; flex: none; }
-.check-row .ct { flex: 1; font-size: 13.5px; }
+.check-row .ct-btn {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left;
+  border: none; background: none; cursor: pointer; padding: 5px 6px; border-radius: 6px; color: inherit;
+}
+.check-row .ct-btn:hover { background: var(--surface-2); }
+.check-row .ct { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .check-row.done .ct { text-decoration: line-through; color: var(--text-3); }
-.check-row .x { opacity: 0; cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 13px; }
+.check-row .ac-due {
+  flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-3);
+}
+.check-row .ac-due.today { color: var(--amber); background: var(--amber-sf); }
+.check-row .ac-due.overdue { color: var(--red); background: var(--red-sf); }
+.check-row.done .ac-due { opacity: .5; }
+.check-row .ac-has { flex: none; font-size: 12px; opacity: .7; }
+.check-row .x { opacity: 0; cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 13px; flex: none; }
 .check-row:hover .x { opacity: 1; }
+.ac-done { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; padding-top: 8px; cursor: pointer; }
+.ac-done input { width: 16px; height: 16px; cursor: pointer; }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -824,7 +839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.3';
+const APP_VERSION = 'v3.4';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2234,6 +2249,7 @@ function watchRfis(jobId) {
         const ae = document.activeElement;
         if (openRfi && !(ae && ae.closest && ae.closest('.drawer'))) renderRfiDrawer();
       }
+      refreshActionModalIfSafe();
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2249,6 +2265,7 @@ function watchTracking(jobId) {
       if (trackCat && !tracking.some(c => c.id === trackCat)) trackCat = null;
       if (!trackCat && tracking.length) trackCat = tracking[0].id;
       if (view === 'job' && jobTab === 'tracking') renderJob();
+      refreshActionModalIfSafe();
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2688,7 +2705,7 @@ function applyTabVisibility() {
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeDrawer(); closeRfiDrawer();
+  closeActionModal(); closeDrawer(); closeRfiDrawer();
   renderJob();
   window.scrollTo(0, 0);
 }
@@ -2746,7 +2763,12 @@ function rfiRowHtml(r) {
   const st = rsOf(r);
   const q = (r.docs || []).filter(d => d.kind === 'question').length;
   const a = (r.docs || []).filter(d => d.kind === 'answer').length;
-  const docNote = (q || a) ? `<small>${q ? q + ' question PDF' + (q === 1 ? '' : 's') : ''}${q && a ? ' · ' : ''}${a ? a + ' answer PDF' + (a === 1 ? '' : 's') : ''}</small>` : '';
+  const openAc = (r.checklist || []).filter(i => !i.done).length;
+  const noteBits = [];
+  if (q) noteBits.push(q + ' question PDF' + (q === 1 ? '' : 's'));
+  if (a) noteBits.push(a + ' answer PDF' + (a === 1 ? '' : 's'));
+  if (openAc) noteBits.push('☐ ' + openAc + ' action item' + (openAc === 1 ? '' : 's'));
+  const docNote = noteBits.length ? `<small>${noteBits.map(esc).join(' · ')}</small>` : '';
   const dates = [];
   if (r.dateSent) dates.push('Sent ' + fmtShort(r.dateSent));
   if (r.dateDue) dates.push('Due ' + fmtShort(r.dateDue));
@@ -2762,7 +2784,7 @@ function rfiRowHtml(r) {
 function newRfi() {
   if (!job) return;
   const r = { id: uid('rfi'), number: nextRfiNumber(), subject: '', to: '', from: '',
-    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', docs: [],
+    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
   rfis.unshift(r);
   openRfi = r.id;
@@ -2792,34 +2814,39 @@ async function deleteRfi(id) {
 }
 
 /* ── RFI PDFs (question / answer) into files/RFI Questions|Answers/ ── */
-async function addRfiDoc(id, kind) {
-  const r = rfiById(id); if (!r) return;
+async function pickRfiFiles(id, kind) {
   if (!jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
-  inp.onchange = async () => {
-    const files = Array.from(inp.files).filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
-    if (files.length < inp.files.length) toast('Non-PDF files were skipped', true);
-    if (!files.length) return;
-    r.docs = r.docs || [];
-    let added = 0;
-    for (const f of files) {
-      try {
-        stickyToast(`Saving ${f.name}…`);
-        const { dir, file } = await putRfiFile(f, kind);
-        r.docs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, added: Date.now() });
-        added++;
-      } catch (e) { console.error(e); toast(storageError(e), true); }
-    }
-    if (!added) return;
-    if (kind === 'answer' && r.status !== 'closed') { r.status = 'answered'; if (!r.dateAnswered) r.dateAnswered = today(); }
-    else if (kind === 'question' && r.status === 'open') { r.status = 'submitted'; if (!r.dateSent) r.dateSent = today(); }
-    renderRfis(); if (openRfi === id) renderRfiDrawer();
-    await saveRfi(r);
-    noteFolderChanged();
-    toast(`${added} PDF${added === 1 ? '' : 's'} added`);
-  };
+  inp.onchange = () => addRfiFiles(id, kind, Array.from(inp.files));
   inp.click();
+}
+async function addRfiFiles(id, kind, all) {
+  if (!rfiById(id) || !all.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const files = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (files.length < all.length) toast('Non-PDF files were skipped', true);
+  if (!files.length) return;
+  const newDocs = [];
+  for (const f of files) {
+    try {
+      stickyToast(`Saving ${f.name}…`);
+      const { dir, file } = await putRfiFile(f, kind);
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, added: Date.now() });
+    } catch (e) { console.error(e); toast(storageError(e), true); }
+  }
+  if (!newDocs.length) return;
+  // Re-read the record after the file writes: a live snapshot may have replaced
+  // it meanwhile, so append onto the latest copy rather than a stale one.
+  const r = rfiById(id);
+  if (!r) { toast('That RFI is no longer available', true); noteFolderChanged(); return; }
+  r.docs = (r.docs || []).concat(newDocs);
+  if (kind === 'answer' && r.status !== 'closed') { r.status = 'answered'; if (!r.dateAnswered) r.dateAnswered = today(); }
+  else if (kind === 'question' && r.status === 'open') { r.status = 'submitted'; if (!r.dateSent) r.dateSent = today(); }
+  renderRfis(); if (openRfi === id) renderRfiDrawer();
+  await saveRfi(r);
+  noteFolderChanged();
+  toast(`${newDocs.length} PDF${newDocs.length === 1 ? '' : 's'} added`);
 }
 async function removeRfiDoc(id, docId) {
   const r = rfiById(id); if (!r) return;
@@ -2909,13 +2936,28 @@ function renderRfiDrawer() {
       </div>
 
       <div class="sec">
-        <h4>RFI question <button class="btn sm" onclick="addRfiDoc('${r.id}','question')">+ Upload PDF</button></h4>
-        ${rfiDocList(r, 'question') || '<div class="muted">The RFI as sent out. Upload the PDF you submitted.</div>'}
+        <h4>RFI question <button class="btn sm" onclick="pickRfiFiles('${r.id}','question')">+ Upload PDF</button></h4>
+        ${rfiDocList(r, 'question')}
+        <div class="drop" id="rfiDropQ" onclick="pickRfiFiles('${r.id}','question')">
+          Drop the RFI question PDF here<br><span class="muted">The RFI as sent out — saved to this job’s ShareFile folder</span></div>
       </div>
 
       <div class="sec">
-        <h4>RFI response <button class="btn sm" onclick="addRfiDoc('${r.id}','answer')">+ Upload PDF</button></h4>
-        ${rfiDocList(r, 'answer') || '<div class="muted">The answer that came back. Upload the stamped / returned PDF.</div>'}
+        <h4>RFI response <button class="btn sm" onclick="pickRfiFiles('${r.id}','answer')">+ Upload PDF</button></h4>
+        ${rfiDocList(r, 'answer')}
+        <div class="drop" id="rfiDropA" onclick="pickRfiFiles('${r.id}','answer')">
+          Drop the returned / stamped response PDF here</div>
+      </div>
+
+      <div class="sec">
+        <h4>Action items ${acCountLabel(r.checklist)}</h4>
+        <div class="add-row">
+          <input class="input" id="rfiCheckInput" placeholder="Add an action item (e.g. cost impact, schedule impact)…"
+            onkeydown="if(event.key==='Enter')acAdd('rfi','${r.id}','rfiCheckInput')">
+          <button class="btn sm" onclick="acAdd('rfi','${r.id}','rfiCheckInput')">Add</button>
+        </div>
+        ${checklistHtml('rfi', r.id, r.checklist)}
+        <div class="muted" style="margin-top:6px">Click an item to add details — cost, schedule impact, who owns it.</div>
       </div>
 
       <div class="sec">
@@ -2925,6 +2967,9 @@ function renderRfiDrawer() {
       </div>
     </div>
   </aside>`;
+
+  wireDropZone($('rfiDropQ'), files => addRfiFiles(r.id, 'question', files));
+  wireDropZone($('rfiDropA'), files => addRfiFiles(r.id, 'answer', files));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2984,7 +3029,6 @@ function renderTracking() {
     return;
   }
   const files = c.files || [], notes = c.notes || [], checklist = c.checklist || [];
-  const doneN = checklist.filter(i => i.done).length;
   $('trackPanel').innerHTML = `
     <div class="track-head">
       <h3>${esc(c.name)}</h3>
@@ -3008,17 +3052,13 @@ function renderTracking() {
     </div>
 
     <div class="track-sec">
-      <h4>Action items ${checklist.length ? `<span class="muted" style="font-weight:400">${doneN}/${checklist.length} done</span>` : ''}</h4>
+      <h4>Action items ${acCountLabel(checklist)}</h4>
       <div class="add-row">
-        <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')addCheck('${c.id}')">
-        <button class="btn sm" onclick="addCheck('${c.id}')">Add</button>
+        <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')acAdd('cat','${c.id}','checkInput')">
+        <button class="btn sm" onclick="acAdd('cat','${c.id}','checkInput')">Add</button>
       </div>
-      ${checklist.map(i => `
-        <div class="check-row ${i.done ? 'done' : ''}">
-          <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="toggleCheck('${c.id}','${i.id}',this.checked)"></label>
-          <span class="ct">${esc(i.text)}</span>
-          <button class="x" title="Remove" onclick="deleteCheck('${c.id}','${i.id}')">✕</button>
-        </div>`).join('') || '<div class="muted">No action items yet.</div>'}
+      ${checklistHtml('cat', c.id, checklist)}
+      <div class="muted" style="margin-top:6px">Click an item to add details.</div>
     </div>
 
     <div class="track-sec">
@@ -3056,23 +3096,26 @@ async function pickEmailFiles(catId) {
   inp.click();
 }
 async function addEmailFiles(catId, files) {
-  const c = catById(catId); if (!c || !files.length) return;
+  const start = catById(catId); if (!start || !files.length) return;
   if (!jobFolder) { if (!(await loadJobFolder())) return; }
-  c.files = c.files || [];
-  let added = 0;
+  const catName = start.name;                 // fix the folder path for this upload
+  const newFiles = [];
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putEmailFile(f, c.name);
-      c.files.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
-      added++;
+      const { dir, file } = await putEmailFile(f, catName);
+      newFiles.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
-  if (!added) return;
+  if (!newFiles.length) return;
+  // Re-read after the writes so a snapshot that landed mid-upload isn't clobbered.
+  const c = catById(catId);
+  if (!c) { toast('That category is no longer available', true); noteFolderChanged(); return; }
+  c.files = (c.files || []).concat(newFiles);
   renderTracking();
   await saveTrackCat(c);
   noteFolderChanged();
-  toast(`${added} file${added === 1 ? '' : 's'} added to ${c.name}`);
+  toast(`${newFiles.length} file${newFiles.length === 1 ? '' : 's'} added to ${c.name}`);
 }
 async function removeEmailDoc(catId, fileId) {
   const c = catById(catId); if (!c) return;
@@ -3089,28 +3132,105 @@ async function viewEmailDoc(catId, fileId) {
   const d = (c.files || []).find(x => x.id === fileId);
   if (d) openStoredDoc(d);
 }
-function addCheck(catId) {
-  const c = catById(catId); if (!c) return;
-  const el = $('checkInput'); const text = (el.value || '').trim();
+/* ── action items, shared by RFIs and tracking categories ──
+   An owner is an RFI ('rfi') or a tracking category ('cat'); both keep a
+   `checklist` array of { id, text, detail, due, done, created }. */
+function acOwner(type, id) { return type === 'rfi' ? rfiById(id) : catById(id); }
+function acSave(type, o) { return type === 'rfi' ? saveRfi(o) : saveTrackCat(o); }
+function acRerender(type) {
+  if (type === 'rfi') { renderRfis(); if (openRfi) renderRfiDrawer(); }
+  else renderTracking();
+}
+function acCountLabel(list) {
+  const total = (list || []).length; if (!total) return '';
+  const done = list.filter(i => i.done).length;
+  return `<span class="muted" style="font-weight:400">${done}/${total} done</span>`;
+}
+function acDueClass(due) {
+  if (!due) return '';
+  return due < today() ? 'overdue' : (due === today() ? 'today' : '');
+}
+function checklistHtml(type, id, list) {
+  return (list || []).map(i => `
+    <div class="check-row ${i.done ? 'done' : ''}">
+      <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="acToggle('${type}','${id}','${i.id}',this.checked)"></label>
+      <button class="ct-btn" onclick="openActionItem('${type}','${id}','${i.id}')" title="Open to add details">
+        <span class="ct">${esc(i.text)}</span>
+        ${i.due ? `<span class="ac-due ${acDueClass(i.due)}">${fmtShort(i.due)}</span>` : ''}
+        ${i.detail ? '<span class="ac-has" title="Has details">📝</span>' : ''}
+      </button>
+      <button class="x" title="Remove" onclick="acDelete('${type}','${id}','${i.id}')">✕</button>
+    </div>`).join('') || '<div class="muted">No action items yet.</div>';
+}
+function acAdd(type, id, inputId) {
+  const o = acOwner(type, id); if (!o) return;
+  const el = $(inputId); const text = (el && el.value || '').trim();
   if (!text) return;
-  c.checklist = c.checklist || [];
-  c.checklist.push({ id: uid('chk'), text, done: false, created: Date.now() });
-  renderTracking();
-  saveTrackCat(c);
-  const ne = $('checkInput'); if (ne) ne.focus();
+  o.checklist = o.checklist || [];
+  o.checklist.push({ id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now() });
+  acRerender(type); acSave(type, o);
+  const ne = $(inputId); if (ne) { ne.value = ''; ne.focus(); }
 }
-function toggleCheck(catId, itemId, done) {
-  const c = catById(catId); if (!c) return;
-  const it = (c.checklist || []).find(x => x.id === itemId); if (!it) return;
+function acToggle(type, id, itemId, done) {
+  const o = acOwner(type, id); if (!o) return;
+  const it = (o.checklist || []).find(x => x.id === itemId); if (!it) return;
   it.done = done;
-  renderTracking();
-  saveTrackCat(c);
+  acRerender(type); acSave(type, o);
+  if (acModal && acModal.itemId === itemId) renderActionModal();
 }
-function deleteCheck(catId, itemId) {
-  const c = catById(catId); if (!c) return;
-  c.checklist = (c.checklist || []).filter(x => x.id !== itemId);
-  renderTracking();
-  saveTrackCat(c);
+function acDelete(type, id, itemId) {
+  const o = acOwner(type, id); if (!o) return;
+  o.checklist = (o.checklist || []).filter(x => x.id !== itemId);
+  if (acModal && acModal.itemId === itemId) closeActionModal();
+  acRerender(type); acSave(type, o);
+}
+function acPatch(type, id, itemId, fields) {
+  const o = acOwner(type, id); if (!o) return;
+  const it = (o.checklist || []).find(x => x.id === itemId); if (!it) return;
+  Object.assign(it, fields);
+  acRerender(type); acSave(type, o);
+}
+/* The detail editor — a modal stacked over whatever tab/drawer opened it. */
+let acModal = null;   // { type, id, itemId }
+function openActionItem(type, id, itemId) { acModal = { type, id, itemId }; renderActionModal(); }
+function closeActionModal() { acModal = null; $('modalHost').innerHTML = ''; }
+/* A live snapshot may delete or change the item under an open detail modal.
+   Re-render it (which self-closes if the item is gone) — but never while the
+   user is typing in it, or we'd steal the caret. */
+function refreshActionModalIfSafe() {
+  if (!acModal) return;
+  const ae = document.activeElement;
+  if (ae && ae.closest && ae.closest('#modalHost')) return;
+  renderActionModal();
+}
+function renderActionModal() {
+  const m = acModal; if (!m) return;
+  const o = acOwner(m.type, m.id);
+  const it = o && (o.checklist || []).find(x => x.id === m.itemId);
+  if (!it) { closeActionModal(); return; }
+  const ownerLabel = m.type === 'rfi' ? ('RFI ' + (o.number || '')) : (o.name || '');
+  const args = `'${m.type}','${m.id}','${m.itemId}'`;
+  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closeActionModal()"><div class="modal">
+    <div class="modal-head"><h3>Action item</h3><button class="icon-btn" onclick="closeActionModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="muted" style="margin-bottom:12px">${esc(ownerLabel)}</div>
+      <div class="field"><label class="fl">Action item</label>
+        <input class="input" value="${esc(it.text)}" onchange="acPatch(${args},{text:this.value.trim()})"></div>
+      <div class="grid2">
+        <div class="field"><label class="fl">Due date</label>
+          <input class="input" type="date" value="${esc(it.due || '')}" onchange="acPatch(${args},{due:this.value})"></div>
+        <div class="field"><label class="fl">Status</label>
+          <label class="ac-done"><input type="checkbox" ${it.done ? 'checked' : ''} onchange="acToggle(${args},this.checked)"> <span>Done</span></label></div>
+      </div>
+      <div class="field"><label class="fl">Details</label>
+        <textarea class="input" rows="6" placeholder="Cost impact, schedule impact, who owns it, what’s blocking it…"
+          onchange="acPatch(${args},{detail:this.value})">${esc(it.detail || '')}</textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="acDelete(${args})">Delete</button>
+      <div class="spacer" style="flex:1"></div>
+      <button class="btn primary" onclick="closeActionModal()">Done</button>
+    </div></div></div>`;
 }
 function addNote(catId) {
   const c = catById(catId); if (!c) return;
@@ -3855,12 +3975,17 @@ async function pickFiles(key, kind) {
   inp.click();
 }
 function wireDrop(el, key, kind) {
+  wireDropZone(el, files => addFiles(key, kind, files));
+}
+/* Generic drag-and-drop wiring: highlight on hover, hand the dropped files to a
+   callback. Shared by submittals, RFIs and job-tracking drop zones. */
+function wireDropZone(el, onFiles) {
   if (!el) return;
   el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('over'); });
   el.addEventListener('dragleave', () => el.classList.remove('over'));
   el.addEventListener('drop', e => {
     e.preventDefault(); el.classList.remove('over');
-    addFiles(key, kind, Array.from(e.dataTransfer.files));
+    onFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []));
   });
 }
 /* The statuses a PDF can be filed under — the outgoing package and the ways it
@@ -4037,6 +4162,7 @@ function newSectionRecord(base) {
    8. PDF VIEWER
    ═══════════════════════════════════════════════════════════════════════════ */
 function showPdf(url, name, page) {
+  acModal = null;           // the viewer takes over the modal host; drop action-item modal state
   const src = url + (page ? '#page=' + page : '');
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()">
@@ -4051,6 +4177,7 @@ function showPdf(url, name, page) {
     </div>`;
 }
 function closePdf() {
+  acModal = null;            // any blank of the modal host also drops action-item modal state
   $('modalHost').innerHTML = '';
 }
 async function openSpecViewer(specId, page) {

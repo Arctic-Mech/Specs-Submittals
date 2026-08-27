@@ -101,9 +101,15 @@ that runs **Open → Submitted → Answered → Closed**, and the sent / due / a
 dates. It holds two kinds of PDF: the **question** (the RFI as you sent it out)
 and the **response** (the stamped answer that came back). Uploading a question
 PDF moves an open RFI to **Submitted**; uploading a response moves it to
-**Answered** and stamps the answered date. The PDFs are filed into the job's
-ShareFile folder under `files/RFI Questions/` and `files/RFI Answers/`. Search and
-the status chips work the same as on the submittal tab.
+**Answered** and stamps the answered date. You can drag a PDF straight onto the
+question or response drop zone, or use the **Upload PDF** button. The PDFs are
+filed into the job's ShareFile folder under `files/RFI Questions/` and
+`files/RFI Answers/`. Search and the status chips work the same as on the
+submittal tab.
+
+Each RFI also carries its own **action items** — the same checklist as Job
+Tracking (below) — for things like cost impact or schedule impact that need
+chasing down. The RFI row shows how many are still open.
 
 ## Job Tracking
 
@@ -120,7 +126,9 @@ things:
   `files/Emails/<category>/` in the ShareFile folder — a PDF opens in the viewer,
   an email downloads so Outlook can open it.
 - **Action items** — a checklist you can tick off; the category shows how many are
-  still open.
+  still open. **Click an item to open it** and add a due date and a details note
+  (cost, schedule impact, who owns it) — a 📝 marks items that have details, and
+  the due date shows on the row, amber on the day and red once overdue.
 - **Notes** — quick dated notes.
 
 Categories, checklists and notes sync live through the cloud like the rest of the
