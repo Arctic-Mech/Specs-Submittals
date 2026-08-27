@@ -1,6 +1,7 @@
-# Submittal Register — Divisions 22 & 23
+# ASM Job Tool
 
-A job workspace for mechanical projects. Each job has three tabs:
+A job workspace for mechanical projects (Arctic Mechanical). Each job has five
+tabs:
 
 - **Submittals** — import a project spec PDF, it is split into its individual
   Division 22 and 23 sections, and each section carries a status, searchable
@@ -8,10 +9,15 @@ A job workspace for mechanical projects. Each job has three tabs:
   has been released to site.
 - **RFIs** — a register of RFIs, each holding the question PDF you sent and the
   response PDF that came back, with a status (Open → Submitted → Answered →
-  Closed) and the sent / due / answered dates.
-- **Job Tracking** — categories you create (change orders, scheduling, owner
-  correspondence, whatever the job needs), each holding emails and files you drop
-  in, action-item checklists, and notes.
+  Closed), the sent / due / answered dates, the GC's own RFI number, and its own
+  action-item checklist.
+- **Change Orders** — a log of change orders with an amount and status
+  (Pending → Submitted → Approved / Rejected), the CO PDF, and a **Paid** tick you
+  check off — on the row or in the drawer — when it's actually paid.
+- **Job Tracking** — categories you create (scheduling, owner correspondence,
+  whatever the job needs), each holding emails and files you drop in, action-item
+  checklists, and notes.
+- **Billing** — a placeholder for now; to be built out.
 
 The whole app is `index.html`. There is no build step.
 
@@ -60,18 +66,24 @@ The loaded-folder bar shows how many PDFs it can actually read — a count, or a
 highlighted **no PDFs found here** if you've connected to the wrong or unsynced
 folder.
 
-### Dropping PDFs into the folder directly
+### Dropping files into the folder directly
 
-You can also work from the other direction: drop PDFs straight into the job's
+You can also work from the other direction: drop files straight into the job's
 ShareFile folder (from Explorer/Finder, or ShareFile itself). Next time the folder
-loads, the app notices any PDF that no section references and the bar shows
-**"N new PDFs to assign."** The **Assign** button walks them one at a time — you
-can **View** the PDF, pick its **spec section**, whether it's a **submittal or
-response**, and its **status** — and on *Assign & file* it moves the PDF into the
-matching status subfolder and records it on that section (setting the section's
-status). **Skip** leaves one for later; **Ignore** marks a file as "not a
-submittal" so it stops asking. Files already filed under `files/<status>/` by the
-app are left alone.
+loads, the app notices anything the register doesn't reference and the bar shows
+**"N new files to assign."** The **Assign** button walks them one at a time:
+
+- A **PDF** → pick its **spec section**, whether it's a **submittal or response**,
+  and its **status**; *Assign & file* moves it into the matching status subfolder
+  and records it on that section.
+- An **email** (`.msg`/`.eml`) → pick a **Job Tracking category** (or make a new
+  one); *File in category* moves it under `files/Emails/<category>/` and records it
+  there.
+
+**Skip** leaves one for later; **Ignore** marks a file as "not mine" so it stops
+asking. Files already filed by the app — under `files/<status>/`, and the
+`RFI Questions`, `RFI Answers`, `Change Orders` and `Emails` folders — are left
+alone.
 
 ### Save to folder
 
@@ -96,9 +108,10 @@ recognise.
 ## RFIs
 
 The **RFIs** tab is a lightweight RFI log that works like the submittal log. Each
-RFI has a number (auto-suggested, editable), a subject, who it went to, a status
-that runs **Open → Submitted → Answered → Closed**, and the sent / due / answered
-dates. It holds two kinds of PDF: the **question** (the RFI as you sent it out)
+RFI has an Arctic number (auto-suggested, editable), the **GC's own RFI number**
+(the GC assigns its own, which won't match ours — it shows in the register's
+GC # column), a subject, a status that runs
+**Open → Submitted → Answered → Closed**, and the sent / due / answered dates. It holds two kinds of PDF: the **question** (the RFI as you sent it out)
 and the **response** (the stamped answer that came back). Uploading a question
 PDF moves an open RFI to **Submitted**; uploading a response moves it to
 **Answered** and stamps the answered date. You can drag a PDF straight onto the
@@ -110,6 +123,16 @@ submittal tab.
 Each RFI also carries its own **action items** — the same checklist as Job
 Tracking (below) — for things like cost impact or schedule impact that need
 chasing down. The RFI row shows how many are still open.
+
+## Change Orders
+
+The **Change Orders** tab logs each CO with an **amount**, a **description**, a
+status (**Pending → Submitted → Approved / Rejected**), the submitted / approved
+dates, the CO PDF (filed under `files/Change Orders/`), notes, and action items.
+**Paid is tracked separately** as its own tick — because a CO is usually approved
+well before it's paid — so you check it off (on the row or in the drawer) when the
+money comes in, and it records the paid date. The register footer totals the CO
+amounts and how much has been paid, and the status chips include a **Paid** filter.
 
 ## Job Tracking
 
@@ -133,6 +156,18 @@ things:
 
 Categories, checklists and notes sync live through the cloud like the rest of the
 register; only the uploaded files live in the ShareFile folder.
+
+## Billing
+
+The **Billing** tab is a placeholder for now — the shape (progress billing /
+schedule of values / retention / invoices) will be designed and built out later.
+
+## Managing the spec
+
+The spec is reached from one place: the **Spec** button (top-right). It lists the
+job's spec files — click one to open it, remove one, or **Import another spec**.
+There is no separate import button. The first spec is imported when you create the
+job (or from the submittals empty state on a job that has none).
 
 ## Firebase setup
 
@@ -255,8 +290,9 @@ blocked. A link, and the File System Access folder, need none of that.
 jobs/{jobId}                        name, number, ShareFile folder name, spec files, roll-up
 jobs/{jobId}/sections/{sectionKey}  the log: status, tags, lead time, releases, document refs
 jobs/{jobId}/specdata/{sectionKey}  the spec text for that section
-jobs/{jobId}/rfis/{rfiId}           an RFI: number, subject, status, dates, question/response PDF refs
+jobs/{jobId}/rfis/{rfiId}           an RFI: numbers, subject, status, dates, checklist, PDF refs
 jobs/{jobId}/tracking/{catId}       a tracking category: files, checklist, notes
+jobs/{jobId}/changeorders/{coId}    a change order: number, amount, status, paid+date, PDF refs
 ```
 
 Sections are separate documents so two people editing different sections at the
@@ -281,12 +317,13 @@ the status, not the whole record.
 <job folder>/files/Partial Approval/<name>.pdf
 <job folder>/files/RFI Questions/<name>.pdf    RFIs as sent out
 <job folder>/files/RFI Answers/<name>.pdf      RFI responses that came back
+<job folder>/files/Change Orders/<name>.pdf    change-order PDFs
 <job folder>/files/Emails/<category>/<name>    tracking emails and files, by category
 ```
 
-The submittal "new PDFs to assign" scanner leaves the `RFI Questions`,
-`RFI Answers` and `Emails` folders alone — files there are RFIs and tracking
-emails, not stray submittals.
+The "new files to assign" scanner leaves the `RFI Questions`, `RFI Answers`,
+`Change Orders` and `Emails` folders alone — files there are RFIs, change orders
+and tracking emails, not stray submittals.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
 was filed under, so the folder reads like a filing cabinet. The section's document

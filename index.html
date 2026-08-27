@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Submittal Register — Divisions 22 &amp; 23</title>
+<title>ASM Job Tool</title>
 <!-- Firebase: the register and the PDFs both live in Firestore, so every
      device on the job sees the same log. Cloud Storage is deliberately not
      used — it needs a billing account, Firestore does not. -->
@@ -295,6 +295,9 @@ header {
 .check-row:hover .x { opacity: 1; }
 .ac-done { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; padding-top: 8px; cursor: pointer; }
 .ac-done input { width: 16px; height: 16px; cursor: pointer; }
+.pay-row { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; }
+.pay-row input { width: 17px; height: 17px; cursor: pointer; }
+.pay-row input:checked + span { color: var(--green); font-weight: 600; }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -408,6 +411,11 @@ tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-h
 .rel-of > b { display: block; font-size: 12px; font-weight: 600; }
 .rel-of small { display: block; font-size: 11.5px; color: var(--text-3); }
 .delivered-tag { color: var(--green); font-weight: 700; }
+.c-copaid .tick { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.c-copaid .tick input { cursor: pointer; margin: 0; }
+.paid-tag { font-size: 12px; color: var(--text-3); }
+.check-row.done .c-copaid, .c-copaid .paid-tag { white-space: nowrap; }
+tr:has(.c-copaid input:checked) .paid-tag { color: var(--green); font-weight: 600; }
 /* Rows are a comfortable minimum height; one with several releases grows to show
    them all rather than clipping. */
 #secBody td { height: 62px; }
@@ -697,6 +705,21 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   .c-rfinum { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
   .c-rfisubj { font-size: 15px; }
 
+  /* ── change-order table also becomes stacked cards ── */
+  #coBody tr {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 11px 13px; margin-bottom: 10px; height: auto; display: block;
+  }
+  #coBody td { display: block; height: auto; border: none; padding: 2px 0; }
+  #coBody td.is-empty { display: none; }
+  #coBody td[data-label]::before {
+    content: attr(data-label); display: block;
+    font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); margin: 8px 0 3px;
+  }
+  .c-conum { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+  .c-codesc { font-size: 15px; }
+
   /* ── job tracking stacks: categories above the panel ── */
   .track-wrap { grid-template-columns: 1fr; }
   .track-cats { flex-direction: row; flex-wrap: wrap; }
@@ -719,8 +742,8 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div class="brand" onclick="go('jobs')">
     <div class="brand-mark">SR</div>
     <div>
-      <div class="brand-name">Submittal Register</div>
-      <div class="brand-sub">Divisions 22 &amp; 23 · <span id="verLabel"></span></div>
+      <div class="brand-name">ASM Job Tool</div>
+      <div class="brand-sub">Arctic Mechanical · <span id="verLabel"></span></div>
     </div>
   </div>
   <span class="crumb" id="crumb" hidden>›</span>
@@ -728,9 +751,8 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
     <button class="btn ghost" onclick="saveToFolder()" title="Save to ShareFile folder — overwrite register.json + register.csv and re-file the PDFs by status">💾 <span class="lbl">Save to folder</span></button>
-    <button class="btn ghost" onclick="openSpecViewer()" id="btnSpec" title="Open the spec PDF">📄 <span class="lbl">Spec</span></button>
+    <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="Spec files — view, import or remove">📄 <span class="lbl">Spec</span></button>
     <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ <span class="lbl">CSV</span></button>
-    <button class="btn" onclick="promptImportSpec()" title="Import a spec PDF">📥 <span class="lbl">Import spec</span></button>
   </div>
   <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Light / dark">◐</button>
 </header>
@@ -807,7 +829,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <thead><tr>
           <th style="width:90px">RFI</th>
           <th>Subject</th>
-          <th style="width:180px">To</th>
+          <th style="width:120px">GC #</th>
           <th style="width:180px">Status</th>
           <th style="width:200px">Dates</th>
         </tr></thead>
@@ -822,6 +844,32 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <div class="track-cats" id="trackCats"></div>
         <div class="track-panel" id="trackPanel"></div>
       </div>
+    </div>
+
+    <!-- CHANGE ORDERS TAB -->
+    <div id="tab-changeorders" hidden>
+      <div class="toolbar">
+        <div class="search"><input class="input" id="coSearch" placeholder="Search change orders…" autocomplete="off"></div>
+        <div class="spacer"></div>
+        <span class="muted" id="coCount"></span>
+      </div>
+      <div class="chips" id="coChips"></div>
+      <div class="table-card"><table>
+        <thead><tr>
+          <th style="width:90px">CO #</th>
+          <th>Description</th>
+          <th style="width:130px">Amount</th>
+          <th style="width:150px">Status</th>
+          <th style="width:120px">Paid</th>
+        </tr></thead>
+        <tbody id="coBody"></tbody>
+      </table></div>
+      <div id="coEmpty"></div>
+    </div>
+
+    <!-- BILLING TAB -->
+    <div id="tab-billing" hidden>
+      <div id="billingPanel"></div>
     </div>
   </section>
 </main>
@@ -839,7 +887,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.4';
+const APP_VERSION = 'v3.5';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -905,7 +953,23 @@ const RS = Object.fromEntries(RFI_STATUSES.map(s => [s.id, s]));
 /* which status a folder subfolder is named for when filing an RFI PDF */
 const RFI_DOC_KINDS = { question: 'RFI Questions', answer: 'RFI Answers' };
 
+/* Change-order workflow. "Paid" is tracked separately as its own tick, because
+   a CO can be approved long before it is actually paid. */
+const CO_STATUSES = [
+  { id: 'pending',   label: 'Pending',   short: 'Pending',   color: 'grey'  },
+  { id: 'submitted', label: 'Submitted', short: 'Submitted', color: 'blue'  },
+  { id: 'approved',  label: 'Approved',  short: 'Approved',  color: 'green' },
+  { id: 'rejected',  label: 'Rejected',  short: 'Rejected',  color: 'red'   }
+];
+const CS = Object.fromEntries(CO_STATUSES.map(s => [s.id, s]));
+const CO_DOC_DIR = 'Change Orders';
+
 const today = () => new Date().toISOString().slice(0, 10);
+const fmtMoney = v => {
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+  if (!isFinite(n)) return '';
+  return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 function addWeeks(dateStr, weeks) {
   const w = parseFloat(weeks);
@@ -1568,6 +1632,8 @@ const rfisCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'rfis');
 const rfiRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'rfis', String(id));
 const trackingCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'tracking');
 const trackingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'tracking', String(id));
+const coCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'changeorders');
+const coRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'changeorders', String(id));
 
 /* Firestore rejects undefined; strip it rather than let a write fail. */
 function clean(v) {
@@ -1786,7 +1852,7 @@ const STATUS_DIR = {
 function statusDirName(id) { return STATUS_DIR[id] || 'Filed'; }
 /* Folders the submittal scanner must leave alone — RFIs and tracking emails are
    filed here on purpose and are not stray submittals. */
-const RESERVED_DIRS = new Set(['RFI Questions', 'RFI Answers', 'Emails']);
+const RESERVED_DIRS = new Set(['RFI Questions', 'RFI Answers', 'Emails', 'Change Orders']);
 const EMAIL_DIR = 'Emails';
 function sanitizeFileName(name) {
   let n = String(name || 'document.pdf').replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').trim();
@@ -1917,6 +1983,7 @@ function trackedPaths() {
   (job.specs || []).forEach(add);
   for (const r of rfis) { (r.docs || []).forEach(add); }
   for (const c of tracking) { (c.files || []).forEach(add); }
+  for (const c of cos) { (c.docs || []).forEach(add); }
   return set;
 }
 /* PDFs sitting in the ShareFile folder that no section references — someone
@@ -1927,10 +1994,12 @@ async function scanUnassignedPdfs() {
   const ignored = new Set(job.ignoredFiles || []);
   const found = [];
   const consider = (path, name, loc) => {
-    if (!/\.pdf$/i.test(name)) return;
+    const isPdf = /\.pdf$/i.test(name);
+    const isEmail = /\.(msg|eml)$/i.test(name);
+    if (!isPdf && !isEmail) return;
     if (tracked.has(path) || ignored.has(path)) return;
     if (/^register\.(json|csv)$/i.test(name) || /^job\.json$/i.test(name)) return;
-    found.push(Object.assign({ path, name }, loc));
+    found.push(Object.assign({ path, name, type: isPdf ? 'pdf' : 'email' }, loc));
   };
   try {                                   // loose files at the job-folder root
     for await (const e of jobFolder.values()) {
@@ -1984,6 +2053,7 @@ function assignModal(i) {
   const total = _assignQueue.length;
   const item = _assignQueue[i];
   if (!item) { closePdf(); noteFolderChanged(); return; }   // done → re-scan + refresh bar
+  if (item.type === 'email') return assignEmailModal(i, item, total);
   const dv = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
   const firstKey = (sectionsOf(job).filter(s => s.division === dv).sort(sectionOrder)[0] || {}).key || '';
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
@@ -2019,8 +2089,74 @@ function assignModal(i) {
 async function viewLoose(i) {
   const item = _assignQueue[i];
   const blob = await readLooseBlob(item);
-  if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
-  showPdf(URL.createObjectURL(blob), item.name);
+  if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
+  if (item.type === 'email') {                 // emails can't render in the browser — download
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = item.name; a.click();
+  } else showPdf(URL.createObjectURL(blob), item.name);
+}
+/* An email (.msg/.eml) dropped in the folder → file it under a Job Tracking
+   category (creating one if needed), the same place uploaded emails live. */
+function assignEmailModal(i, item, total) {
+  const cats = tracking.slice();
+  const noCats = !cats.length;
+  const catOptions = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + `<option value="__new">➕ New category…</option>`;
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
+    <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <div class="file-row" style="margin-bottom:14px"><span class="fi">✉️</span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : item.at === 'dir' ? 'files/' + esc(item.dir) : 'files/'}</small></span>
+        <button class="btn sm" onclick="viewLoose(${i})">Open</button></div>
+      <div class="muted" style="margin-bottom:10px">This looks like an email. File it under a Job Tracking category.</div>
+      <div class="field"><label class="fl">Category</label>
+        <select class="input" id="asgCat">${catOptions}</select></div>
+      <div class="field" id="asgNewCatWrap"${noCats ? '' : ' style="display:none"'}>
+        <label class="fl">New category name</label>
+        <input class="input" id="asgNewCat" placeholder="e.g. Owner correspondence"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
+      <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
+      <button class="btn primary" onclick="assignEmail(${i})">File in category</button>
+    </div></div></div>`;
+  const sel = document.getElementById('asgCat'), wrap = document.getElementById('asgNewCatWrap');
+  if (noCats) sel.value = '__new';
+  sel.onchange = () => { wrap.style.display = sel.value === '__new' ? '' : 'none'; };
+}
+async function assignEmail(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const sel = document.getElementById('asgCat');
+  let catId = sel.value, catName;
+  if (catId === '__new') {
+    const nm = (document.getElementById('asgNewCat').value || '').trim();
+    if (!nm) { toast('Enter a category name', true); return; }
+    const nc = { id: uid('cat'), name: nm, order: tracking.length, files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
+    tracking.push(nc); catId = nc.id; catName = nm;
+    await saveTrackCat(nc);
+  } else {
+    const c = catById(catId);
+    if (!c) { toast('Pick a category', true); return; }
+    catName = c.name;
+  }
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
+    const targetRel = EMAIL_DIR + '/' + sanitizeAnyName(catName, 'Uncategorised');
+    const { dir, file } = await putFileInDir(blob, targetRel, sanitizeAnyName(item.name, 'email'));
+    const c = catById(catId);
+    if (!c) { toast('That category is no longer available', true); return; }
+    c.files = c.files || [];
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file, added: Date.now() };
+    c.files.push(doc);
+    try { await saveTrackCat(c); }
+    catch (e) { c.files = c.files.filter(x => x.id !== doc.id); await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
+    await deleteLoose(item);                    // record is durable — remove the loose original
+    renderJob();
+    toast(`Filed “${item.name}” under ${catName}`);
+    assignModal(i + 1);
+  } catch (e) { console.error(e); toast('Could not file that file: ' + (e.message || e), true); }
 }
 function ignoreUnassigned(i) {
   const item = _assignQueue[i];
@@ -2120,7 +2256,10 @@ let openRfi = null;          // RFI open in the drawer
 let rfiQuery = '', rfiStatusFilter = null;
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
 let trackCat = null;         // selected category id
-let unsubRfis = null, unsubTracking = null;
+let cos = [];                // change-order records for the open job
+let openCo = null;           // change order open in the drawer
+let coQuery = '', coStatusFilter = null;
+let unsubRfis = null, unsubTracking = null, unsubCos = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -2270,6 +2409,24 @@ function watchTracking(jobId) {
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
 
+function watchCos(jobId) {
+  if (unsubCos) { unsubCos(); unsubCos = null; }
+  unsubCos = FB.onSnapshot(coCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      cos = snap.docs.map(d => d.data());
+      cos.sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true })
+        || String(b.created || '').localeCompare(String(a.created || '')));
+      if (view === 'job' && jobTab === 'changeorders') {
+        renderJob();
+        const ae = document.activeElement;
+        if (openCo && !(ae && ae.closest && ae.closest('.drawer'))) renderCoDrawer();
+      }
+      refreshActionModalIfSafe();
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
 /* ── carry-over from the browser-only version ── */
 const LOCAL_DB = 'submittal_register';
 
@@ -2376,7 +2533,8 @@ function go(where, id) {
     if (unsubSections) { unsubSections(); unsubSections = null; }
     if (unsubRfis) { unsubRfis(); unsubRfis = null; }
     if (unsubTracking) { unsubTracking(); unsubTracking = null; }
-    job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = [];
+    if (unsubCos) { unsubCos(); unsubCos = null; }
+    job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = [];
     $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
@@ -2388,14 +2546,16 @@ async function openJob(id) {
   if (!j) { toast('Job not found', true); return; }
   job = Object.assign({}, j, { sections: [] });
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false;
-  jobTab = 'submittals'; rfis = []; tracking = []; openRfi = null; trackCat = null;
-  rfiQuery = ''; rfiStatusFilter = null;
+  jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
+  openRfi = null; trackCat = null; openCo = null;
+  rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
   $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
   go('job');
   watchSections(job.id);          // sections stream in and re-render
   watchRfis(job.id);              // RFIs for this job
   watchTracking(job.id);          // job-tracking categories
+  watchCos(job.id);               // change orders
   tryAutoLoadFolder(job.id);      // load this job's PDF folder if the grant stands
 }
 
@@ -2633,13 +2793,17 @@ function renderJob() {
     ? `${secs.length} spec section${secs.length === 1 ? '' : 's'} · ${specs.length} spec file${specs.length === 1 ? '' : 's'}`
     : 'No spec imported yet');
   else if (jobTab === 'rfis') bits.push(`${rfis.length} RFI${rfis.length === 1 ? '' : 's'}`);
-  else bits.push(`${tracking.length} categor${tracking.length === 1 ? 'y' : 'ies'}`);
+  else if (jobTab === 'changeorders') bits.push(`${cos.length} change order${cos.length === 1 ? '' : 's'}`);
+  else if (jobTab === 'tracking') bits.push(`${tracking.length} categor${tracking.length === 1 ? 'y' : 'ies'}`);
+  else if (jobTab === 'billing') bits.push('Billing');
   $('jobMeta').textContent = bits.join(' · ');
   updateFolderBar();
   renderJobTabs();
   applyTabVisibility();
   if (jobTab === 'rfis') { renderRfis(); return; }
+  if (jobTab === 'changeorders') { renderCos(); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
+  if (jobTab === 'billing') { renderBilling(); return; }
 
   $('btnSpec').style.display = specs.length ? '' : 'none';
 
@@ -2676,6 +2840,7 @@ function setStatusFilter(s) { statusFilter = (statusFilter === s) ? null : s; re
 function setReleaseFilter(r) { releaseFilter = (releaseFilter === r) ? null : r; renderJob(); }
 $('searchBox').addEventListener('input', e => { query = e.target.value; renderTable(); $('countLabel').textContent = countLabel(); });
 $('rfiSearch').addEventListener('input', e => { rfiQuery = e.target.value; renderRfis(); });
+$('coSearch').addEventListener('input', e => { coQuery = e.target.value; renderCos(); });
 function countLabel() {
   const n = visibleSections().length, t = sectionsOf(job).filter(s => divFilter === 'all' || s.division === divFilter).length;
   return n === t ? `${t} sections` : `${n} of ${t} sections`;
@@ -2686,33 +2851,45 @@ function countLabel() {
    ═══════════════════════════════════════════════════════════════════════════ */
 function renderJobTabs() {
   const tabs = [
-    { id: 'submittals', label: 'Submittals',   n: sectionsOf(job).length },
-    { id: 'rfis',       label: 'RFIs',          n: rfis.length },
-    { id: 'tracking',   label: 'Job Tracking',  n: tracking.length }
+    { id: 'submittals',   label: 'Submittals',    n: sectionsOf(job).length },
+    { id: 'rfis',         label: 'RFIs',          n: rfis.length },
+    { id: 'changeorders', label: 'Change Orders', n: cos.length },
+    { id: 'tracking',     label: 'Job Tracking',  n: tracking.length },
+    { id: 'billing',      label: 'Billing',       n: null }
   ];
   $('jobTabs').innerHTML = tabs.map(t =>
-    `<button class="${jobTab === t.id ? 'on' : ''}" onclick="setJobTab('${t.id}')">${esc(t.label)}<span class="n">${t.n}</span></button>`
+    `<button class="${jobTab === t.id ? 'on' : ''}" onclick="setJobTab('${t.id}')">${esc(t.label)}${t.n != null ? `<span class="n">${t.n}</span>` : ''}</button>`
   ).join('');
 }
+const TAB_ACTIONS = {
+  submittals:   '+ Add section',
+  rfis:         '+ New RFI',
+  changeorders: '+ New change order',
+  tracking:     '+ New category'
+};
 function applyTabVisibility() {
-  $('tab-submittals').hidden = jobTab !== 'submittals';
-  $('tab-rfis').hidden       = jobTab !== 'rfis';
-  $('tab-tracking').hidden   = jobTab !== 'tracking';
+  $('tab-submittals').hidden   = jobTab !== 'submittals';
+  $('tab-rfis').hidden         = jobTab !== 'rfis';
+  $('tab-changeorders').hidden = jobTab !== 'changeorders';
+  $('tab-tracking').hidden     = jobTab !== 'tracking';
+  $('tab-billing').hidden      = jobTab !== 'billing';
   const act = $('tabAction');
-  act.textContent = jobTab === 'submittals' ? '+ Add section'
-    : jobTab === 'rfis' ? '+ New RFI' : '+ New category';
+  const label = TAB_ACTIONS[jobTab];
+  act.hidden = !label;                       // Billing has nothing to add (yet)
+  if (label) act.textContent = label;
 }
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeActionModal(); closeDrawer(); closeRfiDrawer();
+  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer();
   renderJob();
   window.scrollTo(0, 0);
 }
 function tabAction() {
   if (jobTab === 'submittals') addSectionManually();
   else if (jobTab === 'rfis') newRfi();
-  else newTrackCategory();
+  else if (jobTab === 'changeorders') newChangeOrder();
+  else if (jobTab === 'tracking') newTrackCategory();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2733,7 +2910,7 @@ async function saveRfi(r) {
 
 function matchRfi(r, q) {
   if (!q) return true;
-  const hay = [r.number, r.subject, r.to, r.from, r.notes,
+  const hay = [r.number, r.gcNumber, r.subject, r.notes,
     ...(r.docs || []).map(d => d.name)].join(' ').toLowerCase();
   return hay.includes(q.toLowerCase());
 }
@@ -2761,14 +2938,8 @@ function renderRfis() {
 }
 function rfiRowHtml(r) {
   const st = rsOf(r);
-  const q = (r.docs || []).filter(d => d.kind === 'question').length;
-  const a = (r.docs || []).filter(d => d.kind === 'answer').length;
   const openAc = (r.checklist || []).filter(i => !i.done).length;
-  const noteBits = [];
-  if (q) noteBits.push(q + ' question PDF' + (q === 1 ? '' : 's'));
-  if (a) noteBits.push(a + ' answer PDF' + (a === 1 ? '' : 's'));
-  if (openAc) noteBits.push('☐ ' + openAc + ' action item' + (openAc === 1 ? '' : 's'));
-  const docNote = noteBits.length ? `<small>${noteBits.map(esc).join(' · ')}</small>` : '';
+  const docNote = openAc ? `<small>☐ ${openAc} action item${openAc === 1 ? '' : 's'}</small>` : '';
   const dates = [];
   if (r.dateSent) dates.push('Sent ' + fmtShort(r.dateSent));
   if (r.dateDue) dates.push('Due ' + fmtShort(r.dateDue));
@@ -2776,14 +2947,14 @@ function rfiRowHtml(r) {
   return `<tr onclick="openRfiDrawer('${r.id}')">
     <td class="c-rfinum" data-label="RFI"><b>${esc(r.number || '—')}</b></td>
     <td class="c-rfisubj" data-label="Subject">${esc(r.subject || '(no subject)')}${docNote}</td>
-    <td class="c-rfito${r.to ? '' : ' is-empty'}" data-label="To">${r.to ? esc(r.to) : '<span class="muted">—</span>'}</td>
+    <td class="c-rfigc${r.gcNumber ? '' : ' is-empty'}" data-label="GC #">${r.gcNumber ? esc(r.gcNumber) : '<span class="muted">—</span>'}</td>
     <td class="c-rfistatus" data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
     <td class="c-rfidates${dates.length ? '' : ' is-empty'}" data-label="Dates">${dates.length ? '<small>' + dates.map(esc).join('<br>') + '</small>' : '<span class="muted">—</span>'}</td>
   </tr>`;
 }
 function newRfi() {
   if (!job) return;
-  const r = { id: uid('rfi'), number: nextRfiNumber(), subject: '', to: '', from: '',
+  const r = { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: '',
     status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
   rfis.unshift(r);
@@ -2910,10 +3081,10 @@ function renderRfiDrawer() {
     <div class="drawer-body">
       <div class="sec">
         <div class="grid2">
-          <div class="field"><label class="fl">RFI number</label>
+          <div class="field"><label class="fl">Arctic RFI number</label>
             <input class="input" id="rfiNum" value="${esc(r.number || '')}" onchange="patchRfi('${r.id}',{number:this.value.trim()})"></div>
-          <div class="field"><label class="fl">To (GC / architect / engineer)</label>
-            <input class="input" id="rfiTo" value="${esc(r.to || '')}" onchange="patchRfi('${r.id}',{to:this.value.trim()})"></div>
+          <div class="field"><label class="fl">GC RFI number</label>
+            <input class="input" id="rfiGc" value="${esc(r.gcNumber || '')}" placeholder="The number the GC assigns" onchange="patchRfi('${r.id}',{gcNumber:this.value.trim()})"></div>
         </div>
         <div class="field"><label class="fl">Subject</label>
           <input class="input" value="${esc(r.subject || '')}" onchange="patchRfi('${r.id}',{subject:this.value.trim()})" placeholder="What the RFI is about"></div>
@@ -3135,10 +3306,15 @@ async function viewEmailDoc(catId, fileId) {
 /* ── action items, shared by RFIs and tracking categories ──
    An owner is an RFI ('rfi') or a tracking category ('cat'); both keep a
    `checklist` array of { id, text, detail, due, done, created }. */
-function acOwner(type, id) { return type === 'rfi' ? rfiById(id) : catById(id); }
-function acSave(type, o) { return type === 'rfi' ? saveRfi(o) : saveTrackCat(o); }
+function acOwner(type, id) {
+  return type === 'rfi' ? rfiById(id) : type === 'co' ? coById(id) : catById(id);
+}
+function acSave(type, o) {
+  return type === 'rfi' ? saveRfi(o) : type === 'co' ? saveCo(o) : saveTrackCat(o);
+}
 function acRerender(type) {
   if (type === 'rfi') { renderRfis(); if (openRfi) renderRfiDrawer(); }
+  else if (type === 'co') { renderCos(); if (openCo) renderCoDrawer(); }
   else renderTracking();
 }
 function acCountLabel(list) {
@@ -3247,6 +3423,267 @@ function deleteNote(catId, noteId) {
   c.notes = (c.notes || []).filter(x => x.id !== noteId);
   renderTracking();
   saveTrackCat(c);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6d. CHANGE ORDERS  —  a log with a paid check-off, mirroring the RFI log
+   ═══════════════════════════════════════════════════════════════════════════ */
+function coById(id) { return cos.find(c => c.id === id); }
+function csOf(c) { return CS[c.status || 'pending'] || CS.pending; }
+function nextCoNumber() {
+  let max = 0;
+  for (const c of cos) { const m = String(c.number || '').match(/(\d+)/); if (m) max = Math.max(max, parseInt(m[1], 10)); }
+  return String(max + 1).padStart(2, '0');
+}
+async function saveCo(c) {
+  c.updated = Date.now();
+  try { await FB.setDoc(coRef(job.id, c.id), clean(c)); }
+  catch (e) { toast(writeError(e), true); }
+}
+function matchCo(c, q) {
+  if (!q) return true;
+  const hay = [c.number, c.description, c.notes, c.amount,
+    ...(c.docs || []).map(d => d.name)].join(' ').toLowerCase();
+  return hay.includes(q.toLowerCase());
+}
+function visibleCos() {
+  return cos.filter(c => (!coStatusFilter || (coStatusFilter === 'paid' ? c.paid : (c.status || 'pending') === coStatusFilter)) && matchCo(c, coQuery));
+}
+function setCoFilter(id) { coStatusFilter = (coStatusFilter === id) ? null : id; renderCos(); }
+
+function renderCos() {
+  if (!job) return;
+  const tally = {}; CO_STATUSES.forEach(s => tally[s.id] = 0);
+  let paidN = 0, total = 0, paidAmt = 0;
+  cos.forEach(c => {
+    tally[c.status || 'pending']++;
+    if (c.paid) paidN++;
+    const n = parseFloat(String(c.amount).replace(/[^0-9.-]/g, ''));
+    if (isFinite(n)) { total += n; if (c.paid) paidAmt += n; }
+  });
+  $('coChips').innerHTML = CO_STATUSES.map(s =>
+    `<button class="chip ${coStatusFilter === s.id ? 'on' : ''}" style="${coStatusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
+      onclick="setCoFilter('${s.id}')"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id]}</span></button>`
+  ).join('') +
+    `<button class="chip ${coStatusFilter === 'paid' ? 'on' : ''}" style="${coStatusFilter === 'paid' ? 'color:' + cvar('green') + ';background:' + csf('green') : ''}"
+      onclick="setCoFilter('paid')"><i style="background:${cvar('green')}"></i>Paid<span class="n">${paidN}</span></button>` +
+    (coStatusFilter ? `<button class="chip" onclick="setCoFilter(null)">Clear ✕</button>` : '');
+
+  const list = visibleCos();
+  const totLabel = total ? ` · ${fmtMoney(total)} total, ${fmtMoney(paidAmt)} paid` : '';
+  $('coCount').textContent = (list.length === cos.length ? `${cos.length} change order${cos.length === 1 ? '' : 's'}` : `${list.length} of ${cos.length}`) + totLabel;
+  $('coBody').innerHTML = list.map(coRowHtml).join('');
+  $('coEmpty').innerHTML = cos.length ? (list.length ? '' :
+      `<div class="empty">No change orders match. <button class="btn sm ghost" onclick="coQuery='';coStatusFilter=null;$('coSearch').value='';renderCos()">Clear</button></div>`)
+    : `<div class="empty"><b>No change orders yet.</b><br><span class="muted">Log each change order with its amount and status, attach the CO PDF, and tick it off once it’s paid.</span><br><br>
+        <button class="btn primary" onclick="newChangeOrder()">+ New change order</button></div>`;
+}
+function coRowHtml(c) {
+  const st = csOf(c);
+  const openAc = (c.checklist || []).filter(i => !i.done).length;
+  const sub = openAc ? `<small>☐ ${openAc} action item${openAc === 1 ? '' : 's'}</small>` : '';
+  return `<tr onclick="openCoDrawer('${c.id}')">
+    <td class="c-conum" data-label="CO #"><b>${esc(c.number || '—')}</b></td>
+    <td class="c-codesc" data-label="Description">${esc(c.description || '(no description)')}${sub}</td>
+    <td class="c-coamt${c.amount ? '' : ' is-empty'}" data-label="Amount">${c.amount ? esc(fmtMoney(c.amount) || c.amount) : '<span class="muted">—</span>'}</td>
+    <td class="c-costatus" data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
+    <td class="c-copaid" data-label="Paid">
+      <label class="tick" title="Tick when this change order is paid" onclick="event.stopPropagation()">
+        <input type="checkbox" ${c.paid ? 'checked' : ''} onchange="toggleCoPaid('${c.id}', this.checked)">
+        <span class="paid-tag">${c.paid ? (c.paidDate ? 'Paid ' + fmtShort(c.paidDate) : 'Paid') : 'Unpaid'}</span>
+      </label>
+    </td>
+  </tr>`;
+}
+function newChangeOrder() {
+  if (!job) return;
+  const c = { id: uid('co'), number: nextCoNumber(), description: '', amount: '',
+    status: 'pending', paid: false, paidDate: '', dateSubmitted: today(), dateApproved: '',
+    notes: '', docs: [], checklist: [], created: Date.now(), updated: Date.now() };
+  cos.unshift(c);
+  openCo = c.id;
+  renderCos(); renderCoDrawer();
+  saveCo(c);
+}
+async function patchCo(id, fields) {
+  const c = coById(id); if (!c) return;
+  Object.assign(c, fields);
+  renderCos();
+  await saveCo(c);
+}
+function setCoStatus(id, statusId) {
+  const c = coById(id); if (!c) return;
+  const fields = { status: statusId };
+  if (statusId === 'approved' && !c.dateApproved) fields.dateApproved = today();
+  patchCo(id, fields);
+  renderCoDrawer();
+}
+function toggleCoPaid(id, paid) {
+  const c = coById(id); if (!c) return;
+  const fields = { paid };
+  if (paid && !c.paidDate) fields.paidDate = today();
+  if (!paid) fields.paidDate = '';
+  patchCo(id, fields);
+  if (openCo === id) renderCoDrawer();
+}
+async function deleteCo(id) {
+  const c = coById(id); if (!c) return;
+  if (!confirm(`Delete change order ${c.number || ''}? This removes the record for everyone. The PDFs stay in the ShareFile folder.`)) return;
+  cos = cos.filter(x => x.id !== id);
+  if (openCo === id) closeCoDrawer();
+  renderCos();
+  try { await FB.deleteDoc(coRef(job.id, id)); await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+}
+
+/* CO PDFs into files/Change Orders/ */
+async function pickCoFiles(id) {
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
+  inp.onchange = () => addCoFiles(id, Array.from(inp.files));
+  inp.click();
+}
+async function addCoFiles(id, all) {
+  if (!coById(id) || !all.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const files = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (files.length < all.length) toast('Non-PDF files were skipped', true);
+  if (!files.length) return;
+  const newDocs = [];
+  for (const f of files) {
+    try {
+      stickyToast(`Saving ${f.name}…`);
+      const { dir, file } = await putFileInDir(f, CO_DOC_DIR, sanitizeFileName(f.name));
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+    } catch (e) { console.error(e); toast(storageError(e), true); }
+  }
+  if (!newDocs.length) return;
+  const c = coById(id);
+  if (!c) { toast('That change order is no longer available', true); noteFolderChanged(); return; }
+  c.docs = (c.docs || []).concat(newDocs);
+  renderCos(); if (openCo === id) renderCoDrawer();
+  await saveCo(c);
+  noteFolderChanged();
+  toast(`${newDocs.length} PDF${newDocs.length === 1 ? '' : 's'} added`);
+}
+async function removeCoDoc(id, docId) {
+  const c = coById(id); if (!c) return;
+  const d = (c.docs || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  await deleteStoredDoc(d);
+  c.docs = c.docs.filter(x => x.id !== docId);
+  renderCoDrawer(); renderCos();
+  await saveCo(c);
+  noteFolderChanged();
+}
+async function viewCoDoc(id, docId) {
+  const c = coById(id); if (!c) return;
+  const d = (c.docs || []).find(x => x.id === docId);
+  if (d) openStoredDoc(d);
+}
+function coDocList(c) {
+  const docs = c.docs || [];
+  if (!docs.length) return '';
+  return `<div class="file-list">` + docs.map(d => `
+    <div class="file-row"><span class="fi">📄</span>
+      <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}</small></span>
+      <button class="btn sm" onclick="viewCoDoc('${c.id}','${d.id}')">Open</button>
+      <button class="icon-btn" title="Remove" onclick="removeCoDoc('${c.id}','${d.id}')">🗑</button>
+    </div>`).join('') + `</div>`;
+}
+function closeCoDrawer() { openCo = null; $('drawerHost').innerHTML = ''; }
+function openCoDrawer(id) { openCo = id; openKey = null; renderCoDrawer(); }
+function renderCoDrawer() {
+  const c = coById(openCo);
+  if (!c) { closeCoDrawer(); return; }
+  const st = csOf(c);
+  const statusButtons = CO_STATUSES.map(o => `
+    <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
+      onclick="setCoStatus('${c.id}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
+  $('drawerHost').innerHTML = `
+  <div class="scrim" onclick="closeCoDrawer()"></div>
+  <aside class="drawer" role="dialog" aria-label="Change order">
+    <div class="drawer-head">
+      <div style="flex:1;min-width:0">
+        <div class="num">Change order</div>
+        <h2>${esc(c.number ? 'CO ' + c.number : 'New change order')}</h2>
+      </div>
+      <button class="icon-btn" onclick="deleteCo('${c.id}')" title="Delete change order">🗑</button>
+      <button class="icon-btn" onclick="closeCoDrawer()" title="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="sec">
+        <div class="grid2">
+          <div class="field"><label class="fl">CO number</label>
+            <input class="input" id="coNum" value="${esc(c.number || '')}" onchange="patchCo('${c.id}',{number:this.value.trim()})"></div>
+          <div class="field"><label class="fl">Amount</label>
+            <input class="input" id="coAmt" value="${esc(c.amount || '')}" placeholder="e.g. 4200" onchange="patchCo('${c.id}',{amount:this.value.trim()})"></div>
+        </div>
+        <div class="field"><label class="fl">Description</label>
+          <textarea class="input" rows="2" placeholder="What the change covers" onchange="patchCo('${c.id}',{description:this.value.trim()})">${esc(c.description || '')}</textarea></div>
+      </div>
+
+      <div class="sec">
+        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
+        <div class="status-grid">${statusButtons}</div>
+      </div>
+
+      <div class="sec">
+        <h4>Payment</h4>
+        <label class="pay-row"><input type="checkbox" ${c.paid ? 'checked' : ''} onchange="toggleCoPaid('${c.id}', this.checked)">
+          <span>${c.paid ? 'Paid' : 'Mark paid'}${c.paid && c.amount ? ' — ' + esc(fmtMoney(c.amount) || '') : ''}</span></label>
+        <div class="field" style="margin-top:10px"><label class="fl">Paid date</label>
+          <input class="input" type="date" value="${esc(c.paidDate || '')}" onchange="patchCo('${c.id}',{paidDate:this.value, paid: this.value ? true : ${c.paid ? 'true' : 'false'}})"></div>
+      </div>
+
+      <div class="sec">
+        <div class="grid2">
+          <div class="field"><label class="fl">Submitted</label>
+            <input class="input" type="date" value="${esc(c.dateSubmitted || '')}" onchange="patchCo('${c.id}',{dateSubmitted:this.value})"></div>
+          <div class="field"><label class="fl">Approved / rejected</label>
+            <input class="input" type="date" value="${esc(c.dateApproved || '')}" onchange="patchCo('${c.id}',{dateApproved:this.value})"></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h4>Change order PDF <button class="btn sm" onclick="pickCoFiles('${c.id}')">+ Upload PDF</button></h4>
+        ${coDocList(c)}
+        <div class="drop" id="coDrop" onclick="pickCoFiles('${c.id}')">
+          Drop the change order PDF here<br><span class="muted">Saved to this job’s ShareFile folder</span></div>
+      </div>
+
+      <div class="sec">
+        <h4>Action items ${acCountLabel(c.checklist)}</h4>
+        <div class="add-row">
+          <input class="input" id="coCheckInput" placeholder="Add an action item…"
+            onkeydown="if(event.key==='Enter')acAdd('co','${c.id}','coCheckInput')">
+          <button class="btn sm" onclick="acAdd('co','${c.id}','coCheckInput')">Add</button>
+        </div>
+        ${checklistHtml('co', c.id, c.checklist)}
+        <div class="muted" style="margin-top:6px">Click an item to add details.</div>
+      </div>
+
+      <div class="sec">
+        <h4>Notes</h4>
+        <textarea class="input" rows="4" placeholder="Anything worth remembering about this change order"
+          onchange="patchCo('${c.id}',{notes:this.value})">${esc(c.notes || '')}</textarea>
+      </div>
+    </div>
+  </aside>`;
+
+  wireDropZone($('coDrop'), files => addCoFiles(c.id, files));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6e. BILLING  —  placeholder; we’ll design this out with the user later
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderBilling() {
+  $('billingPanel').innerHTML = `
+    <div class="empty" style="max-width:560px">
+      <div style="font-size:30px;margin-bottom:6px">🧾</div>
+      <b>Billing — coming soon</b><br>
+      <span class="muted">This tab is a placeholder. Tell me how you want billing to work — progress billing / AIA-style G702–G703, schedule of values, retention, invoices to attach, what to total — and I’ll build it out here.</span>
+    </div>`;
 }
 
 /* Once something is out the door the dates matter more than the label, so the
@@ -4204,6 +4641,14 @@ async function openSpecViewer(specId, page) {
   showPdf(url, sp.name, page);
 }
 
+/* The top-bar Spec button: with no spec, import one; otherwise show the spec
+   files panel (view any, import another, or remove) — the single place specs are
+   managed now that the separate Import button is gone. */
+function openSpecMenu() {
+  const specs = specsOf(job);
+  if (!specs.length) { promptImportSpec(); return; }
+  chooseSpecModal(specs);
+}
 function chooseSpecModal(specs) {
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
@@ -4789,8 +5234,8 @@ function updateFolderBar() {
     const un = jobUnassigned.length;
     bar.className = 'folder-bar on';
     bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.${
-      un ? ` <b style="color:var(--amber)">${un} new PDF${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
-      ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new PDF${un === 1 ? '' : 's'}</button>` : ''}
+      un ? ` <b style="color:var(--amber)">${un} new file${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
+      ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new file${un === 1 ? '' : 's'}</button>` : ''}
       <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>`;
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';
