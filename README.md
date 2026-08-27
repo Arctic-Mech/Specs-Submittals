@@ -26,6 +26,12 @@ to icon buttons and the register table becomes a stack of tap-to-open cards, eac
 showing the section, status and releases without any sideways scrolling. (Loading
 a ShareFile folder to view or add PDFs still needs desktop Chrome or Edge.)
 
+**Names read officially.** When you leave a single-line name field — a subject, a
+vendor, a description, a job or category name — it's tidied to Capitalise The
+First Letter Of Every Word. Only the first letter of each word changes, so
+acronyms (VFD) and codes (GC-RFI-042) keep their case, and numbers, amounts,
+dates, search boxes and free-text notes are left exactly as typed.
+
 ## Where it saves
 
 Two places, split by what the data is:
@@ -119,6 +125,10 @@ question or response drop zone, or use the **Upload PDF** button. The PDFs are
 filed into the job's ShareFile folder under `files/RFI Questions/` and
 `files/RFI Answers/`. Search and the status chips work the same as on the
 submittal tab.
+
+**No PDF?** Each of the question and response sections also has a text box — type
+the RFI question or the response straight in when there's no PDF to attach. The
+text is kept on the RFI and is searchable.
 
 Each RFI also carries its own **action items** — the same checklist as Job
 Tracking (below) — for things like cost impact or schedule impact that need

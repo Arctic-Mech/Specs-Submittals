@@ -893,7 +893,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.6';
+const APP_VERSION = 'v3.7';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2916,7 +2916,7 @@ async function saveRfi(r) {
 
 function matchRfi(r, q) {
   if (!q) return true;
-  const hay = [r.number, r.gcNumber, r.subject, r.notes,
+  const hay = [r.number, r.gcNumber, r.subject, r.notes, r.questionText, r.answerText,
     ...(r.docs || []).map(d => d.name)].join(' ').toLowerCase();
   return hay.includes(q.toLowerCase());
 }
@@ -2962,7 +2962,8 @@ function rfiRowHtml(r) {
 function newRfi() {
   if (!job) return;
   const r = { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: '',
-    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', notes: '', showNote: false, docs: [], checklist: [],
+    status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', questionText: '', answerText: '',
+    notes: '', showNote: false, docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
   rfis.unshift(r);
   openRfi = r.id;
@@ -3118,6 +3119,8 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'question')}
         <div class="drop" id="rfiDropQ" onclick="pickRfiFiles('${r.id}','question')">
           Drop the RFI question PDF here<br><span class="muted">The RFI as sent out — saved to this job’s ShareFile folder</span></div>
+        <textarea class="input no-caps" rows="3" style="margin-top:8px" placeholder="…or type the RFI question here, if you don’t have a PDF"
+          onchange="patchRfi('${r.id}',{questionText:this.value})">${esc(r.questionText || '')}</textarea>
       </div>
 
       <div class="sec">
@@ -3125,6 +3128,8 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'answer')}
         <div class="drop" id="rfiDropA" onclick="pickRfiFiles('${r.id}','answer')">
           Drop the returned / stamped response PDF here</div>
+        <textarea class="input no-caps" rows="3" style="margin-top:8px" placeholder="…or type the response here, if you don’t have a PDF"
+          onchange="patchRfi('${r.id}',{answerText:this.value})">${esc(r.answerText || '')}</textarea>
       </div>
 
       <div class="sec">
@@ -5078,6 +5083,31 @@ document.addEventListener('keydown', e => {
     else if (openKey) { closeDrawer(); renderTable(); }
   }
 });
+
+/* Title-case single-line text fields when you leave them, so names, subjects,
+   vendors and descriptions read officially. It runs in the capture phase, before
+   the field's own onchange, so the capitalised text is what gets saved. Only the
+   first letter of each word is touched (acronyms like VFD and codes like
+   GC-RFI-042 keep their case); emails and URLs are left alone. Prose textareas,
+   the search boxes and identifier / number / URL fields opt out. */
+const NO_CAPS_IDS = new Set([
+  'searchBox', 'rfiSearch', 'coSearch', 'tagInput',            // search + tags
+  'rfiGc', 'rfiNum', 'coNum', 'coAmt', 'jfNumber', 'jfFolder', 'lkUrl',   // identifiers / numbers / URLs
+  'noteInput', 'checkInput', 'rfiCheckInput', 'coCheckInput', 'lkNote'    // freeform prose — notes + action items
+]);
+function titleCaseWords(str) {
+  return String(str).replace(/\S+/g, w => (/[@]|:\/\//.test(w) ? w : w.replace(/\p{L}/u, c => c.toUpperCase())));
+}
+function autoCapField(el) {
+  if (!el || el.tagName !== 'INPUT') return;                    // single-line inputs only, not prose textareas
+  if ((el.getAttribute('type') || 'text').toLowerCase() !== 'text') return;
+  if (el.classList.contains('no-caps') || NO_CAPS_IDS.has(el.id)) return;
+  const v = el.value;
+  if (!v) return;
+  const t = titleCaseWords(v);
+  if (t !== v) el.value = t;
+}
+document.addEventListener('change', e => autoCapField(e.target), true);
 
 /* ═══════════════════════════════════════════════════════════════════════════
    12. PER-JOB SHAREFILE FOLDER (for PDFs)
