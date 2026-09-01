@@ -228,7 +228,15 @@ which tag it was.
 ## Status, lead time and release
 
 The submittal status runs Not Started → Waiting on Vendor → Submitted to GC →
-Partial Approval → Approved, with Revise & Resubmit and Not Required alongside.
+Partial Approval → Approved, with Revise & Resubmit, Revision Requested,
+Revision Sent and Not Required alongside.
+
+In a section, the **status selector is collapsed** behind a *Change* toggle
+(the current status shows as a pill). **Notes** sit right below the responses;
+tick **Pin this note on the register row** to surface a note on the main table
+row (a 📌 callout), and the notes box grows as you type. Both the submittals
+table and the RFI list can be **sorted by latest response date** instead of by
+number, from the sort dropdown in each toolbar.
 
 Release is tracked separately, because a section can be approved and only part
 of it released. Approving a section moves it to **Ready to Release**. Setting it
@@ -287,6 +295,23 @@ always wins, so the main page shows the most recent), it is recorded in the
 section's history so the trail of what happened is kept, and it sorts the PDF
 into a subfolder named for that status inside the ShareFile folder. Each file
 row shows its status and which folder it landed in.
+
+Each PDF row has a **✎ rename** (renames the on-disk file and the record) and a
+**⤓ download**. A loose PDF dropped in the folder can be assigned to **a
+submittal section or an RFI** (as its question or response) in the Assign wizard.
+
+**Export responses.** The **⤓ Export responses** button (submittals toolbar)
+zips the most-recent response PDF of every submittal *currently shown in the
+view* into one download. Filter the table however you like — e.g. the **Revise &
+Resubmit** status chip plus a vendor search like **JBO** — hit export, and you
+get a single zip of exactly those returned responses to send straight to that
+vendor.
+
+**Open in Bluebeam.** On a laptop where you'd rather mark PDFs up in Bluebeam
+Revu, tick **Open in Bluebeam** in the folder bar. With it on, opening a PDF
+downloads it (so it opens in your desktop PDF app) instead of showing the inline
+viewer — set Bluebeam as your default PDF app so it opens automatically. It's a
+per-machine setting.
 
 ShareFile's own API is not used and cannot be: its OAuth needs a server-side
 client secret and its endpoints send no CORS headers, so a static page is
