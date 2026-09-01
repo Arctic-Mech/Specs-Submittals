@@ -300,10 +300,12 @@ header {
 .pay-row input:checked + span { color: var(--green); font-weight: 600; }
 .note-show { display: inline-flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 13px; color: var(--text-2); cursor: pointer; }
 .note-show input { width: 15px; height: 15px; cursor: pointer; }
-.rfi-note {
+.rfi-note, .pin-note {
   margin-top: 5px; font-size: 12.5px; color: var(--text-2); white-space: pre-wrap;
   background: var(--amber-sf); border-left: 3px solid var(--amber); border-radius: 4px; padding: 4px 8px;
 }
+.pin-note { max-width: 60ch; }
+textarea.autosize { overflow: hidden; }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -893,7 +895,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.8';
+const APP_VERSION = 'v3.9';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -932,6 +934,8 @@ const STATUSES = [
   { id: 'partial_approval', label: 'Partial Approval',   short: 'Partial',     color: 'teal'   },
   { id: 'approved',         label: 'Approved',           short: 'Approved',    color: 'green'  },
   { id: 'revise_resubmit',  label: 'Revise & Resubmit',  short: 'Revise',      color: 'red'    },
+  { id: 'revision_requested', label: 'Revision Requested', short: 'Rev Req',   color: 'amber'  },
+  { id: 'revision_sent',    label: 'Revision Sent',      short: 'Rev Sent',    color: 'blue'   },
   { id: 'na',               label: 'Not Required',       short: 'N/A',         color: 'grey'   }
 ];
 const ST = Object.fromEntries(STATUSES.map(s => [s.id, s]));
@@ -1855,6 +1859,8 @@ const STATUS_DIR = {
   partial_approval: 'Submittals/Partial Approval',
   approved:         'Submittals/Approved',
   revise_resubmit:  'Submittals/Revise and Resubmit',
+  revision_requested: 'Submittals/Revision Requested',
+  revision_sent:    'Submittals/Revision Sent',
   waiting_vendor:   'Submittals/Waiting on Vendor',
   na:               'Submittals/Not Required',
   spec:             'Submittals/Specs'
@@ -3132,7 +3138,7 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'question')}
         <div class="drop" id="rfiDropQ" onclick="pickRfiFiles('${r.id}','question')">
           Drop the RFI question PDF here<br><span class="muted">The RFI as sent out — saved to this job’s ShareFile folder</span></div>
-        <textarea class="input no-caps" rows="3" style="margin-top:8px" placeholder="…or type the RFI question here, if you don’t have a PDF"
+        <textarea class="input no-caps autosize" rows="3" style="margin-top:8px" placeholder="…or type the RFI question here, if you don’t have a PDF"
           onchange="patchRfi('${r.id}',{questionText:this.value})">${esc(r.questionText || '')}</textarea>
       </div>
 
@@ -3141,7 +3147,7 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'answer')}
         <div class="drop" id="rfiDropA" onclick="pickRfiFiles('${r.id}','answer')">
           Drop the returned / stamped response PDF here</div>
-        <textarea class="input no-caps" rows="3" style="margin-top:8px" placeholder="…or type the response here, if you don’t have a PDF"
+        <textarea class="input no-caps autosize" rows="3" style="margin-top:8px" placeholder="…or type the response here, if you don’t have a PDF"
           onchange="patchRfi('${r.id}',{answerText:this.value})">${esc(r.answerText || '')}</textarea>
       </div>
 
@@ -3158,7 +3164,7 @@ function renderRfiDrawer() {
 
       <div class="sec">
         <h4>Notes</h4>
-        <textarea class="input" rows="4" placeholder="Anything worth remembering about this RFI"
+        <textarea class="input autosize" rows="4" placeholder="Anything worth remembering about this RFI"
           onchange="patchRfi('${r.id}',{notes:this.value})">${esc(r.notes || '')}</textarea>
         <label class="note-show"><input type="checkbox" ${r.showNote ? 'checked' : ''}
           onchange="patchRfi('${r.id}',{showNote:this.checked})"> Show this note on the RFI log</label>
@@ -3168,6 +3174,7 @@ function renderRfiDrawer() {
 
   wireDropZone($('rfiDropQ'), files => addRfiFiles(r.id, 'question', files));
   wireDropZone($('rfiDropA'), files => addRfiFiles(r.id, 'answer', files));
+  autosizeAll($('drawerHost'));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3426,7 +3433,7 @@ function renderActionModal() {
           <label class="ac-done"><input type="checkbox" ${it.done ? 'checked' : ''} onchange="acToggle(${args},this.checked)"> <span>Done</span></label></div>
       </div>
       <div class="field"><label class="fl">Details</label>
-        <textarea class="input" rows="6" placeholder="Cost impact, schedule impact, who owns it, what’s blocking it…"
+        <textarea class="input autosize" rows="6" placeholder="Cost impact, schedule impact, who owns it, what’s blocking it…"
           onchange="acPatch(${args},{detail:this.value})">${esc(it.detail || '')}</textarea></div>
     </div>
     <div class="modal-foot">
@@ -3434,6 +3441,7 @@ function renderActionModal() {
       <div class="spacer" style="flex:1"></div>
       <button class="btn primary" onclick="closeActionModal()">Done</button>
     </div></div></div>`;
+  autosizeAll($('modalHost'));
 }
 function addNote(catId) {
   const c = catById(catId); if (!c) return;
@@ -3647,7 +3655,7 @@ function renderCoDrawer() {
             <input class="input" id="coAmt" value="${esc(c.amount || '')}" placeholder="e.g. 4200" onchange="patchCo('${c.id}',{amount:this.value.trim()})"></div>
         </div>
         <div class="field"><label class="fl">Description</label>
-          <textarea class="input" rows="2" placeholder="What the change covers" onchange="patchCo('${c.id}',{description:this.value.trim()})">${esc(c.description || '')}</textarea></div>
+          <textarea class="input autosize" rows="2" placeholder="What the change covers" onchange="patchCo('${c.id}',{description:this.value.trim()})">${esc(c.description || '')}</textarea></div>
       </div>
 
       <div class="sec">
@@ -3692,13 +3700,14 @@ function renderCoDrawer() {
 
       <div class="sec">
         <h4>Notes</h4>
-        <textarea class="input" rows="4" placeholder="Anything worth remembering about this change order"
+        <textarea class="input autosize" rows="4" placeholder="Anything worth remembering about this change order"
           onchange="patchCo('${c.id}',{notes:this.value})">${esc(c.notes || '')}</textarea>
       </div>
     </div>
   </aside>`;
 
   wireDropZone($('coDrop'), files => addCoFiles(c.id, files));
+  autosizeAll($('drawerHost'));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3830,11 +3839,12 @@ function secRowHtml(s) {
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
   const specEmpty = !editing && !s.spec, vendorEmpty = !editing && !s.vendor;
+  const noteLine = (s.showNote && s.notes) ? `<div class="pin-note">📌 ${esc(s.notes)}</div>` : '';
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title">
         <div class="t-line">${title}${pencil}</div>
-        ${tags}${desc}</td>
+        ${tags}${desc}${noteLine}</td>
       <td class="c-spec${specEmpty ? ' is-empty' : ''}" data-label="Spec">${spec}</td>
       <td class="c-vendor${vendorEmpty ? ' is-empty' : ''}" data-label="Vendor">${vendor}</td>
       <td class="c-status" data-label="Status" onclick="event.stopPropagation()">
@@ -3909,6 +3919,14 @@ async function setStatus(key, value) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function openSection(key) { openKey = key; renderDrawer(); renderTable(); }
 function closeDrawer() { openKey = null; $('drawerHost').innerHTML = ''; }
+function toggleStatusGrid(btn) {
+  const g = btn.closest('.sec').querySelector('.status-grid');
+  g.hidden = !g.hidden;
+  btn.textContent = g.hidden ? 'Change ▾' : 'Hide ▴';
+}
+/* Textareas marked .autosize grow to fit their content instead of scrolling. */
+function autosize(el) { if (!el) return; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
+function autosizeAll(host) { (host || document).querySelectorAll('textarea.autosize').forEach(autosize); }
 
 function renderDrawer() {
   const s = findSection(openKey);
@@ -3954,8 +3972,9 @@ function renderDrawer() {
     <div class="drawer-body">
 
       <div class="sec">
-        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
-        <div class="status-grid">${statusButtons}</div>
+        <h4><span>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></span>
+          <button class="btn sm ghost" onclick="toggleStatusGrid(this)">Change ▾</button></h4>
+        <div class="status-grid" hidden>${statusButtons}</div>
       </div>
 
       <div class="sec">
@@ -3974,6 +3993,14 @@ function renderDrawer() {
         <div id="listRes">${fileList(s, 'responses')}</div>
         <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">
           Drop the returned / stamped PDFs here</div>
+      </div>
+
+      <div class="sec">
+        <h4>Notes</h4>
+        <textarea class="input autosize" oninput="setField('${s.key}','notes',this.value)"
+          placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea>
+        <label class="note-show"><input type="checkbox" ${s.showNote ? 'checked' : ''}
+          onchange="setField('${s.key}','showNote',this.checked)"> Pin this note on the register row</label>
       </div>
 
       <div class="sec">
@@ -4017,9 +4044,6 @@ function renderDrawer() {
           <div class="field" style="grid-column:1/-1"><label class="fl">Description</label>
             <input class="input" value="${esc(s.description || '')}" oninput="setField('${s.key}','description',this.value)"></div>
         </div>
-        <div class="field" style="margin-bottom:0"><label class="fl">Notes</label>
-          <textarea class="input" oninput="setField('${s.key}','notes',this.value)"
-            placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea></div>
       </div>
 
       <div class="sec">
@@ -4049,6 +4073,7 @@ function renderDrawer() {
   $('drawerHost').innerHTML = html;
   wireDrop($('dropSub'), s.key, 'submittals');
   wireDrop($('dropRes'), s.key, 'responses');
+  autosizeAll($('drawerHost'));
 
   // The spec text is a separate document so that opening a job stays light.
   specDataFor(s.key).then(data => {
@@ -4454,7 +4479,7 @@ function wireDropZone(el, onFiles) {
 }
 /* The statuses a PDF can be filed under — the outgoing package and the ways it
    comes back. Picking one is required on every upload. */
-const DOC_STATUSES = ['submitted_gc', 'partial_approval', 'approved', 'revise_resubmit'];
+const DOC_STATUSES = ['submitted_gc', 'partial_approval', 'approved', 'revise_resubmit', 'revision_requested', 'revision_sent'];
 let _uploadStatusResolve = null;
 function pickUploadStatus(kind) {
   return new Promise(resolve => {
@@ -5121,6 +5146,7 @@ function autoCapField(el) {
   if (t !== v) el.value = t;
 }
 document.addEventListener('change', e => autoCapField(e.target), true);
+document.addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('autosize')) autosize(e.target); });
 
 /* ═══════════════════════════════════════════════════════════════════════════
    12. PER-JOB SHAREFILE FOLDER (for PDFs)
