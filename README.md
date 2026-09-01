@@ -159,7 +159,11 @@ chasing down. The RFI row shows how many are still open.
 
 The **Change Orders** tab logs each CO with an **amount**, a **description**, a
 status (**Pending → Submitted → Approved / Rejected**), the submitted / approved
-dates, the CO PDF (filed under `files/Change Orders/`), notes, and action items.
+dates, the CO PDF (filed under `files/Change Orders/`), any **emails** attached to
+the CO (`.msg`/`.eml`, filed under `files/Change Orders/Emails/`), notes, and
+action items. Emails are added in the CO drawer (upload or drag-drop), and a loose
+email dropped in the folder can be **assigned to a change order** from the Assign
+prompt (alongside filing it under a Job Tracking category).
 **Paid is tracked separately** as its own tick — because a CO is usually approved
 well before it's paid — so you check it off (on the row or in the drawer) when the
 money comes in, and it records the paid date. The register footer totals the CO
@@ -395,6 +399,7 @@ the status, not the whole record.
 <job folder>/files/RFIs/<RFI# - subject>/Question/<name>.pdf   the RFI as sent out
 <job folder>/files/RFIs/<RFI# - subject>/Answered/<name>.pdf   its response (empty until one arrives)
 <job folder>/files/Change Orders/<name>.pdf              change-order PDFs
+<job folder>/files/Change Orders/Emails/<name>          emails attached to change orders
 <job folder>/files/Emails/<category>/<name>              tracking emails and files, by category
 ```
 

@@ -912,7 +912,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.1';
+const APP_VERSION = 'v5.2';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -990,6 +990,7 @@ const CO_STATUSES = [
 ];
 const CS = Object.fromEntries(CO_STATUSES.map(s => [s.id, s]));
 const CO_DOC_DIR = 'Change Orders';
+const CO_EMAIL_DIR = 'Change Orders/Emails';   // emails attached to a change order
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = v => {
@@ -2052,7 +2053,7 @@ function trackedPaths() {
   (job.specs || []).forEach(add);
   for (const r of rfis) { (r.docs || []).forEach(add); }
   for (const c of tracking) { (c.files || []).forEach(add); }
-  for (const c of cos) { (c.docs || []).forEach(add); }
+  for (const c of cos) { (c.docs || []).forEach(add); (c.emails || []).forEach(add); }
   return set;
 }
 /* Files sitting in the ShareFile folder that the register doesn't reference —
@@ -2231,6 +2232,7 @@ function assignEmailModal(i, item, total) {
   const cats = tracking.slice();
   const noCats = !cats.length;
   const catOptions = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + `<option value="__new">➕ New category…</option>`;
+  const coOptions = cos.map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : 'Change order')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('');
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
     <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3>
       <button class="icon-btn" onclick="closePdf()">✕</button></div>
@@ -2238,21 +2240,68 @@ function assignEmailModal(i, item, total) {
       <div class="file-row" style="margin-bottom:14px"><span class="fi">✉️</span>
         <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : 'files/' + esc(item.dir || '')}</small></span>
         <button class="btn sm" onclick="viewLoose(${i})">Open</button></div>
-      <div class="muted" style="margin-bottom:10px">This looks like an email. File it under a Job Tracking category.</div>
-      <div class="field"><label class="fl">Category</label>
-        <select class="input" id="asgCat">${catOptions}</select></div>
-      <div class="field" id="asgNewCatWrap"${noCats ? '' : ' style="display:none"'}>
-        <label class="fl">New category name</label>
-        <input class="input" id="asgNewCat" placeholder="e.g. Owner correspondence"></div>
+      <div class="muted" style="margin-bottom:10px">This looks like an email.</div>
+      <div class="field"><label class="fl">Assign to</label>
+        <select class="input" id="asgEmailDest">
+          <option value="cat">A Job Tracking category</option>
+          <option value="co">A change order</option>
+        </select></div>
+      <div id="asgEmailCatFields">
+        <div class="field"><label class="fl">Category</label>
+          <select class="input" id="asgCat">${catOptions}</select></div>
+        <div class="field" id="asgNewCatWrap"${noCats ? '' : ' style="display:none"'}>
+          <label class="fl">New category name</label>
+          <input class="input" id="asgNewCat" placeholder="e.g. Owner correspondence"></div>
+      </div>
+      <div id="asgEmailCoFields" hidden>
+        ${cos.length ? `
+        <div class="field"><label class="fl">Change order</label>
+          <select class="input" id="asgEmailCo">${coOptions}</select></div>` : `<div class="muted">No change orders yet — create one on the Change Orders tab first, then assign this email to it.</div>`}
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
       <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
-      <button class="btn primary" onclick="assignEmail(${i})">File in category</button>
+      <button class="btn primary" onclick="assignEmailGo(${i})">File email</button>
     </div></div></div>`;
   const sel = document.getElementById('asgCat'), wrap = document.getElementById('asgNewCatWrap');
-  if (noCats) sel.value = '__new';
-  sel.onchange = () => { wrap.style.display = sel.value === '__new' ? '' : 'none'; };
+  if (noCats && sel) sel.value = '__new';
+  if (sel) sel.onchange = () => { wrap.style.display = sel.value === '__new' ? '' : 'none'; };
+  const destSel = document.getElementById('asgEmailDest');
+  destSel.onchange = () => {
+    document.getElementById('asgEmailCatFields').hidden = destSel.value !== 'cat';
+    document.getElementById('asgEmailCoFields').hidden = destSel.value !== 'co';
+  };
+}
+function assignEmailGo(i) {
+  const dest = (document.getElementById('asgEmailDest') || {}).value;
+  return dest === 'co' ? assignEmailToCo(i) : assignEmail(i);
+}
+async function assignEmailToCo(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const sel = document.getElementById('asgEmailCo');
+  if (!sel) { toast('No change orders yet — create one on the Change Orders tab first', true); return; }
+  const c = coById(sel.value);
+  if (!c) { toast('Pick a change order', true); return; }
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
+    const already = (item.at === 'files' && item.dir === CO_EMAIL_DIR);
+    let dir = item.dir, file = item.file;
+    if (!already) { const rec = await putFileInDir(blob, CO_EMAIL_DIR, sanitizeAnyName(item.name, 'email')); dir = rec.dir; file = rec.file; }
+    c.emails = c.emails || [];
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file, added: Date.now() };
+    c.emails.push(doc);
+    c.updated = Date.now();
+    try { await FB.setDoc(coRef(job.id, c.id), clean(c)); }   // throws on failure → rollback below
+    catch (e) { c.emails = c.emails.filter(x => x.id !== doc.id); if (!already) await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
+    if (!already) await deleteLoose(item);
+    renderJob();
+    toast(`Filed “${item.name}” on CO ${c.number || ''}`);
+    assignModal(i + 1);
+  } catch (e) { console.error(e); toast('Could not file that email: ' + (e.message || e), true); }
 }
 async function assignEmail(i) {
   const item = _assignQueue[i];
@@ -3640,7 +3689,7 @@ async function saveCo(c) {
 function matchCo(c, q) {
   if (!q) return true;
   const hay = [c.number, c.description, c.notes, c.amount,
-    ...(c.docs || []).map(d => d.name)].join(' ').toLowerCase();
+    ...(c.docs || []).map(d => d.name), ...(c.emails || []).map(d => d.name)].join(' ').toLowerCase();
   return hay.includes(q.toLowerCase());
 }
 function visibleCos() {
@@ -3789,6 +3838,67 @@ function coDocList(c) {
       <button class="icon-btn" title="Remove" onclick="removeCoDoc('${c.id}','${d.id}')">🗑</button>
     </div>`).join('') + `</div>`;
 }
+/* ── emails attached to a change order (.msg/.eml) ── */
+async function pickCoEmails(id) {
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
+  inp.onchange = () => addCoEmails(id, Array.from(inp.files));
+  inp.click();
+}
+async function addCoEmails(id, all) {
+  if (!coById(id) || !all.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name));
+  if (emails.length < all.length) toast('Only .msg / .eml emails were kept', true);
+  if (!emails.length) return;
+  const newDocs = [];
+  for (const f of emails) {
+    try {
+      stickyToast(`Saving ${f.name}…`);
+      const { dir, file } = await putFileInDir(f, CO_EMAIL_DIR, sanitizeAnyName(f.name, 'email'));
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+    } catch (e) { console.error(e); toast(storageError(e), true); }
+  }
+  if (!newDocs.length) return;
+  const c = coById(id);
+  if (!c) { toast('That change order is no longer available', true); noteFolderChanged(); return; }
+  c.emails = (c.emails || []).concat(newDocs);
+  renderCos(); if (openCo === id) renderCoDrawer();
+  await saveCo(c);
+  noteFolderChanged();
+  toast(`${newDocs.length} email${newDocs.length === 1 ? '' : 's'} added`);
+}
+async function removeCoEmail(id, docId) {
+  const c = coById(id); if (!c) return;
+  const d = (c.emails || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  await deleteStoredDoc(d);
+  c.emails = c.emails.filter(x => x.id !== docId);
+  renderCoDrawer(); renderCos();
+  await saveCo(c);
+  noteFolderChanged();
+}
+async function viewCoEmail(id, docId) {
+  const c = coById(id); if (!c) return;
+  const d = (c.emails || []).find(x => x.id === docId);
+  if (d) openStoredDoc(d);
+}
+function renameCoEmail(id, docId) {
+  const c = coById(id); const d = (c && (c.emails || []).find(x => x.id === docId));
+  renameDoc(d, () => { c.updated = Date.now(); return FB.setDoc(coRef(job.id, c.id), clean(c)); }, () => { if (openCo === id) renderCoDrawer(); renderCos(); });
+}
+function coEmailList(c) {
+  const docs = c.emails || [];
+  if (!docs.length) return '';
+  return `<div class="file-list">` + docs.map(d => `
+    <div class="file-row"><span class="fi">✉️</span>
+      <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}</small></span>
+      <button class="btn sm" onclick="viewCoEmail('${c.id}','${d.id}')">Open</button>
+      <button class="btn sm ghost" title="Rename" onclick="renameCoEmail('${c.id}','${d.id}')">✎</button>
+      <button class="icon-btn" title="Remove" onclick="removeCoEmail('${c.id}','${d.id}')">🗑</button>
+    </div>`).join('') + `</div>`;
+}
 function closeCoDrawer() { openCo = null; $('drawerHost').innerHTML = ''; }
 function openCoDrawer(id) { openCo = id; openKey = null; renderCoDrawer(); }
 function renderCoDrawer() {
@@ -3851,6 +3961,13 @@ function renderCoDrawer() {
       </div>
 
       <div class="sec">
+        <h4>Emails <button class="btn sm" onclick="pickCoEmails('${c.id}')">+ Add email</button></h4>
+        ${coEmailList(c)}
+        <div class="drop" id="coEmailDrop" onclick="pickCoEmails('${c.id}')">
+          Drop emails (.msg / .eml) here<br><span class="muted">In Outlook, drag the message to your desktop first, then drop it here</span></div>
+      </div>
+
+      <div class="sec">
         <h4>Action items ${acCountLabel(c.checklist)}</h4>
         <div class="add-row">
           <input class="input" id="coCheckInput" placeholder="Add an action item…"
@@ -3870,6 +3987,7 @@ function renderCoDrawer() {
   </aside>`;
 
   wireDropZone($('coDrop'), files => addCoFiles(c.id, files));
+  wireDropZone($('coEmailDrop'), files => addCoEmails(c.id, files));
   autosizeAll($('drawerHost'));
 }
 
@@ -5616,7 +5734,7 @@ function folderReadmeText() {
     '        files/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        files/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
-    '        files/Change Orders/              change-order PDFs',
+    '        files/Change Orders/              change-order PDFs (with an "Emails" subfolder for CO emails)',
     '        files/Emails/<category>/          saved emails & attachments',
     '',
     'When a PDF is replaced by a newer revision, the old one is renamed with an',
@@ -5828,9 +5946,11 @@ async function refileAll(filesRoot) {
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, statusDirName('spec'), () => { specChanged = true; }); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, CO_DOC_DIR, () => coSet.add(c)); }
+  for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, CO_EMAIL_DIR, () => coSet.add(c)); }
   for (const cat of tracking) for (const d of (cat.files || [])) { if (!isLink(d)) await plan(d, EMAIL_DIR + '/' + sanitizeAnyName(cat.name, 'Uncategorised'), () => catSet.add(cat)); }
 
-  if (!moves.length) return 0;
+  if (!moves.length) return 0;   // nothing actually movable (e.g. an orphaned record whose file is gone) → no toast, no churn
+  stickyToast('Organising the ShareFile folder…');   // only announce once there's real work to commit
 
   for (const m of moves) { m.doc.dir = m.newDir; m.doc.file = m.newFile; delete m.doc.fileId; }
   try {
@@ -6042,11 +6162,10 @@ async function maybeAutoOrganize() {
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
     let n = 0;
-    if (needsOrganize()) { stickyToast('Organising the ShareFile folder…'); n = await refileAll(filesRoot); }
+    if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
-    else { const t = $('toast'); if (t && /Organising/.test(t.textContent)) t.className = 'toast'; }   // nothing moved → clear the sticky "Organising…" toast
     if (n || stray) {
       if (openKey) renderDrawer();
       renderTable();
