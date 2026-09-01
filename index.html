@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.7';
+const APP_VERSION = 'v4.8';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2317,7 +2317,7 @@ async function assignUnassigned(i) {
       throw e;
     }
     if (!already) await deleteLoose(item);  // record is durable — remove the original
-    if (kind === 'submittals') syncAllSubmittals().catch(() => {});
+    syncAllSubmittals().catch(() => {});
     sortSections(); renderJob();
     toast(`Filed “${item.name}” under ${s.number} · ${ST[status].label}`);
     assignModal(i + 1);
@@ -4280,7 +4280,7 @@ function renameSectionDoc(key, kind, docId) {
   if (!d) return;
   renameDoc(d, () => patchSection(key, { [kind]: s[kind] }), () => {
     if (openKey === key) renderDrawer(); renderTable();
-    if (kind === 'submittals') syncAllSubmittals().catch(() => {});
+    syncAllSubmittals().catch(() => {});
   });
 }
 function renameRfiDoc(id, docId) {
@@ -4779,7 +4779,7 @@ async function addFiles(key, kind, files) {
     });
   } catch (e) { toast(writeError(e), true); return; }
   noteFolderChanged();
-  if (kind === 'submittals') syncAllSubmittals().catch(() => {});
+  syncAllSubmittals().catch(() => {});
   toast(`${added} PDF${added === 1 ? '' : 's'} filed under ${ST[status].label}`);
 }
 async function removeDoc(key, kind, docId) {
@@ -4793,7 +4793,7 @@ async function removeDoc(key, kind, docId) {
   renderDrawer(); renderTable();
   try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
   noteFolderChanged();
-  if (kind === 'submittals') syncAllSubmittals().catch(() => {});
+  syncAllSubmittals().catch(() => {});
 }
 function docOf(key, kind, docId) {
   const s = findSection(key);
@@ -5585,7 +5585,7 @@ function folderReadmeText() {
     '        the register as a spreadsheet you can open or send.',
     '  • the "files" folder — every PDF, sorted into subfolders:',
     '        files/Submittals/<status>/        submittals & responses, by status',
-    '        files/Submittals/All Submittals/  a copy of each section\'s current submittal',
+    '        files/Submittals/All Submittals/  a copy of each section\'s newest PDF, named by status',
     '        files/RFIs/Questions, files/RFIs/Answers',
     '        files/Change Orders/              change-order PDFs',
     '        files/Emails/<category>/          saved emails & attachments',
@@ -5870,43 +5870,50 @@ async function cleanupEmptyOldDirs(filesRoot) {
   return touched;
 }
 
-/* Mirror the current submittal PDF of every section (that has one) into
-   files/Submittals/All Submittals/<section>/ — a one-stop folder of the latest
-   submittals (double-stored copies). Idempotent; only copies when the mirrored
-   file is missing/out of date, and prunes sections that no longer qualify. */
-let _syncingAll = false;
-async function syncAllSubmittals(filesRoot) {
-  if (!jobFolder || _syncingAll) return;
+/* Mirror the current (most recent) PDF of every section that has one — submittal
+   OR response — into files/Submittals/All Submittals/<section>/, named with the
+   PDF's status, e.g. "Approved - Valve.pdf" (double-stored copies). Idempotent;
+   only copies when the mirrored file is missing/out of date, prunes sections
+   that no longer qualify, and coalesces concurrent calls so nothing is dropped. */
+let _syncingAll = false, _syncAgain = false;
+async function syncAllSubmittals() {
+  if (!jobFolder) return;
+  if (_syncingAll) { _syncAgain = true; return; }   // a run is in flight → ask it to run once more
   _syncingAll = true;
   try {
-    filesRoot = filesRoot || await jobFolder.getDirectoryHandle('files', { create: true });
-    const allDh = await walkDirCreate(filesRoot, 'Submittals/All Submittals');
-    const wanted = new Map();                    // folderName -> current submittal doc
-    for (const s of sectionsOf(job)) {
-      const subs = (s.submittals || []).filter(d => !isLink(d) && d.file);
-      if (!subs.length) continue;
-      subs.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));   // newest first
-      const folderName = sanitizeAnyName(`${s.number} ${s.title || ''}`.trim().slice(0, 90), s.number);
-      wanted.set(folderName, subs[0]);
-    }
-    for (const [folderName, cur] of wanted) {
-      try {
-        const secDh = await allDh.getDirectoryHandle(folderName, { create: true });
-        const want = sanitizeFileName(cur.name);
-        let has = false; const stale = [];
-        for await (const e of secDh.values()) { if (e.kind === 'file') { if (e.name === want) has = true; else stale.push(e.name); } }
-        if (!has) {
-          const blob = await readDocBlob(cur);
-          if (blob) { const fh = await secDh.getFileHandle(want, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }
-        }
-        for (const n of stale) { try { await secDh.removeEntry(n); } catch (e) {} }
-      } catch (e) {}
-    }
-    try {                                         // drop section folders that no longer qualify
-      for await (const e of allDh.values()) {
-        if (e.kind === 'directory' && !wanted.has(e.name)) { try { await allDh.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+    do {
+      _syncAgain = false;
+      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const allDh = await walkDirCreate(filesRoot, ALL_SUBMITTALS_DIR);
+      const wanted = new Map();                  // folderName -> { doc, name }
+      for (const s of sectionsOf(job)) {
+        const docs = [...(s.submittals || []), ...(s.responses || [])].filter(d => !isLink(d) && d.file);
+        if (!docs.length) continue;
+        docs.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));   // newest first
+        const cur = docs[0];
+        const stLabel = (ST[cur.status] || ST[s.status || 'not_started'] || {}).label || '';
+        const wantName = sanitizeFileName((stLabel ? stLabel + ' - ' : '') + cur.name);
+        const folderName = sanitizeAnyName(`${s.number} ${s.title || ''}`.trim().slice(0, 90), s.number);
+        wanted.set(folderName, { doc: cur, name: wantName });
       }
-    } catch (e) {}
+      for (const [folderName, { doc, name }] of wanted) {
+        try {
+          const secDh = await allDh.getDirectoryHandle(folderName, { create: true });
+          let has = false; const stale = [];
+          for await (const e of secDh.values()) { if (e.kind === 'file') { if (e.name === name) has = true; else stale.push(e.name); } }
+          if (!has) {
+            const blob = await readDocBlob(doc);
+            if (blob) { const fh = await secDh.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }
+          }
+          for (const n of stale) { try { await secDh.removeEntry(n); } catch (e) {} }
+        } catch (e) {}
+      }
+      try {                                       // drop section folders that no longer qualify
+        for await (const e of allDh.values()) {
+          if (e.kind === 'directory' && !wanted.has(e.name)) { try { await allDh.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+        }
+      } catch (e) {}
+    } while (_syncAgain);
   } catch (e) { console.error(e); }
   finally { _syncingAll = false; }
 }
@@ -5955,7 +5962,7 @@ async function saveToFolder() {
     // then tidy away the empty old flat folders.
     const moved = await refileAll(filesRoot);
     await cleanupEmptyOldDirs(filesRoot);
-    await syncAllSubmittals(filesRoot);            // refresh the All Submittals mirror
+    await syncAllSubmittals();                     // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
     // current. Records and files are already consistent, so a failure here only
