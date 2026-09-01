@@ -912,7 +912,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.9';
+const APP_VERSION = 'v5.0';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1895,6 +1895,12 @@ function statusDirName(id) { return STATUS_DIR[id] || (SUBMITTALS_DIR + '/Filed'
 const EMAIL_DIR = 'Emails';
 const ALL_SUBMITTALS_NAME = 'All Submittals';
 const ALL_SUBMITTALS_DIR = 'Submittals/All Submittals';   // mirror of each section's current submittal
+const ARCHIVE_NAME = 'Archive';
+const ARCHIVE_DIR  = 'Submittals/Archive';   // superseded / replaced / no-longer-relevant PDFs live here
+/* A doc is archived if it's flagged, or its name still carries the legacy "OLD - "
+   prefix (so pre-Archive folders migrate in on the next organise). Links never
+   archive — there's no file to move. */
+function isArchived(d) { return !!d && !isLink(d) && (d.archived === true || /^OLD\s*-\s*/i.test(d.name || '')); }
 /* Old flat folder names from before the reorg — used to detect and clean up the
    pre-nesting layout. */
 const OLD_FLAT_DIRS = ['Submitted to GC', 'Partial Approval', 'Approved', 'Revise and Resubmit',
@@ -4715,24 +4721,28 @@ function chooseUploadStatus(id) {
   closePdf();
   if (r) r(id);
 }
-/* Prefix a superseded PDF's name (and its file on disk) with "OLD - " so it's
-   obvious in ShareFile it isn't the current revision. Idempotent. */
+/* Retire a superseded PDF: flag it archived, prefix its name with "OLD - " so it's
+   obviously not the current revision, and move the file into the Submittals/Archive
+   folder (out of the live status folders). Idempotent. */
 async function prefixOld(doc) {
   if (!doc || isLink(doc)) return;
-  if (/^OLD\s*-\s*/i.test(doc.name || '')) return;      // already marked
-  const newName = 'OLD - ' + (doc.name || doc.file || 'document.pdf');
-  if (!doc.file || !jobFolder) { doc.name = newName; return; }   // no readable file → flag the record only
+  if (doc.archived === true && doc.dir === ARCHIVE_DIR && /^OLD\s*-\s*/i.test(doc.name || '')) return;   // fully archived
+  doc.archived = true;
+  const already = /^OLD\s*-\s*/i.test(doc.name || '');
+  const newName = already ? (doc.name || doc.file) : 'OLD - ' + (doc.name || doc.file || 'document.pdf');
+  if (!doc.file || !jobFolder) { doc.name = newName; doc.dir = ARCHIVE_DIR; return; }   // no readable file → flag the record only
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files');
-    const dh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
-    const blob = await (await dh.getFileHandle(doc.file)).getFile();
-    const target = await uniqueFileName(dh, sanitizeFileName(newName));
-    const fh = await dh.getFileHandle(target, { create: true });
+    const srcDh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
+    const blob = await (await srcDh.getFileHandle(doc.file)).getFile();
+    const destDh = await walkDirCreate(filesRoot, ARCHIVE_DIR);
+    const target = await uniqueFileName(destDh, sanitizeFileName(newName));
+    const fh = await destDh.getFileHandle(target, { create: true });
     const w = await fh.createWritable(); await w.write(blob); await w.close();
-    if (target !== doc.file) { try { await dh.removeEntry(doc.file); } catch (e) {} }
+    if (!(doc.dir === ARCHIVE_DIR && target === doc.file)) { try { await srcDh.removeEntry(doc.file); } catch (e) {} }
     if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
-    doc.name = target; doc.file = target;
-  } catch (e) { doc.name = newName; }
+    doc.name = target; doc.file = target; doc.dir = ARCHIVE_DIR;
+  } catch (e) { doc.name = newName; doc.dir = ARCHIVE_DIR; }
 }
 async function markPriorOld(s, kind, priorIds) {
   for (const d of (s[kind] || [])) if (priorIds.has(d.id) && !isLink(d)) await prefixOld(d);
@@ -5585,14 +5595,16 @@ function folderReadmeText() {
     '  • "' + REGISTER_CSV + '"',
     '        the register as a spreadsheet you can open or send.',
     '  • the "files" folder — every PDF, sorted into subfolders:',
-    '        files/Submittals/<status>/        submittals & responses, by status',
+    '        files/Submittals/<status>/        current submittals & responses, by status',
     '        files/Submittals/All Submittals/  a copy of each section\'s newest PDF, named by status',
+    '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        files/RFIs/Questions, files/RFIs/Answers',
     '        files/Change Orders/              change-order PDFs',
     '        files/Emails/<category>/          saved emails & attachments',
     '',
-    'A superseded PDF (an old revision) is renamed with an "OLD - " prefix so the',
-    'current one is obvious.',
+    'When a PDF is replaced by a newer revision, the old one is renamed with an',
+    '"OLD - " prefix and moved into files/Submittals/Archive/ — so the live status',
+    'folders only ever hold the current PDFs.',
     '',
     'Deleting or moving these files breaks the link to the tool or loses documents.',
     'To view or edit this job, open The Dingus (or double-click "' + LAUNCHER_FILE + '")',
@@ -5762,6 +5774,7 @@ async function buildRegisterSnapshot() {
 /* Which status folder a document belongs in — its own status, else a default by
    kind. Never the section status (which can be not_started / N/A). */
 function docWantDir(doc, kind) {
+  if (isArchived(doc)) return ARCHIVE_DIR;
   return statusDirName(doc.status || (kind === 'responses' ? 'approved' : 'submitted_gc'));
 }
 /* Copy one doc's PDF into files/<wantDir>/ (keeping its name) WITHOUT deleting
@@ -5794,7 +5807,7 @@ async function refileAll(filesRoot) {
   const plan = async (doc, wantDir, mark) => { const m = await planRefile(filesRoot, doc, wantDir); if (m) { moves.push(m); mark(); } };
 
   for (const s of sectionsOf(job)) for (const kind of ['submittals', 'responses'])
-    for (const d of (s[kind] || [])) { if (!isLink(d)) await plan(d, docWantDir(d, kind), () => secs.add(s)); }
+    for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, statusDirName('spec'), () => { specChanged = true; }); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, RFI_DOC_KINDS[d.kind] || RFI_DOC_KINDS.question, () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, CO_DOC_DIR, () => coSet.add(c)); }
@@ -5888,7 +5901,7 @@ async function syncAllSubmittals() {
       const allDh = await walkDirCreate(filesRoot, ALL_SUBMITTALS_DIR);
       const wanted = new Map();                  // folderName -> { doc, name }
       for (const s of sectionsOf(job)) {
-        const docs = [...(s.submittals || []), ...(s.responses || [])].filter(d => !isLink(d) && d.file);
+        const docs = [...(s.submittals || []), ...(s.responses || [])].filter(d => !isLink(d) && d.file && !isArchived(d));
         if (!docs.length) continue;
         docs.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));   // newest first
         const cur = docs[0];
@@ -5922,7 +5935,9 @@ async function syncAllSubmittals() {
 function needsOrganize() {
   if (!job) return false;
   const old = d => d && OLD_FLAT_SET.has(d.dir);
-  for (const s of sectionsOf(job)) if ((s.submittals || []).some(old) || (s.responses || []).some(old)) return true;
+  const misarchived = d => isArchived(d) && d.dir !== ARCHIVE_DIR;   // OLD doc still in a live status folder
+  for (const s of sectionsOf(job)) if ((s.submittals || []).some(old) || (s.responses || []).some(old)
+      || (s.submittals || []).some(misarchived) || (s.responses || []).some(misarchived)) return true;
   if ((job.specs || []).some(old)) return true;
   for (const r of rfis) if ((r.docs || []).some(old)) return true;
   return false;                                  // CO ('Change Orders') and email ('Emails/…') dirs were never flat
@@ -5939,6 +5954,7 @@ async function maybeAutoOrganize() {
     if (needsOrganize()) { stickyToast('Organising the ShareFile folder…'); n = await refileAll(filesRoot); }
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
+    else { const t = $('toast'); if (t && /Organising/.test(t.textContent)) t.className = 'toast'; }   // nothing moved → clear the sticky "Organising…" toast
     if (n || stray) {
       if (openKey) renderDrawer();
       renderTable();

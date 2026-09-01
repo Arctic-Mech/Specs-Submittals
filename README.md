@@ -291,8 +291,11 @@ tick puts the row back). Status and release are always live on the row. The
 submittal and response counts live in the section panel.
 
 When a newer PDF is uploaded for a section (a revised submittal, say), the
-previous one is renamed with an **"OLD - "** prefix so it's obvious in ShareFile
-which is current. A **Submittals/All Submittals/** folder also keeps a copy of
+previous one is renamed with an **"OLD - "** prefix and moved into a
+**Submittals/Archive/** folder, so the live status folders only ever hold the
+current PDFs while the superseded revisions stay together, out of the way but not
+lost. (Older folders created before this get tidied into Archive automatically on
+the next load or **Save to folder**.) A **Submittals/All Submittals/** folder also keeps a copy of
 each section's **most recent PDF** — submittal or response — one subfolder per
 spec section that has one, each file named with its status (e.g.
 `Approved - Valve.pdf`), for grabbing them all at once (double-stored on purpose).
@@ -380,6 +383,7 @@ the status, not the whole record.
 <job folder>/READ ME - do not delete.txt                  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
 <job folder>/files/Submittals/All Submittals/<section>/   each section's newest PDF, named by status
+<job folder>/files/Submittals/Archive/<name>.pdf         superseded PDFs ("OLD - …"), old revisions
 <job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
 <job folder>/files/Submittals/Approved/<name>.pdf        approved responses
 <job folder>/files/Submittals/Revise and Resubmit/<name>.pdf
