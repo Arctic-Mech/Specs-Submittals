@@ -218,6 +218,7 @@ header {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: 14px;
 }
+.sort-select { width: auto; padding: 6px 26px 6px 9px; font-size: 12.5px; }
 .seg { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 2px; }
 .seg button {
   border: none; background: transparent; padding: 5px 12px; border-radius: 5px;
@@ -807,6 +808,11 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <div class="seg" id="divSeg"></div>
         <div class="search"><input class="input" id="searchBox" placeholder="Search section number or title…" autocomplete="off"></div>
         <div class="spacer"></div>
+        <select class="input sort-select" id="submSortSel" title="Sort order"
+          onchange="submSort=this.value;renderTable();$('countLabel').textContent=countLabel();">
+          <option value="section">Sort: Section #</option>
+          <option value="response">Sort: Latest response</option>
+        </select>
         <span class="muted" id="countLabel"></span>
       </div>
       <div class="chips" id="statusChips"></div>
@@ -830,6 +836,11 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
       <div class="toolbar">
         <div class="search"><input class="input" id="rfiSearch" placeholder="Search RFIs…" autocomplete="off"></div>
         <div class="spacer"></div>
+        <select class="input sort-select" id="rfiSortSel" title="Sort order"
+          onchange="rfiSort=this.value;renderRfis();">
+          <option value="number">Sort: RFI #</option>
+          <option value="response">Sort: Latest response</option>
+        </select>
         <span class="muted" id="rfiCount"></span>
       </div>
       <div class="chips" id="rfiChips"></div>
@@ -895,7 +906,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v3.9';
+const APP_VERSION = 'v4.0';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2266,6 +2277,8 @@ let statusFilter = null;
 let releaseFilter = null;
 let divPicked = false;      // the opening tab is chosen once, then left alone
 let query = '';
+let submSort = 'section';   // 'section' | 'response' (latest response date)
+let rfiSort = 'number';     // 'number' | 'response' (latest answered date)
 let openKey = null;       // section open in the drawer
 let editRow = null;       // section whose row is in inline-edit mode (pencil toggled)
 let unsubJobs = null;
@@ -2784,15 +2797,26 @@ function matchedTag(s, q) {
   return (s.tags || []).find(t => t.toLowerCase().includes(q)) || null;
 }
 
+/* When the most recent response for a section came back — the newest response
+   PDF's upload time, else the typed "Returned" date. */
+function latestResponseTs(s) {
+  let t = 0;
+  for (const d of (s.responses || [])) { const dt = d.uploaded || 0; if (dt > t) t = dt; }
+  if (!t && s.returnedDate) t = new Date(s.returnedDate + 'T00:00:00').getTime() || 0;
+  return t;
+}
 function visibleSections() {
   const q = query.trim().toLowerCase();
-  return sectionsOf(job).slice().sort(sectionOrder).filter(s => {
+  const list = sectionsOf(job).filter(s => {
     if (divFilter !== 'all' && s.division !== divFilter) return false;
     if (statusFilter && (s.status || 'not_started') !== statusFilter) return false;
     if (releaseFilter && (s.releaseState || 'not_ready') !== releaseFilter) return false;
     if (q && !searchHay(s).includes(q)) return false;
     return true;
   });
+  if (submSort === 'response') list.sort((a, b) => latestResponseTs(b) - latestResponseTs(a) || sectionOrder(a, b));
+  else list.sort(sectionOrder);
+  return list;
 }
 
 /* ── spec files (a job can hold several — Div 22 and Div 23 often arrive apart) ── */
@@ -2939,8 +2963,17 @@ function matchRfi(r, q) {
     ...(r.docs || []).map(d => d.name)].join(' ').toLowerCase();
   return hay.includes(q.toLowerCase());
 }
+/* When an RFI was last answered — its answered date, else the newest answer PDF. */
+function rfiResponseTs(r) {
+  if (r.dateAnswered) return new Date(r.dateAnswered + 'T00:00:00').getTime() || 0;
+  let t = 0; for (const d of (r.docs || [])) if (d.kind === 'answer' && (d.added || 0) > t) t = d.added;
+  return t;
+}
 function visibleRfis() {
-  return rfis.filter(r => (!rfiStatusFilter || (r.status || 'open') === rfiStatusFilter) && matchRfi(r, rfiQuery));
+  const list = rfis.filter(r => (!rfiStatusFilter || (r.status || 'open') === rfiStatusFilter) && matchRfi(r, rfiQuery));
+  if (rfiSort === 'response') list.sort((a, b) => rfiResponseTs(b) - rfiResponseTs(a)
+    || String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }));
+  return list;                                   // else keep the by-number order from watchRfis
 }
 function setRfiFilter(id) { rfiStatusFilter = (rfiStatusFilter === id) ? null : id; renderRfis(); }
 
@@ -3790,7 +3823,7 @@ function renderTable() {
 
   let html = '', lastDiv = null;
   for (const s of list) {
-    if (divFilter === 'all' && s.division !== lastDiv) {
+    if (divFilter === 'all' && submSort !== 'response' && s.division !== lastDiv) {
       lastDiv = s.division;
       html += `<tr class="divhead"><td colspan="6">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
     }
