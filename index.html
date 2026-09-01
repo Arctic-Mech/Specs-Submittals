@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.5';
+const APP_VERSION = 'v4.6';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1077,8 +1077,17 @@ function releasedOn(s) {
 const cvar = c => `var(--${c})`;
 const csf  = c => `var(--${c}-sf)`;
 
-const DIVISION_NAMES = { '22': 'Plumbing', '23': 'HVAC' };
-const DIVISIONS = ['22', '23'];
+const DIVISION_NAMES = {
+  '07': 'Thermal & Moisture Protection', '21': 'Fire Suppression',
+  '22': 'Plumbing', '23': 'HVAC', '25': 'Integrated Automation', '26': 'Electrical', '33': 'Utilities'
+};
+const DIVISIONS = ['22', '23'];        // the divisions a spec import splits into
+/* Divisions actually present in the open job (so a manually-added Div 07 section
+   gets its own tab), newest number order. */
+function jobDivisions() {
+  const set = new Set(sectionsOf(job).map(s => s.division).filter(Boolean));
+  return [...set].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. SPEC PARSER
@@ -2083,10 +2092,10 @@ async function deleteLoose(item) {
 
 /* ── assign loose PDFs, one at a time ── */
 function specSectionOptions(selected) {
-  return DIVISIONS.map(div => {
+  return jobDivisions().map(div => {
     const secs = sectionsOf(job).filter(s => s.division === div).sort(sectionOrder);
     if (!secs.length) return '';
-    return `<optgroup label="Division ${div} — ${DIVISION_NAMES[div] || ''}">${
+    return `<optgroup label="Division ${div}${DIVISION_NAMES[div] ? ' — ' + DIVISION_NAMES[div] : ''}">${
       secs.map(s => `<option value="${esc(s.key)}" ${s.key === selected ? 'selected' : ''}>${esc(s.number)} — ${esc(s.title || 'untitled')}</option>`).join('')
     }</optgroup>`;
   }).join('');
@@ -2342,7 +2351,7 @@ function storageError(e) {
 let jobs = [];            // job metadata, newest first
 let job = null;           // open job
 let view = 'jobs';
-let divFilter = '22';
+let divFilter = 'all';
 let statusFilter = null;
 let releaseFilter = null;
 let divPicked = false;      // the opening tab is chosen once, then left alone
@@ -2467,8 +2476,8 @@ function watchSections(jobId) {
       // chosen now — landing on an empty Division 22 hides a Div 23-only job.
       if (!divPicked && job.sections.length) {
         divPicked = true;
-        if (!job.sections.some(x => x.division === divFilter)) {
-          const first = DIVISIONS.find(d => job.sections.some(x => x.division === d));
+        if (divFilter !== 'all' && !job.sections.some(x => x.division === divFilter)) {
+          const first = jobDivisions()[0];
           if (first) divFilter = first;
         }
       }
@@ -2655,7 +2664,7 @@ async function openJob(id) {
   const j = jobs.find(x => x.id === id);
   if (!j) { toast('Job not found', true); return; }
   job = Object.assign({}, j, { sections: [] });
-  statusFilter = null; releaseFilter = null; query = ''; divPicked = false;
+  statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
   openRfi = null; trackCat = null; openCo = null;
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
@@ -2940,12 +2949,14 @@ function renderJob() {
 
   $('btnSpec').style.display = specs.length ? '' : 'none';
 
-  /* division segmented control */
+  /* division segmented control — a tab per division actually in this job */
+  const divs = jobDivisions();
   const counts = {};
-  DIVISIONS.forEach(d => counts[d] = secs.filter(s => s.division === d).length);
-  $('divSeg').innerHTML = DIVISIONS.map(d =>
-    `<button class="${divFilter === d ? 'on' : ''}" onclick="setDiv('${d}')">Div ${d} · ${DIVISION_NAMES[d]}<span class="n">${counts[d]}</span></button>`
-  ).join('') + `<button class="${divFilter === 'all' ? 'on' : ''}" onclick="setDiv('all')">All<span class="n">${secs.length}</span></button>`;
+  divs.forEach(d => counts[d] = secs.filter(s => s.division === d).length);
+  $('divSeg').innerHTML = `<button class="${divFilter === 'all' ? 'on' : ''}" onclick="setDiv('all')">All<span class="n">${secs.length}</span></button>` +
+    divs.map(d =>
+      `<button class="${divFilter === d ? 'on' : ''}" onclick="setDiv('${d}')">Div ${d}${DIVISION_NAMES[d] ? ' · ' + DIVISION_NAMES[d] : ''}<span class="n">${counts[d]}</span></button>`
+    ).join('');
 
   /* status filter chips */
   const scope = secs.filter(s => divFilter === 'all' || s.division === divFilter);
@@ -3912,7 +3923,7 @@ function renderTable() {
   for (const s of list) {
     if (divFilter === 'all' && submSort !== 'response' && s.division !== lastDiv) {
       lastDiv = s.division;
-      html += `<tr class="divhead"><td colspan="6">Division ${s.division} — ${DIVISION_NAMES[s.division] || ''}</td></tr>`;
+      html += `<tr class="divhead"><td colspan="6">Division ${s.division}${DIVISION_NAMES[s.division] ? ' — ' + DIVISION_NAMES[s.division] : ''}</td></tr>`;
     }
     html += secRowHtml(s);
   }
@@ -4809,7 +4820,6 @@ async function addSectionManually() {
   if (!num) return;
   const key = normNum(num);
   if (!key) { toast('Use a 6-digit section number, e.g. 23 05 93', true); return; }
-  if (!DIVISIONS.includes(divOf(key))) { toast('Only Divisions 22 and 23 are tracked here', true); return; }
   if (findSection(key)) { toast('That section is already in the register', true); return; }
   const title = prompt('Section title:') || '';
   const rec = newSectionRecord({
@@ -5277,7 +5287,7 @@ function buildCsv() {
   push(['SUBMITTAL REGISTER']);
   push(['Project:', job.name || '']);
   if (job.number) push(['Job No.:', job.number]);
-  push(['Divisions:', '22 — Plumbing, 23 — HVAC']);
+  push(['Divisions:', jobDivisions().map(d => d + (DIVISION_NAMES[d] ? ' — ' + DIVISION_NAMES[d] : '')).join(', ')]);
   push(['Date:', csvDate(today())]);
   push(['Total sections:', String(secs.length)]);
   push([]);
@@ -5290,7 +5300,7 @@ function buildCsv() {
   for (const s of secs) {
     if (s.division !== lastDiv) {
       lastDiv = s.division;
-      push([`DIVISION ${s.division} — ${(DIVISION_NAMES[s.division] || '').toUpperCase()}`]);
+      push([`DIVISION ${s.division}${DIVISION_NAMES[s.division] ? ' — ' + DIVISION_NAMES[s.division].toUpperCase() : ''}`]);
     }
     const rels = s.releases || [];
     const released = rels.length
@@ -5307,7 +5317,7 @@ function buildCsv() {
         : rels.some(r => r.delivered) ? `${rels.filter(r => r.delivered).length} of ${rels.length}` : '')
       : '';
     push([
-      s.number, s.title || '', s.description || '', s.manufacturer || '', s.vendor || '', s.package || '',
+      s.number, s.title || '', s.description || '', s.manufacturer || s.spec || '', s.vendor || '', s.package || '',
       (ST[s.status || 'not_started'] || {}).label,
       csvDate(s.submittedDate), csvDate(s.returnedDate),
       leadLabel(s.leadWeeks) || '',

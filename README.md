@@ -6,7 +6,9 @@ tabs:
 - **Submittals** — import a project spec PDF, it is split into its individual
   Division 22 and 23 sections, and each section carries a status, searchable
   tags, the submittal PDFs sent out, the response PDFs that come back, and what
-  has been released to site.
+  has been released to site. Sections in any other division (07, 21, 26, …) can
+  be added by hand; the register opens on the **All** view and shows a tab per
+  division present.
 - **RFIs** — a register of RFIs, each holding the question PDF you sent and the
   response PDF that came back, with a status (Open → Submitted → Answered →
   Closed), the sent / due / answered dates, the GC's own RFI number, and its own
