@@ -249,6 +249,8 @@ header {
 .folder-bar .btn { margin-left: auto; }
 .folder-bar.on   { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .folder-bar.warn { background: var(--amber-sf); border: 1px solid var(--amber); color: var(--text); }
+.folder-bar .fb-bb { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12.5px; white-space: nowrap; }
+.folder-bar .fb-bb input { cursor: pointer; }
 
 /* ── job-level tabs (Submittals / RFIs / Job Tracking) ── */
 .job-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
@@ -813,6 +815,8 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
           <option value="section">Sort: Section #</option>
           <option value="response">Sort: Latest response</option>
         </select>
+        <button class="btn sm ghost" onclick="exportResponses()"
+          title="Zip the latest response PDF of every submittal shown in this filtered view">⤓ Export responses</button>
         <span class="muted" id="countLabel"></span>
       </div>
       <div class="chips" id="statusChips"></div>
@@ -906,7 +910,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.0';
+const APP_VERSION = 'v4.1';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2099,28 +2103,84 @@ function assignModal(i) {
       <div class="file-row" style="margin-bottom:14px"><span class="fi">📄</span>
         <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : 'files/' + esc(item.dir || '')}</small></span>
         <button class="btn sm" onclick="viewLoose(${i})">View</button></div>
-      <div class="field"><label class="fl">Spec section</label>
-        <select class="input" id="asgSection">${specSectionOptions(firstKey)}</select></div>
-      <div class="grid2">
-        <div class="field"><label class="fl">What is it</label>
-          <select class="input" id="asgKind">
-            <option value="submittals">Submittal (sent to GC)</option>
-            <option value="responses">Response (came back)</option>
-          </select></div>
-        <div class="field"><label class="fl">Status</label>
-          <select class="input" id="asgStatus">${DOC_STATUSES.map(id => `<option value="${id}">${esc(ST[id].label)}</option>`).join('')}</select></div>
+      <div class="field"><label class="fl">Assign to</label>
+        <select class="input" id="asgDest">
+          <option value="submittal">A submittal (spec section)</option>
+          <option value="rfi">An RFI</option>
+        </select></div>
+      <div id="asgSubmittalFields">
+        <div class="field"><label class="fl">Spec section</label>
+          <select class="input" id="asgSection">${specSectionOptions(firstKey)}</select></div>
+        <div class="grid2">
+          <div class="field"><label class="fl">What is it</label>
+            <select class="input" id="asgKind">
+              <option value="submittals">Submittal (sent to GC)</option>
+              <option value="responses">Response (came back)</option>
+            </select></div>
+          <div class="field"><label class="fl">Status</label>
+            <select class="input" id="asgStatus">${DOC_STATUSES.map(id => `<option value="${id}">${esc(ST[id].label)}</option>`).join('')}</select></div>
+        </div>
+        <div class="muted" style="margin-top:4px">It becomes the section's current status, and the PDF moves into the matching status folder.</div>
       </div>
-      <div class="muted" style="margin-top:4px">It becomes the section's current status, and the PDF moves into the matching status folder.</div>
+      <div id="asgRfiFields" hidden>
+        ${rfis.length ? `
+        <div class="field"><label class="fl">RFI</label>
+          <select class="input" id="asgRfi">${rfis.map(r => `<option value="${r.id}">${esc(r.number || '—')}${r.subject ? ' · ' + esc(r.subject) : ''}</option>`).join('')}</select></div>
+        <div class="field"><label class="fl">What is it</label>
+          <select class="input" id="asgRfiKind">
+            <option value="question">RFI question (sent out)</option>
+            <option value="answer">RFI response (came back)</option>
+          </select></div>` : `<div class="muted">No RFIs yet — create one on the RFIs tab first, then assign this file to it.</div>`}
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
       <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
-      <button class="btn primary" onclick="assignUnassigned(${i})">Assign &amp; file</button>
+      <button class="btn primary" onclick="assignPdf(${i})">Assign &amp; file</button>
     </div></div></div>`;
+  const destSel = document.getElementById('asgDest');
+  destSel.onchange = () => {
+    document.getElementById('asgSubmittalFields').hidden = destSel.value !== 'submittal';
+    document.getElementById('asgRfiFields').hidden = destSel.value !== 'rfi';
+  };
   // default the status to match the kind
   const kindSel = document.getElementById('asgKind'), stSel = document.getElementById('asgStatus');
   kindSel.onchange = () => { stSel.value = kindSel.value === 'responses' ? 'approved' : 'submitted_gc'; };
   stSel.value = 'submitted_gc';
+}
+function assignPdf(i) {
+  const dest = (document.getElementById('asgDest') || {}).value;
+  return dest === 'rfi' ? assignPdfToRfi(i) : assignUnassigned(i);
+}
+async function assignPdfToRfi(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const rsel = document.getElementById('asgRfi');
+  if (!rsel) { toast('No RFIs yet — create one on the RFIs tab first', true); return; }
+  const r = rfiById(rsel.value);
+  if (!r) { toast('Pick an RFI', true); return; }
+  const kind = document.getElementById('asgRfiKind').value;   // 'question' | 'answer'
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
+    const wantDir = RFI_DOC_KINDS[kind] || RFI_DOC_KINDS.question;
+    const already = (item.at === 'files' && item.dir === wantDir);
+    let dir = item.dir, file = item.file;
+    if (!already) { const rec = await putFileInDir(blob, wantDir, sanitizeFileName(item.name)); dir = rec.dir; file = rec.file; }
+    r.docs = r.docs || [];
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, kind, dir, file, added: Date.now() };
+    r.docs.push(doc);
+    if (kind === 'answer' && r.status !== 'closed') { r.status = 'answered'; if (!r.dateAnswered) r.dateAnswered = today(); }
+    else if (kind === 'question' && r.status === 'open') { r.status = 'submitted'; if (!r.dateSent) r.dateSent = today(); }
+    r.updated = Date.now();
+    try { await FB.setDoc(rfiRef(job.id, r.id), clean(r)); }   // throws on failure → rollback below
+    catch (e) { r.docs = r.docs.filter(x => x.id !== doc.id); if (!already) await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
+    if (!already) await deleteLoose(item);
+    renderJob();
+    toast(`Filed “${item.name}” on RFI ${r.number || ''}`);
+    assignModal(i + 1);
+  } catch (e) { console.error(e); toast('Could not file that PDF: ' + (e.message || e), true); }
 }
 async function viewLoose(i) {
   const item = _assignQueue[i];
@@ -2279,6 +2339,8 @@ let divPicked = false;      // the opening tab is chosen once, then left alone
 let query = '';
 let submSort = 'section';   // 'section' | 'response' (latest response date)
 let rfiSort = 'number';     // 'number' | 'response' (latest answered date)
+// per-machine: open PDFs by downloading (to open in Bluebeam) instead of the inline viewer
+let bluebeamMode = (() => { try { return localStorage.getItem('sr_bluebeam') === '1'; } catch (e) { return false; } })();
 let openKey = null;       // section open in the drawer
 let editRow = null;       // section whose row is in inline-edit mode (pencil toggled)
 let unsubJobs = null;
@@ -3116,7 +3178,8 @@ function rfiDocList(r, kind) {
   return `<div class="file-list">` + docs.map(d => `
     <div class="file-row"><span class="fi">📄</span>
       <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}</small></span>
-      <button class="btn sm" onclick="viewRfiDoc('${r.id}','${d.id}')">Open</button>
+      <button class="btn sm" onclick="viewRfiDoc('${r.id}','${d.id}')">${bluebeamMode ? 'Bluebeam' : 'Open'}</button>
+      <button class="btn sm ghost" title="Rename" onclick="renameRfiDoc('${r.id}','${d.id}')">✎</button>
       <button class="icon-btn" title="Remove" onclick="removeRfiDoc('${r.id}','${d.id}')">🗑</button>
     </div>`).join('') + `</div>`;
 }
@@ -3285,6 +3348,7 @@ function renderTracking() {
         <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
           <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
           <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
+          <button class="btn sm ghost" title="Rename" onclick="renameEmailDoc('${c.id}','${f.id}')">✎</button>
           <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
         </div>`).join('') + `</div>` : ''}
     </div>
@@ -3655,7 +3719,8 @@ function coDocList(c) {
   return `<div class="file-list">` + docs.map(d => `
     <div class="file-row"><span class="fi">📄</span>
       <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}</small></span>
-      <button class="btn sm" onclick="viewCoDoc('${c.id}','${d.id}')">Open</button>
+      <button class="btn sm" onclick="viewCoDoc('${c.id}','${d.id}')">${bluebeamMode ? 'Bluebeam' : 'Open'}</button>
+      <button class="btn sm ghost" title="Rename" onclick="renameCoDoc('${c.id}','${d.id}')">✎</button>
       <button class="icon-btn" title="Remove" onclick="removeCoDoc('${c.id}','${d.id}')">🗑</button>
     </div>`).join('') + `</div>`;
 }
@@ -4124,6 +4189,71 @@ function linkHost(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return 'link'; }
 }
 
+/* ── rename a filed PDF (display name + on-disk file) ── */
+async function copyRenamed(doc, rawName) {
+  const raw = (rawName || '').trim(); if (!raw) return null;
+  const keepPdf = /\.pdf$/i.test(doc.file || doc.name || '');
+  const cleanName = keepPdf ? sanitizeFileName(raw) : sanitizeAnyName(raw, doc.file);
+  const filesRoot = await jobFolder.getDirectoryHandle('files');
+  const dh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
+  const blob = await (await dh.getFileHandle(doc.file)).getFile();
+  const newFile = await uniqueFileName(dh, cleanName);
+  const fh = await dh.getFileHandle(newFile, { create: true });
+  const w = await fh.createWritable(); await w.write(blob); await w.close();
+  return { newFile, cleanName };
+}
+async function looseParentHandle(dir) {
+  const filesRoot = await jobFolder.getDirectoryHandle('files');
+  return dir ? walkDir(filesRoot, dir) : filesRoot;
+}
+/* Shared rename: `persist` writes the owning record (must throw on failure);
+   `rerender` redraws. Copies to the new name, persists, then deletes the old. */
+async function renameDoc(doc, persist, rerender) {
+  if (!doc) return;
+  const raw = prompt('Rename file:', doc.name || doc.file || '');
+  if (raw === null) return;
+  const name = raw.trim(); if (!name) return;
+  if (isLink(doc)) { doc.name = name; rerender(); try { await persist(); } catch (e) { toast(writeError(e), true); } return; }
+  if (!jobFolder) { toast('Load the ShareFile folder first to rename the file', true); return; }
+  stickyToast('Renaming…');
+  let copied;
+  try { copied = await copyRenamed(doc, name); }
+  catch (e) { toast('Could not read the file to rename — make the folder available offline in ShareFile', true); return; }
+  if (!copied) { toast(' '); return; }
+  const oldFile = doc.file, oldName = doc.name;
+  doc.file = copied.newFile; doc.name = copied.cleanName;
+  rerender();
+  try { await persist(); }
+  catch (e) {                                   // undo: restore record, drop the new copy
+    doc.file = oldFile; doc.name = oldName;
+    try { const dh = await looseParentHandle(doc.dir); await dh.removeEntry(copied.newFile); } catch (_) {}
+    rerender(); toast(writeError(e), true); return;
+  }
+  if (copied.newFile !== oldFile) { try { const dh = await looseParentHandle(doc.dir); await dh.removeEntry(oldFile); } catch (e) {} }
+  if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
+  toast(`Renamed to “${copied.cleanName}”`);
+}
+function renameSectionDoc(key, kind, docId) {
+  const s = findSection(key); const d = (s && (s[kind] || []).find(x => x.id === docId));
+  if (!d) return;
+  renameDoc(d, () => patchSection(key, { [kind]: s[kind] }), () => { if (openKey === key) renderDrawer(); renderTable(); });
+}
+function renameRfiDoc(id, docId) {
+  const r = rfiById(id); const d = (r && (r.docs || []).find(x => x.id === docId));
+  if (!d) return;
+  renameDoc(d, () => { r.updated = Date.now(); return FB.setDoc(rfiRef(job.id, r.id), clean(r)); }, () => { if (openRfi === id) renderRfiDrawer(); renderRfis(); });
+}
+function renameCoDoc(id, docId) {
+  const c = coById(id); const d = (c && (c.docs || []).find(x => x.id === docId));
+  if (!d) return;
+  renameDoc(d, () => { c.updated = Date.now(); return FB.setDoc(coRef(job.id, c.id), clean(c)); }, () => { if (openCo === id) renderCoDrawer(); renderCos(); });
+}
+function renameEmailDoc(catId, fileId) {
+  const c = catById(catId); const d = (c && (c.files || []).find(x => x.id === fileId));
+  if (!d) return;
+  renameDoc(d, () => { c.updated = Date.now(); return FB.setDoc(trackingRef(job.id, c.id), clean(c)); }, () => renderTracking());
+}
+
 function fileList(s, kind) {
   const files = s[kind] || [];
   if (!files.length) return `<div class="muted" style="margin-bottom:8px">Nothing added yet.</div>`;
@@ -4141,7 +4271,8 @@ function fileList(s, kind) {
         <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}${f.dir ? ' · in ' + esc(f.dir) : ''}</small></span>
       ${f.status && ST[f.status] ? `<span class="pill" style="color:${cvar(ST[f.status].color)};background:${csf(ST[f.status].color)}"><i></i>${esc(ST[f.status].short)}</span>` : ''}
       ${f.rev ? `<span class="rev-tag">${esc(f.rev)}</span>` : ''}
-      <button class="btn sm" onclick="viewDoc('${s.key}','${kind}','${f.id}')">View</button>
+      <button class="btn sm" onclick="viewDoc('${s.key}','${kind}','${f.id}')">${bluebeamMode ? 'Bluebeam' : 'View'}</button>
+      <button class="btn sm ghost" onclick="renameSectionDoc('${s.key}','${kind}','${f.id}')" title="Rename">✎</button>
       <button class="btn sm ghost" onclick="downloadDoc('${s.key}','${kind}','${f.id}')" title="Download">⤓</button>
       <button class="btn sm ghost" onclick="removeDoc('${s.key}','${kind}','${f.id}')" title="Remove">✕</button>
     </div>`).join('');
@@ -4685,6 +4816,11 @@ function newSectionRecord(base) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function showPdf(url, name, page) {
   acModal = null;           // the viewer takes over the modal host; drop action-item modal state
+  if (bluebeamMode) {       // laptop mode: download so it opens in Bluebeam Revu instead of inline
+    const a = document.createElement('a'); a.href = url; a.download = name || 'document.pdf'; a.click();
+    toast('Downloaded — open it in Bluebeam. (Set Bluebeam as your default PDF app so it opens automatically.)');
+    return;
+  }
   const src = url + (page ? '#page=' + page : '');
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()">
@@ -4697,6 +4833,11 @@ function showPdf(url, name, page) {
         <div class="modal-body flush"><iframe src="${src}"></iframe></div>
       </div>
     </div>`;
+}
+function toggleBluebeam(on) {
+  bluebeamMode = on;
+  try { localStorage.setItem('sr_bluebeam', on ? '1' : '0'); } catch (e) {}
+  if (view === 'job') { renderJob(); if (openKey) renderDrawer(); if (openRfi) renderRfiDrawer(); if (openCo) renderCoDrawer(); }
 }
 function closePdf() {
   acModal = null;            // any blank of the modal host also drops action-item modal state
@@ -5135,6 +5276,57 @@ function exportCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 20000);
 }
 
+/* Load JSZip on demand (only used by the responses export). */
+async function ensureJSZip() {
+  if (window.JSZip) return window.JSZip;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('Could not load the zip library — check the connection and try again.'));
+    document.head.appendChild(s);
+  });
+  return window.JSZip;
+}
+/* Zip the most-recent response PDF of every submittal shown in the current
+   filtered view — for sending a vendor exactly their returned responses. */
+async function exportResponses() {
+  if (!job) return;
+  const picks = [];
+  for (const s of visibleSections()) {
+    const resp = (s.responses || []).filter(d => !isLink(d) && d.file);
+    if (!resp.length) continue;
+    resp.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));
+    picks.push({ s, doc: resp[0] });
+  }
+  if (!picks.length) { toast('No response PDFs in the current view to export', true); return; }
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  stickyToast(`Preparing ${picks.length} response${picks.length === 1 ? '' : 's'}…`);
+  let JSZip;
+  try { JSZip = await ensureJSZip(); } catch (e) { toast(e.message || 'Could not load the zip library', true); return; }
+  const zip = new JSZip();
+  let n = 0, missing = 0;
+  for (const p of picks) {
+    const blob = await readDocBlob(p.doc);
+    if (!blob) { missing++; continue; }
+    const base = `${p.s.number} ${p.s.title || ''}`.trim().replace(/[\/\\:*?"<>|]+/g, '_').slice(0, 80);
+    const fname = sanitizeAnyName(base ? `${base} — ${p.doc.name}` : p.doc.name, p.doc.name);
+    let name = fname, k = 2;
+    while (zip.file(name)) name = fname.replace(/(\.[^.]+)?$/, ` (${k++})$1`);   // avoid collisions in the zip
+    zip.file(name, await blob.arrayBuffer());
+    n++;
+  }
+  if (!n) { toast('Could not read the response PDFs — make the folder available offline in ShareFile', true); return; }
+  const out = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(out);
+  const label = [statusFilter ? ST[statusFilter].label : '', releaseFilter ? RL[releaseFilter].label : '', query.trim()].filter(Boolean).join(' ');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = sanitizeAnyName(`${jobFileBase()} responses${label ? ' - ' + label : ''} - ${today()}`, 'responses') + '.zip';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+  toast(`Exported ${n} response PDF${n === 1 ? '' : 's'}${missing ? ` (${missing} couldn’t be read)` : ''}`);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    11. THEME + BOOT
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -5348,7 +5540,8 @@ function updateFolderBar() {
     bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.${
       un ? ` <b style="color:var(--amber)">${un} new file${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
       ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new file${un === 1 ? '' : 's'}</button>` : ''}
-      <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>`;
+      <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>
+      <label class="fb-bb" title="On this laptop, open PDFs by downloading them so they open in Bluebeam Revu"><input type="checkbox" ${bluebeamMode ? 'checked' : ''} onchange="toggleBluebeam(this.checked)"> Open in Bluebeam</label>`;
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';
     bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
