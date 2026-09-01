@@ -295,10 +295,12 @@ previous one is renamed with an **"OLD - "** prefix and moved into a
 **Submittals/Archive/** folder, so the live status folders only ever hold the
 current PDFs while the superseded revisions stay together, out of the way but not
 lost. (Older folders created before this get tidied into Archive automatically on
-the next load or **Save to folder**.) A **Submittals/All Submittals/** folder also keeps a copy of
-each section's **most recent PDF** — submittal or response — one subfolder per
-spec section that has one, each file named with its status (e.g.
-`Approved - Valve.pdf`), for grabbing them all at once (double-stored on purpose).
+the next load or **Save to folder**.) A **Submittals/All Submittals/** folder also keeps a per-section snapshot: one
+subfolder per spec section that has a PDF, holding that section's **current PDF**
+(submittal or response) named by status (e.g. `Approved - Valve.pdf`), plus a
+nested **Archive/** folder with a labelled copy of every superseded PDF for that
+section. It's for grabbing everything at once, browsed by section (double-stored
+on purpose).
 
 A section can hold several releases (phase 1, phase 2, …) and **every one of them
 shows on the row** — each with its release date, delivery window and delivered
@@ -382,7 +384,8 @@ the status, not the whole record.
 <job folder>/Submittal Register.csv                       the register as a spreadsheet
 <job folder>/READ ME - do not delete.txt                  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
-<job folder>/files/Submittals/All Submittals/<section>/   each section's newest PDF, named by status
+<job folder>/files/Submittals/All Submittals/<section>/            the section's current PDF, named by status
+<job folder>/files/Submittals/All Submittals/<section>/Archive/   that section's past PDFs, named by status
 <job folder>/files/Submittals/Archive/<name>.pdf         superseded PDFs ("OLD - …"), old revisions
 <job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
 <job folder>/files/Submittals/Approved/<name>.pdf        approved responses

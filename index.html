@@ -1901,6 +1901,7 @@ const ARCHIVE_DIR  = 'Submittals/Archive';   // superseded / replaced / no-longe
    prefix (so pre-Archive folders migrate in on the next organise). Links never
    archive — there's no file to move. */
 function isArchived(d) { return !!d && !isLink(d) && (d.archived === true || /^OLD\s*-\s*/i.test(d.name || '')); }
+const stripOldPrefix = n => (n || '').replace(/^OLD\s*-\s*/i, '');   // "OLD - Valve.pdf" → "Valve.pdf"
 /* Old flat folder names from before the reorg — used to detect and clean up the
    pre-nesting layout. */
 const OLD_FLAT_DIRS = ['Submitted to GC', 'Partial Approval', 'Approved', 'Revise and Resubmit',
@@ -5596,7 +5597,7 @@ function folderReadmeText() {
     '        the register as a spreadsheet you can open or send.',
     '  • the "files" folder — every PDF, sorted into subfolders:',
     '        files/Submittals/<status>/        current submittals & responses, by status',
-    '        files/Submittals/All Submittals/  a copy of each section\'s newest PDF, named by status',
+    '        files/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        files/RFIs/Questions, files/RFIs/Answers',
     '        files/Change Orders/              change-order PDFs',
@@ -5884,12 +5885,35 @@ async function cleanupEmptyOldDirs(filesRoot) {
   return touched;
 }
 
-/* Mirror the current (most recent) PDF of every section that has one — submittal
-   OR response — into files/Submittals/All Submittals/<section>/, named with the
-   PDF's status, e.g. "Approved - Valve.pdf" (double-stored copies). Idempotent;
-   only copies when the mirrored file is missing/out of date, prunes sections
-   that no longer qualify, and coalesces concurrent calls so nothing is dropped. */
+/* Mirror every section that has a PDF into files/Submittals/All Submittals/<section>/:
+   the current (most recent, non-archived) PDF sits at the top of the section folder,
+   named by its status (e.g. "Approved - Valve.pdf"), and a nested "Archive" subfolder
+   holds a labelled copy of every superseded PDF for that section (e.g.
+   "Revise and Resubmit - Valve.pdf"). All double-stored copies. Idempotent; only
+   writes what's missing, prunes what no longer belongs, and coalesces concurrent
+   calls so nothing is dropped. */
 let _syncingAll = false, _syncAgain = false;
+/* Deterministic in-memory de-dupe so repeat runs pick the SAME names (no churn). */
+function uniqueInSet(name, used) {
+  if (!used.has(name)) { used.add(name); return name; }
+  const dot = name.lastIndexOf('.'); const stem = dot > 0 ? name.slice(0, dot) : name; const ext = dot > 0 ? name.slice(dot) : '';
+  let i = 2, cand; do { cand = `${stem} (${i})${ext}`; i++; } while (used.has(cand));
+  used.add(cand); return cand;
+}
+function mirrorName(doc, sec) {   // "<status> - <name>", stripping any legacy OLD- prefix
+  const stLabel = (ST[doc.status] || ST[(sec && sec.status) || 'not_started'] || {}).label || '';
+  return sanitizeFileName((stLabel ? stLabel + ' - ' : '') + (stripOldPrefix(doc.name) || doc.file || 'document.pdf'));
+}
+async function reconcileDir(dh, want) {   // want: Map(fileName -> doc). Write missing, delete strangers.
+  const present = new Set(); const stale = [];
+  for await (const e of dh.values()) { if (e.kind === 'file') { if (want.has(e.name)) present.add(e.name); else stale.push(e.name); } }
+  for (const [name, doc] of want) {
+    if (present.has(name)) continue;
+    const blob = await readDocBlob(doc);
+    if (blob) { const fh = await dh.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }
+  }
+  for (const n of stale) { try { await dh.removeEntry(n); } catch (e) {} }
+}
 async function syncAllSubmittals() {
   if (!jobFolder) return;
   if (_syncingAll) { _syncAgain = true; return; }   // a run is in flight → ask it to run once more
@@ -5899,27 +5923,33 @@ async function syncAllSubmittals() {
       _syncAgain = false;
       const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
       const allDh = await walkDirCreate(filesRoot, ALL_SUBMITTALS_DIR);
-      const wanted = new Map();                  // folderName -> { doc, name }
+      const wanted = new Map();                  // folderName -> { cur, curName, arch: Map(name->doc) }
       for (const s of sectionsOf(job)) {
-        const docs = [...(s.submittals || []), ...(s.responses || [])].filter(d => !isLink(d) && d.file && !isArchived(d));
-        if (!docs.length) continue;
-        docs.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));   // newest first
-        const cur = docs[0];
-        const stLabel = (ST[cur.status] || ST[s.status || 'not_started'] || {}).label || '';
-        const wantName = sanitizeFileName((stLabel ? stLabel + ' - ' : '') + cur.name);
+        const all = [...(s.submittals || []), ...(s.responses || [])].filter(d => !isLink(d) && d.file);
+        if (!all.length) continue;
+        const byNewest = (a, b) => (b.uploaded || 0) - (a.uploaded || 0);
+        const live = all.filter(d => !isArchived(d)).sort(byNewest);
+        const arch = all.filter(d => isArchived(d)).sort(byNewest);
+        const cur = live[0] || null;               // the current PDF (may be null if all revisions were superseded)
+        const used = new Set();
+        const curName = cur ? uniqueInSet(mirrorName(cur, s), used) : null;
+        const archWant = new Map();
+        for (const d of arch) archWant.set(uniqueInSet(mirrorName(d, s), used), d);
         const folderName = sanitizeAnyName(`${s.number} ${s.title || ''}`.trim().slice(0, 90), s.number);
-        wanted.set(folderName, { doc: cur, name: wantName });
+        wanted.set(folderName, { cur, curName, arch: archWant });
       }
-      for (const [folderName, { doc, name }] of wanted) {
+      for (const [folderName, { cur, curName, arch }] of wanted) {
         try {
           const secDh = await allDh.getDirectoryHandle(folderName, { create: true });
-          let has = false; const stale = [];
-          for await (const e of secDh.values()) { if (e.kind === 'file') { if (e.name === name) has = true; else stale.push(e.name); } }
-          if (!has) {
-            const blob = await readDocBlob(doc);
-            if (blob) { const fh = await secDh.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }
+          const topWant = new Map(); if (cur && curName) topWant.set(curName, cur);
+          await reconcileDir(secDh, topWant);                 // top level = just the current PDF
+          if (arch.size) {                                    // Archive subfolder of labelled past PDFs
+            const archDh = await secDh.getDirectoryHandle(ARCHIVE_NAME, { create: true });
+            await reconcileDir(archDh, arch);
+          } else { try { await secDh.removeEntry(ARCHIVE_NAME, { recursive: true }); } catch (e) {} }
+          for await (const e of secDh.values()) {             // drop any stray subfolder that isn't Archive
+            if (e.kind === 'directory' && e.name !== ARCHIVE_NAME) { try { await secDh.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
           }
-          for (const n of stale) { try { await secDh.removeEntry(n); } catch (e) {} }
         } catch (e) {}
       }
       try {                                       // drop section folders that no longer qualify
