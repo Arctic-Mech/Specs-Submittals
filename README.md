@@ -1,4 +1,4 @@
-# ASM Job Tool
+# The Dingus
 
 A job workspace for mechanical projects (Arctic Mechanical). Each job has five
 tabs:
@@ -114,7 +114,7 @@ register into the ShareFile folder, overwriting the previous one:
 
 The app's own files in a job folder are given obvious, self-explanatory names so a
 coworker browsing ShareFile can see what they are: the job marker is
-`ASM Job Tool - job link (do not delete).json`, the data backup is
+`The Dingus - job link (do not delete).json`, the data backup is
 `Submittal Register - data (do not delete).json`, and a plain-text
 `READ ME - do not delete.txt` at the folder root explains everything and warns
 against deleting. The marker and the READ ME are **self-healing** — if someone
@@ -372,7 +372,8 @@ the status, not the whole record.
 **The PDFs — in each job's ShareFile folder, under a parent folder per feature:**
 
 ```
-<job folder>/ASM Job Tool - job link (do not delete).json  links this folder to the job
+<job folder>/Open The Dingus.html                            double-click to open the tool at this job
+<job folder>/The Dingus - job link (do not delete).json  links this folder to the job
 <job folder>/Submittal Register - data (do not delete).json  register data backup
 <job folder>/Submittal Register.csv                       the register as a spreadsheet
 <job folder>/READ ME - do not delete.txt                  what all of this is

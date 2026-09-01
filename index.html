@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>ASM Job Tool</title>
+<title>The Dingus</title>
 <!-- Firebase: the register and the PDFs both live in Firestore, so every
      device on the job sees the same log. Cloud Storage is deliberately not
      used — it needs a billing account, Firestore does not. -->
@@ -754,7 +754,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div class="brand" onclick="go('jobs')">
     <div class="brand-mark">SR</div>
     <div>
-      <div class="brand-name">ASM Job Tool</div>
+      <div class="brand-name">The Dingus</div>
       <div class="brand-sub">Arctic Mechanical · <span id="verLabel"></span></div>
     </div>
   </div>
@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.6';
+const APP_VERSION = 'v4.7';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2418,6 +2418,7 @@ function renderSyncBanner() {
   </div>`;
 }
 
+let _deepLinkDone = false;
 function watchJobs() {
   if (unsubJobs) unsubJobs();
   unsubJobs = FB.onSnapshot(jobsCol(),
@@ -2427,6 +2428,13 @@ function watchJobs() {
         .sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0));
       jobsLoaded = true;
       setSync('live');
+      if (!_deepLinkDone && jobs.length) {          // "Open The Dingus" launcher deep-links via ?job=<id>
+        _deepLinkDone = true;
+        try {
+          const want = new URLSearchParams(location.search).get('job');
+          if (want && view === 'jobs' && jobs.some(x => x.id === want)) openJob(want);
+        } catch (e) {}
+      }
       if (job) {
         // Someone else may have renamed the job or added a spec file. Sections
         // have their own listener, so keep those.
@@ -5504,13 +5512,14 @@ async function ensureRW(handle) {
 /* The app's own files in the ShareFile folder are named so a coworker browsing
    the folder can see what they are and knows not to delete them. Old cryptic
    names are read for back-compat and migrated away. */
-const MARKER_FILE     = 'ASM Job Tool - job link (do not delete).json';
-const MARKER_FILE_OLD = 'job.json';
+const MARKER_FILE      = 'The Dingus - job link (do not delete).json';
+const MARKER_FILE_OLDS = ['ASM Job Tool - job link (do not delete).json', 'job.json'];
 const REGISTER_JSON     = 'Submittal Register - data (do not delete).json';
 const REGISTER_JSON_OLD = 'register.json';
 const REGISTER_CSV      = 'Submittal Register.csv';
 const REGISTER_CSV_OLD  = 'register.csv';
 const FOLDER_README     = 'READ ME - do not delete.txt';
+const LAUNCHER_FILE     = 'Open The Dingus.html';   // double-click in ShareFile to open the tool at this job
 
 async function fileText(handle, name) {
   try { return await (await (await handle.getFileHandle(name)).getFile()).text(); } catch (e) { return null; }
@@ -5527,7 +5536,7 @@ async function writeIfChanged(handle, name, text, type) {
 
 /* the marker file that ties a folder to a job */
 async function readJobMarker(handle) {
-  for (const name of [MARKER_FILE, MARKER_FILE_OLD]) {
+  for (const name of [MARKER_FILE, ...MARKER_FILE_OLDS]) {
     try { const t = await (await (await handle.getFileHandle(name)).getFile()).text(); if (t && t.trim()) return JSON.parse(t); } catch (e) {}
   }
   return null;
@@ -5535,23 +5544,39 @@ async function readJobMarker(handle) {
 async function writeJobMarker(handle, j) {
   try {
     const payload = JSON.stringify({
-      tool: 'ASM Job Tool', id: j.id, name: j.name,
-      note: 'This file links this ShareFile folder to a job in the ASM Job Tool. Please do not delete or rename it, or the tool will lose track of this folder.'
+      tool: 'The Dingus', id: j.id, name: j.name,
+      note: 'This file links this ShareFile folder to a job in The Dingus. Please do not delete or rename it, or the tool will lose track of this folder.'
     }, null, 2);
     await writeIfChanged(handle, MARKER_FILE, payload, 'application/json');
-    try { await handle.removeEntry(MARKER_FILE_OLD); } catch (e) {}   // retire the old cryptic name
+    for (const old of MARKER_FILE_OLDS) { try { await handle.removeEntry(old); } catch (e) {} }   // retire old names
   } catch (e) { /* non-fatal */ }
 }
+/* A double-clickable launcher in the folder that opens The Dingus at this job. A
+   .url shortcut is blocked by the browser's file API, so this is a tiny HTML
+   redirect to the hosted app. */
+function launcherHtml(jobId) {
+  const base = location.origin + location.pathname;
+  const url = base + (jobId ? '?job=' + encodeURIComponent(jobId) : '');
+  const u = JSON.stringify(url);
+  return '<!doctype html><meta charset="utf-8"><title>Open The Dingus</title>' +
+    '<meta http-equiv="refresh" content="0; url=' + url.replace(/"/g, '&quot;') + '">' +
+    '<scr' + 'ipt>location.replace(' + u + ')<\/scr' + 'ipt>' +
+    '<body style="font-family:system-ui;padding:2rem;font-size:15px">Opening The Dingus… ' +
+    '<a href="' + url.replace(/"/g, '&quot;') + '">click here</a> if it doesn’t open.';
+}
+async function writeLauncher(handle, j) { try { await writeIfChanged(handle, LAUNCHER_FILE, launcherHtml(j && j.id), 'text/html'); } catch (e) {} }
 function folderReadmeText() {
   return [
-    'ASM JOB TOOL — PLEASE DON’T DELETE OR RENAME ANYTHING IN THIS FOLDER',
-    '====================================================================',
+    'THE DINGUS — PLEASE DON’T DELETE OR RENAME ANYTHING IN THIS FOLDER',
+    '==================================================================',
     '',
-    'This ShareFile folder belongs to a job in the ASM Job Tool',
+    'This ShareFile folder belongs to a job in The Dingus',
     '(arctic-mech.github.io/Specs-Submittals). It holds this job’s submittal, RFI',
     'and change-order PDFs, plus the data that ties them to the register.',
     '',
     'What’s in here:',
+    '  • "' + LAUNCHER_FILE + '"',
+    '        double-click this to open The Dingus at this job.',
     '  • "' + MARKER_FILE + '"',
     '        links this folder to the job in the tool — do not delete.',
     '  • "' + REGISTER_JSON + '"',
@@ -5569,7 +5594,8 @@ function folderReadmeText() {
     'current one is obvious.',
     '',
     'Deleting or moving these files breaks the link to the tool or loses documents.',
-    'To view or edit this job, open the ASM Job Tool and load this folder.',
+    'To view or edit this job, open The Dingus (or double-click "' + LAUNCHER_FILE + '")',
+    'and load this folder.',
     ''
   ].join('\r\n');
 }
@@ -5595,6 +5621,7 @@ async function ensureFolderDocs(handle) {
   if (!job) return;
   await writeJobMarker(handle, job);
   await migrateOldFolderFiles(handle);
+  await writeLauncher(handle, job);
   await writeFolderReadme(handle);
 }
 
