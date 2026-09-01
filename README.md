@@ -164,6 +164,13 @@ the CO (`.msg`/`.eml`, filed under `files/Change Orders/Emails/`), notes, and
 action items. Emails are added in the CO drawer (upload or drag-drop), and a loose
 email dropped in the folder can be **assigned to a change order** from the Assign
 prompt (alongside filing it under a Job Tracking category).
+
+**Emails open in a built-in viewer.** Clicking **Open** on any loaded email —
+on a change order, in Job Tracking, or in the Assign prompt — shows the sender,
+recipients, subject and message body right in the app, so you don't have to
+download it or open a separate mail program. `.eml` files are read in full;
+Outlook `.msg` files are read best-effort (sender/subject/body), with a
+**Download** button always available as a fallback.
 **Paid is tracked separately** as its own tick — because a CO is usually approved
 well before it's paid — so you check it off (on the row or in the drawer) when the
 money comes in, and it records the paid date. The register footer totals the CO

@@ -601,6 +601,13 @@ tbody tr.row-edit td { background: var(--accent-sf); cursor: default; }
 .modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex;
   justify-content: flex-end; gap: 8px; }
 .modal-body iframe { width: 100%; height: 100%; border: none; background: var(--surface-2); }
+.em-hdrs { padding: 4px 2px 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.em-hdr { display: flex; gap: 10px; padding: 2px 0; font-size: 13px; }
+.em-hl { color: var(--text-3); font-weight: 600; min-width: 54px; flex: none; }
+.em-hdr span:last-child { word-break: break-word; }
+.em-body { width: 100%; height: 58vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.em-body-text { white-space: pre-wrap; word-break: break-word; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 0; max-height: 58vh; overflow: auto; }
 
 .progress { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 10px; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .15s; }
@@ -912,7 +919,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.2';
+const APP_VERSION = 'v5.3';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2222,9 +2229,8 @@ async function viewLoose(i) {
   const item = _assignQueue[i];
   const blob = await readLooseBlob(item);
   if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
-  if (item.type === 'email') {                 // emails can't render in the browser — download
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = item.name; a.click();
-  } else showPdf(URL.createObjectURL(blob), item.name);
+  if (item.type === 'email') return openEmailBlob(blob, item.name);   // preview in-app
+  showPdf(URL.createObjectURL(blob), item.name);
 }
 /* An email (.msg/.eml) dropped in the folder → file it under a Job Tracking
    category (creating one if needed), the same place uploaded emails live. */
@@ -3271,12 +3277,18 @@ async function viewRfiDoc(id, docId) {
   if (d) openStoredDoc(d);
 }
 
-/* A file stored in the ShareFile folder — open a PDF in the viewer, download
-   anything else (an .msg/.eml email can’t render in the browser). */
+/* A file stored in the ShareFile folder — open a PDF in the viewer, an email
+   (.msg/.eml) in the in-app email viewer, and download anything else. */
 async function openStoredDoc(doc) {
   if (!doc) return;
   if (!jobFolder) { if (!(await loadJobFolder())) { toast('Load this job’s ShareFile folder to open files', true); return; } }
   stickyToast(`Opening ${doc.name}…`);
+  if (isEmailName(doc.name)) {                 // emails get the in-app viewer, never Bluebeam/download
+    const blob = await readDocBlob(doc);
+    if (!blob) { toast(await docReadError(doc), true); return; }
+    toast(' ');
+    return openEmailBlob(blob, doc.name);
+  }
   const url = await docUrl(doc);
   if (!url) { toast(await docReadError(doc), true); return; }
   toast(' ');
@@ -5061,6 +5073,171 @@ function toggleBluebeam(on) {
 function closePdf() {
   acModal = null;            // any blank of the modal host also drops action-item modal state
   $('modalHost').innerHTML = '';
+}
+
+/* ── quick in-app email viewer (.eml parsed fully; .msg best-effort) ─────────
+   Emails can't render in the PDF viewer (and must never be handed to Bluebeam),
+   so we parse them and show sender/subject/body in a modal, with a Download
+   fallback for anything we can't read. */
+function isEmailName(n) { return /\.(eml|msg)$/i.test(n || ''); }
+const escAttr = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+async function openEmailBlob(blob, name) {
+  let mail = null;
+  try {
+    if (/\.eml$/i.test(name)) mail = parseEml(await blob.text());
+    else if (/\.msg$/i.test(name)) mail = parseMsg(await blob.arrayBuffer());
+  } catch (e) { console.error('email parse failed', e); mail = null; }
+  showEmail(mail, name, blob);
+}
+function showEmail(mail, name, blob) {
+  const dlUrl = URL.createObjectURL(blob);
+  const hdr = (label, val) => val ? `<div class="em-hdr"><span class="em-hl">${label}</span><span>${esc(val)}</span></div>` : '';
+  let body;
+  if (!mail) {
+    body = `<div class="muted" style="padding:18px">This email couldn’t be previewed in the browser. Use <b>Download</b> above to open it in your mail app.</div>`;
+  } else if (mail.html) {
+    body = `<iframe class="em-body" sandbox="" srcdoc="${escAttr(mail.html)}"></iframe>`;
+  } else {
+    body = `<pre class="em-body-text">${esc(mail.text || '(no message body)')}</pre>`;
+  }
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()">
+      <div class="modal wide">
+        <div class="modal-head">
+          <h3>✉️ ${esc((mail && mail.subject) || name)}</h3>
+          <a class="btn sm" href="${dlUrl}" download="${escAttr(name)}">Download</a>
+          <button class="icon-btn" onclick="closePdf()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${mail ? `<div class="em-hdrs">${hdr('From', mail.from)}${hdr('To', mail.to)}${hdr('Cc', mail.cc)}${hdr('Date', mail.date)}${hdr('Subject', mail.subject)}</div>` : ''}
+          ${body}
+        </div>
+      </div>
+    </div>`;
+}
+/* ---- .eml (RFC 822 / MIME) ---- */
+function emlCharset(ct) { const m = (ct || '').match(/charset="?([^";]+)"?/i); return m ? m[1].toLowerCase() : 'utf-8'; }
+function bytesToStr(arr, charset) { try { return new TextDecoder(charset || 'utf-8').decode(arr); } catch (e) { return new TextDecoder('utf-8').decode(arr); } }
+function b64ToBytes(s) { const bin = atob(s.replace(/\s+/g, '')); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+function qpToBytes(s) {
+  s = s.replace(/=\r?\n/g, '');               // soft line breaks
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(s.substr(i + 1, 2))) { out.push(parseInt(s.substr(i + 1, 2), 16)); i += 2; }
+    else out.push(s.charCodeAt(i) & 0xff);
+  }
+  return new Uint8Array(out);
+}
+function decodeCte(bodyStr, cte, ct) {
+  cte = (cte || '').toLowerCase().trim();
+  try {
+    if (cte === 'base64') return bytesToStr(b64ToBytes(bodyStr), emlCharset(ct));
+    if (cte === 'quoted-printable') return bytesToStr(qpToBytes(bodyStr), emlCharset(ct));
+  } catch (e) {}
+  return bodyStr;
+}
+function decodeWords(s) {                      // RFC 2047 encoded-words in headers
+  if (!s) return s;
+  return s.replace(/\?=\s+=\?/g, '?==?')       // collapse whitespace between adjacent encoded-words first
+    .replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_, cs, enc, txt) => {
+      try {
+        if (/b/i.test(enc)) return bytesToStr(b64ToBytes(txt), cs.toLowerCase());
+        return bytesToStr(qpToBytes(txt.replace(/_/g, ' ')), cs.toLowerCase());
+      } catch (e) { return txt; }
+    });
+}
+function parseEmlHeaders(block, nl) {
+  const out = {}; let key = null;
+  for (const line of block.split(nl)) {
+    if (/^[ \t]/.test(line) && key) { out[key] += ' ' + line.trim(); continue; }   // folded continuation
+    const m = line.match(/^([!-9;-~]+):[ \t]?(.*)$/);
+    if (m) { key = m[1].toLowerCase(); out[key] = out[key] ? out[key] + ', ' + m[2] : m[2]; }
+  }
+  return out;
+}
+function parseEmlBody(body, ct, cte, nl) {
+  const ctl = (ct || 'text/plain').toLowerCase();
+  const bm = (ct || '').match(/boundary="?([^";]+)"?/i);
+  if (/multipart\//.test(ctl) && bm) {
+    let html = '', text = '';
+    for (let part of body.split('--' + bm[1])) {
+      if (part === '' || /^--/.test(part)) continue;         // preamble / closing marker
+      part = part.replace(/^\r?\n/, '');
+      const i = part.indexOf(nl + nl); if (i < 0) continue;
+      const ph = parseEmlHeaders(part.slice(0, i), nl);
+      const sub = parseEmlBody(part.slice(i + (nl + nl).length), ph['content-type'], ph['content-transfer-encoding'], nl);
+      if (sub.html && !html) html = sub.html;
+      if (sub.text && !text) text = sub.text;
+    }
+    return { html, text };
+  }
+  const decoded = decodeCte(body, cte, ct);
+  if (/text\/html/.test(ctl)) return { html: decoded, text: '' };
+  if (/text\/plain/.test(ctl) || !ct) return { html: '', text: decoded };
+  return { html: '', text: '' };              // attachments and other parts are ignored in the preview
+}
+function parseEml(raw) {
+  const nl = raw.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+  const sep = nl + nl;
+  let i = raw.indexOf(sep); if (i < 0) i = raw.length;
+  const h = parseEmlHeaders(raw.slice(0, i), nl);
+  const parsed = parseEmlBody(raw.slice(i + sep.length), h['content-type'], h['content-transfer-encoding'], nl);
+  return {
+    subject: decodeWords(h['subject'] || ''), from: decodeWords(h['from'] || ''),
+    to: decodeWords(h['to'] || ''), cc: decodeWords(h['cc'] || ''), date: h['date'] || '',
+    html: parsed.html, text: parsed.text
+  };
+}
+/* ---- .msg (Outlook / OLE2 compound file), best-effort ---- */
+function parseMsg(ab) {
+  const dv = new DataView(ab);
+  if (dv.getUint32(0, false) !== 0xD0CF11E0 || dv.getUint32(4, false) !== 0xA1B11AE1) return null;
+  const secSize = 1 << dv.getUint16(30, true), miniSize = 1 << dv.getUint16(32, true);
+  const dirStart = dv.getUint32(48, true), miniCutoff = dv.getUint32(56, true);
+  const miniFatStart = dv.getUint32(60, true), difatStart = dv.getUint32(68, true);
+  const END = 0xFFFFFFFE, FREE = 0xFFFFFFFF;
+  const secOff = s => 512 + s * secSize;
+  const inBounds = s => secOff(s) + secSize <= ab.byteLength;
+  const fatSecs = [];
+  for (let k = 0; k < 109; k++) { const v = dv.getUint32(76 + k * 4, true); if (v === FREE || v === END) break; fatSecs.push(v); }
+  let ds = difatStart, guard = 0;
+  while (ds !== END && ds !== FREE && inBounds(ds) && guard++ < 100000) {
+    const base = secOff(ds), cnt = (secSize / 4) - 1;
+    for (let k = 0; k < cnt; k++) { const v = dv.getUint32(base + k * 4, true); if (v !== FREE && v !== END) fatSecs.push(v); }
+    ds = dv.getUint32(base + cnt * 4, true);
+  }
+  const FAT = [];
+  for (const fs of fatSecs) { if (!inBounds(fs)) continue; const base = secOff(fs); for (let k = 0; k < secSize / 4; k++) FAT.push(dv.getUint32(base + k * 4, true)); }
+  const chain = (start, fat) => { const out = []; let s = start, g = 0; while (s !== END && s !== FREE && s >= 0 && s < fat.length && g++ < 1000000) { out.push(s); s = fat[s]; } return out; };
+  const readSectors = start => { const secs = chain(start, FAT); const buf = new Uint8Array(secs.length * secSize); secs.forEach((s, k) => { if (inBounds(s)) buf.set(new Uint8Array(ab, secOff(s), secSize), k * secSize); }); return buf; };
+  const miniFat = [];
+  for (const s of chain(miniFatStart, FAT)) { if (!inBounds(s)) continue; const base = secOff(s); for (let k = 0; k < secSize / 4; k++) miniFat.push(dv.getUint32(base + k * 4, true)); }
+  const dirBuf = readSectors(dirStart);
+  const ddv = new DataView(dirBuf.buffer, dirBuf.byteOffset, dirBuf.byteLength);
+  const entries = [];
+  for (let o = 0; o + 128 <= dirBuf.length; o += 128) {
+    const nameLen = ddv.getUint16(o + 64, true); if (nameLen <= 0) continue;
+    let name = ''; for (let j = 0; j < (nameLen / 2) - 1; j++) name += String.fromCharCode(ddv.getUint16(o + j * 2, true));
+    entries.push({ name, type: ddv.getUint8(o + 66), startSec: ddv.getUint32(o + 116, true), size: ddv.getUint32(o + 120, true) });
+  }
+  const root = entries.find(e => e.type === 5);
+  const miniStream = root ? readSectors(root.startSec) : new Uint8Array(0);
+  const readStream = e => {
+    if (e.size >= miniCutoff) return readSectors(e.startSec).slice(0, e.size);
+    const secs = chain(e.startSec, miniFat), buf = new Uint8Array(secs.length * miniSize);
+    secs.forEach((s, k) => buf.set(miniStream.subarray(s * miniSize, (s + 1) * miniSize), k * miniSize));
+    return buf.slice(0, e.size);
+  };
+  const find = p => entries.find(e => e.name.indexOf(p) === 0);
+  const strOf = (uni, ansi) => { let e = find(uni); if (e) return new TextDecoder('utf-16le').decode(readStream(e)); e = find(ansi); return e ? new TextDecoder('utf-8').decode(readStream(e)) : ''; };
+  const subject = strOf('__substg1.0_0037001F', '__substg1.0_0037001E');
+  const from = strOf('__substg1.0_0C1A001F', '__substg1.0_0C1A001E') || strOf('__substg1.0_5D01001F', '__substg1.0_5D01001E');
+  const to = strOf('__substg1.0_0E04001F', '__substg1.0_0E04001E');
+  const text = strOf('__substg1.0_1000001F', '__substg1.0_1000001E');
+  let html = strOf('__substg1.0_1013001F', '__substg1.0_1013001E');
+  if (!html) { const hb = find('__substg1.0_10130102'); if (hb) { try { html = new TextDecoder('utf-8').decode(readStream(hb)); } catch (e) {} } }
+  if (!subject && !from && !to && !text && !html) return null;
+  return { subject, from, to, cc: '', date: '', html, text };
 }
 async function openSpecViewer(specId, page) {
   const specs = specsOf(job);
