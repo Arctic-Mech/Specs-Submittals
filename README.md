@@ -87,9 +87,9 @@ loads, the app notices anything the register doesn't reference and the bar shows
   there.
 
 **Skip** leaves one for later; **Ignore** marks a file as "not mine" so it stops
-asking. Files already filed by the app — under `files/<status>/`, and the
-`RFI Questions`, `RFI Answers`, `Change Orders` and `Emails` folders — are left
-alone.
+asking. Anything the register already references — every filed submittal, RFI,
+change order and email — is recognised and left alone, wherever it sits in the
+folder tree.
 
 ### Save to folder
 
@@ -316,24 +316,28 @@ light: across the sample manual that is 197 KB of text against 12 KB of actual
 log data. Sections are also written field by field, so ticking a status sends
 the status, not the whole record.
 
-**The PDFs — in each job's ShareFile folder, sorted by status:**
+**The PDFs — in each job's ShareFile folder, under a parent folder per feature:**
 
 ```
-<job folder>/job.json                         { id, name } — which job this folder is
-<job folder>/files/Specs/<name>.pdf           the imported spec PDFs
-<job folder>/files/Submitted to GC/<name>.pdf submittals sent to the GC
-<job folder>/files/Approved/<name>.pdf        approved responses
-<job folder>/files/Revise and Resubmit/<name>.pdf
-<job folder>/files/Partial Approval/<name>.pdf
-<job folder>/files/RFI Questions/<name>.pdf    RFIs as sent out
-<job folder>/files/RFI Answers/<name>.pdf      RFI responses that came back
-<job folder>/files/Change Orders/<name>.pdf    change-order PDFs
-<job folder>/files/Emails/<category>/<name>    tracking emails and files, by category
+<job folder>/job.json                                    { id, name } — which job this folder is
+<job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
+<job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
+<job folder>/files/Submittals/Approved/<name>.pdf        approved responses
+<job folder>/files/Submittals/Revise and Resubmit/<name>.pdf
+<job folder>/files/Submittals/Partial Approval/<name>.pdf
+<job folder>/files/Submittals/Waiting on Vendor/<name>.pdf
+<job folder>/files/RFIs/Questions/<name>.pdf             RFIs as sent out
+<job folder>/files/RFIs/Answers/<name>.pdf               RFI responses that came back
+<job folder>/files/Change Orders/<name>.pdf              change-order PDFs
+<job folder>/files/Emails/<category>/<name>              tracking emails and files, by category
 ```
 
-The "new files to assign" scanner leaves the `RFI Questions`, `RFI Answers`,
-`Change Orders` and `Emails` folders alone — files there are RFIs, change orders
-and tracking emails, not stray submittals.
+Opening `files/` shows four parent folders — **Submittals**, **RFIs**,
+**Change Orders** and **Emails** — with the submittal statuses nested under
+Submittals and the question/response folders under RFIs. A job whose files were
+in the old flat layout (all the status folders loose inside `files/`) is
+reorganised into this structure automatically the next time its folder loads,
+and **Save to folder** keeps it tidy.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
 was filed under, so the folder reads like a filing cabinet. The section's document
