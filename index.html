@@ -912,7 +912,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.0';
+const APP_VERSION = 'v5.1';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1902,6 +1902,17 @@ const ARCHIVE_DIR  = 'Submittals/Archive';   // superseded / replaced / no-longe
    archive — there's no file to move. */
 function isArchived(d) { return !!d && !isLink(d) && (d.archived === true || /^OLD\s*-\s*/i.test(d.name || '')); }
 const stripOldPrefix = n => (n || '').replace(/^OLD\s*-\s*/i, '');   // "OLD - Valve.pdf" → "Valve.pdf"
+/* RFI PDFs live in a per-RFI folder named by its number + subject, with a
+   "Question" and an "Answered" subfolder (Answered stays empty until a response
+   comes back). RFI_DOC_KINDS (above) now names only the legacy flat locations. */
+const RFI_DIR = 'RFIs';
+const RFI_SUBDIR = { question: 'Question', answer: 'Answered' };
+function rfiFolderName(r) {
+  const num = ((r && r.number) || '').trim(), subj = ((r && r.subject) || '').trim();
+  const base = (num + (num && subj ? ' - ' : '') + subj).trim() || ('RFI ' + ((r && r.id) || ''));
+  return sanitizeAnyName(base.slice(0, 90), 'RFI');
+}
+function rfiDocDir(r, kind) { return RFI_DIR + '/' + rfiFolderName(r) + '/' + (RFI_SUBDIR[kind] || RFI_SUBDIR.question); }
 /* Old flat folder names from before the reorg — used to detect and clean up the
    pre-nesting layout. */
 const OLD_FLAT_DIRS = ['Submitted to GC', 'Partial Approval', 'Approved', 'Revise and Resubmit',
@@ -1947,10 +1958,9 @@ async function putFileInDir(file, relDir, cleanName) {
 async function putFile(file, statusId) {
   return putFileInDir(file, statusDirName(statusId), sanitizeFileName(file.name));
 }
-/* RFI PDFs live under files/RFI Questions/ or files/RFI Answers/. */
-async function putRfiFile(file, docKind) {
-  const dir = RFI_DOC_KINDS[docKind] || RFI_DOC_KINDS.question;
-  return putFileInDir(file, dir, sanitizeFileName(file.name));
+/* RFI PDFs live under files/RFIs/<RFI# - Subject>/Question|Answered/. */
+async function putRfiFile(file, docKind, r) {
+  return putFileInDir(file, rfiDocDir(r, docKind), sanitizeFileName(file.name));
 }
 /* Tracking files (emails, attachments) live under files/Emails/<category>/. */
 async function putEmailFile(file, catName) {
@@ -2188,7 +2198,7 @@ async function assignPdfToRfi(i) {
   try {
     const blob = await readLooseBlob(item);
     if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
-    const wantDir = RFI_DOC_KINDS[kind] || RFI_DOC_KINDS.question;
+    const wantDir = rfiDocDir(r, kind);
     const already = (item.at === 'files' && item.dir === wantDir);
     let dir = item.dir, file = item.file;
     if (!already) { const rec = await putFileInDir(blob, wantDir, sanitizeFileName(item.name)); dir = rec.dir; file = rec.file; }
@@ -2201,6 +2211,7 @@ async function assignPdfToRfi(i) {
     try { await FB.setDoc(rfiRef(job.id, r.id), clean(r)); }   // throws on failure → rollback below
     catch (e) { r.docs = r.docs.filter(x => x.id !== doc.id); if (!already) await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
     if (!already) await deleteLoose(item);
+    syncRfiFolders().catch(() => {});   // ensure this RFI's Question/Answered subfolders exist
     renderJob();
     toast(`Filed “${item.name}” on RFI ${r.number || ''}`);
     assignModal(i + 1);
@@ -3138,6 +3149,8 @@ async function patchRfi(id, fields) {
   Object.assign(r, fields);
   renderRfis();
   await saveRfi(r);
+  // Number/subject drive the RFI's folder name — move its PDFs and tidy the old folder.
+  if (jobFolder && ('number' in fields || 'subject' in fields)) maybeAutoOrganize();
 }
 function setRfiStatus(id, statusId) {
   const r = rfiById(id); if (!r) return;
@@ -3153,6 +3166,7 @@ async function deleteRfi(id) {
   if (openRfi === id) closeRfiDrawer();
   renderRfis();
   try { await FB.deleteDoc(rfiRef(job.id, id)); await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+  if (jobFolder) syncRfiFolders().catch(() => {});   // remove the RFI's folder if it's now empty (PDFs, if any, stay)
 }
 
 /* ── RFI PDFs (question / answer) into files/RFI Questions|Answers/ ── */
@@ -3173,7 +3187,7 @@ async function addRfiFiles(id, kind, all) {
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putRfiFile(f, kind);
+      const { dir, file } = await putRfiFile(f, kind, rfiById(id));
       newDocs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
@@ -3187,6 +3201,7 @@ async function addRfiFiles(id, kind, all) {
   else if (kind === 'question' && r.status === 'open') { r.status = 'submitted'; if (!r.dateSent) r.dateSent = today(); }
   renderRfis(); if (openRfi === id) renderRfiDrawer();
   await saveRfi(r);
+  syncRfiFolders().catch(() => {});   // ensure this RFI's folder + Question/Answered subfolders exist
   noteFolderChanged();
   toast(`${newDocs.length} PDF${newDocs.length === 1 ? '' : 's'} added`);
 }
@@ -3198,6 +3213,7 @@ async function removeRfiDoc(id, docId) {
   r.docs = r.docs.filter(x => x.id !== docId);
   renderRfiDrawer(); renderRfis();
   await saveRfi(r);
+  syncRfiFolders().catch(() => {});   // tidy the subfolder if it's now empty
   noteFolderChanged();
 }
 async function viewRfiDoc(id, docId) {
@@ -5599,7 +5615,7 @@ function folderReadmeText() {
     '        files/Submittals/<status>/        current submittals & responses, by status',
     '        files/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
-    '        files/RFIs/Questions, files/RFIs/Answers',
+    '        files/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
     '        files/Change Orders/              change-order PDFs',
     '        files/Emails/<category>/          saved emails & attachments',
     '',
@@ -5810,7 +5826,7 @@ async function refileAll(filesRoot) {
   for (const s of sectionsOf(job)) for (const kind of ['submittals', 'responses'])
     for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, statusDirName('spec'), () => { specChanged = true; }); }
-  for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, RFI_DOC_KINDS[d.kind] || RFI_DOC_KINDS.question, () => rfiSet.add(r)); }
+  for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, CO_DOC_DIR, () => coSet.add(c)); }
   for (const cat of tracking) for (const d of (cat.files || [])) { if (!isLink(d)) await plan(d, EMAIL_DIR + '/' + sanitizeAnyName(cat.name, 'Uncategorised'), () => catSet.add(cat)); }
 
@@ -5961,6 +5977,51 @@ async function syncAllSubmittals() {
   } catch (e) { console.error(e); }
   finally { _syncingAll = false; }
 }
+/* True only if a directory (and everything under it) holds no files. */
+async function isDirEmptyDeep(dh) {
+  for await (const e of dh.values()) {
+    if (e.kind === 'file') return false;
+    if (e.kind === 'directory' && !(await isDirEmptyDeep(e))) return false;
+  }
+  return true;
+}
+/* Give every RFI its own folder under files/RFIs/ named "<number> - <subject>",
+   each with a "Question" and an "Answered" subfolder (Answered stays empty until a
+   response). The actual RFI PDFs are moved into these by refileAll; this ensures the
+   (possibly empty) subfolders exist and clears out empty leftovers — the old
+   RFIs/Questions & RFIs/Answers buckets, and folders left behind by a rename. Never
+   removes a folder that still holds files (a deleted RFI keeps its PDFs on disk). */
+let _syncingRfi = false, _syncRfiAgain = false;
+async function syncRfiFolders() {
+  if (!jobFolder) return;
+  if (_syncingRfi) { _syncRfiAgain = true; return; }
+  _syncingRfi = true;
+  try {
+    do {
+      _syncRfiAgain = false;
+      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const rfiRoot = await walkDirCreate(filesRoot, RFI_DIR);
+      const wantNames = new Set();
+      for (const r of rfis) {
+        if (!(((r.number || '').trim()) || ((r.subject || '').trim()))) continue;   // skip blank/new RFIs
+        const name = rfiFolderName(r);
+        wantNames.add(name);
+        try {
+          const rd = await rfiRoot.getDirectoryHandle(name, { create: true });
+          await rd.getDirectoryHandle(RFI_SUBDIR.question, { create: true });
+          await rd.getDirectoryHandle(RFI_SUBDIR.answer, { create: true });   // "Answered" — empty until a response
+        } catch (e) {}
+      }
+      try {
+        for await (const e of rfiRoot.values()) {   // clear empty legacy buckets + empty renamed/deleted RFI folders
+          if (e.kind !== 'directory' || wantNames.has(e.name)) continue;
+          if (await isDirEmptyDeep(e)) { try { await rfiRoot.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+        }
+      } catch (e) {}
+    } while (_syncRfiAgain);
+  } catch (e) { console.error(e); }
+  finally { _syncingRfi = false; }
+}
 /* Any doc still sitting in an old flat folder? (cheap, no disk access) */
 function needsOrganize() {
   if (!job) return false;
@@ -5969,7 +6030,7 @@ function needsOrganize() {
   for (const s of sectionsOf(job)) if ((s.submittals || []).some(old) || (s.responses || []).some(old)
       || (s.submittals || []).some(misarchived) || (s.responses || []).some(misarchived)) return true;
   if ((job.specs || []).some(old)) return true;
-  for (const r of rfis) if ((r.docs || []).some(old)) return true;
+  for (const r of rfis) if ((r.docs || []).some(d => !isLink(d) && d.dir && (old(d) || d.dir !== rfiDocDir(r, d.kind)))) return true;
   return false;                                  // CO ('Change Orders') and email ('Emails/…') dirs were never flat
 }
 let _organizing = false;
@@ -5983,6 +6044,7 @@ async function maybeAutoOrganize() {
     let n = 0;
     if (needsOrganize()) { stickyToast('Organising the ShareFile folder…'); n = await refileAll(filesRoot); }
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
+    await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
     else { const t = $('toast'); if (t && /Organising/.test(t.textContent)) t.className = 'toast'; }   // nothing moved → clear the sticky "Organising…" toast
     if (n || stray) {
@@ -6009,6 +6071,7 @@ async function saveToFolder() {
     // then tidy away the empty old flat folders.
     const moved = await refileAll(filesRoot);
     await cleanupEmptyOldDirs(filesRoot);
+    await syncRfiFolders();                         // per-RFI folders (+ Question/Answered), tidy renamed/empty ones
     await syncAllSubmittals();                     // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME

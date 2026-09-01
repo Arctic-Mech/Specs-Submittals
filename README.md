@@ -392,18 +392,21 @@ the status, not the whole record.
 <job folder>/files/Submittals/Revise and Resubmit/<name>.pdf
 <job folder>/files/Submittals/Partial Approval/<name>.pdf
 <job folder>/files/Submittals/Waiting on Vendor/<name>.pdf
-<job folder>/files/RFIs/Questions/<name>.pdf             RFIs as sent out
-<job folder>/files/RFIs/Answers/<name>.pdf               RFI responses that came back
+<job folder>/files/RFIs/<RFI# - subject>/Question/<name>.pdf   the RFI as sent out
+<job folder>/files/RFIs/<RFI# - subject>/Answered/<name>.pdf   its response (empty until one arrives)
 <job folder>/files/Change Orders/<name>.pdf              change-order PDFs
 <job folder>/files/Emails/<category>/<name>              tracking emails and files, by category
 ```
 
 Opening `files/` shows four parent folders — **Submittals**, **RFIs**,
 **Change Orders** and **Emails** — with the submittal statuses nested under
-Submittals and the question/response folders under RFIs. A job whose files were
-in the old flat layout (all the status folders loose inside `files/`) is
-reorganised into this structure automatically the next time its folder loads,
-and **Save to folder** keeps it tidy.
+Submittals and, under RFIs, **one folder per RFI named "<RFI# - subject>"** (as
+shown on the website), each holding a **Question** and an **Answered** subfolder
+(Answered stays empty until a response comes back). A job whose files were in an
+older layout (the loose status folders, or the flat RFIs/Questions & RFIs/Answers
+buckets) is reorganised into this structure automatically the next time its folder
+loads, and **Save to folder** keeps it tidy — renaming an RFI moves its PDFs into
+the new folder and clears the empty old one.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
 was filed under, so the folder reads like a filing cabinet. The section's document
