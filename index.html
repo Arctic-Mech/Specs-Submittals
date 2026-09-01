@@ -826,7 +826,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
         <thead><tr>
           <th style="width:96px">Section</th>
           <th>Title</th>
-          <th style="width:150px">Spec</th>
+          <th style="width:150px">Manufacturer</th>
           <th style="width:160px">Vendor</th>
           <th style="width:168px">Status</th>
           <th style="width:300px">Release</th>
@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.4';
+const APP_VERSION = 'v4.5';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1883,6 +1883,8 @@ const STATUS_DIR = {
 };
 function statusDirName(id) { return STATUS_DIR[id] || (SUBMITTALS_DIR + '/Filed'); }
 const EMAIL_DIR = 'Emails';
+const ALL_SUBMITTALS_NAME = 'All Submittals';
+const ALL_SUBMITTALS_DIR = 'Submittals/All Submittals';   // mirror of each section's current submittal
 /* Old flat folder names from before the reorg — used to detect and clean up the
    pre-nesting layout. */
 const OLD_FLAT_DIRS = ['Submitted to GC', 'Partial Approval', 'Approved', 'Revise and Resubmit',
@@ -1996,7 +1998,7 @@ async function refreshFolderCount() {
     const walk = async dh => {                 // PDFs now live under parent folders — count at any depth
       for await (const e of dh.values()) {
         if (e.kind === 'file') { if (/\.pdf$/i.test(e.name)) n++; }
-        else if (e.kind === 'directory') await walk(e);
+        else if (e.kind === 'directory' && e.name !== ALL_SUBMITTALS_NAME) await walk(e);   // don't double-count mirror copies
       }
     };
     await walk(filesRoot);
@@ -2053,7 +2055,11 @@ async function scanUnassignedFiles() {
     const walk = async (dh, rel) => {
       for await (const e of dh.values()) {
         if (e.kind === 'file') consider('files/' + (rel ? rel + '/' : '') + e.name, e.name, { at: 'files', dir: rel, file: e.name });
-        else if (e.kind === 'directory') await walk(e, rel ? rel + '/' + e.name : e.name);
+        else if (e.kind === 'directory') {
+          const child = rel ? rel + '/' + e.name : e.name;
+          if (child === ALL_SUBMITTALS_DIR) continue;   // mirror copies aren't loose files
+          await walk(e, child);
+        }
       }
     };
     await walk(filesRoot, '');
@@ -2286,9 +2292,11 @@ async function assignUnassigned(i) {
     }
     // record it on the section, then persist BEFORE deleting the loose original
     s[kind] = s[kind] || [];
+    const priorIds = new Set(s[kind].map(d => d.id));
     const doc = { id: uid('doc'), name: item.name, size: blob.size, status, uploaded: Date.now(), dir, file,
       rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' };
     s[kind].push(doc);
+    await markPriorOld(s, kind, priorIds);   // the previous PDFs are now superseded
     applyStatus(s, status);
     markPending(key);
     try {
@@ -2300,6 +2308,7 @@ async function assignUnassigned(i) {
       throw e;
     }
     if (!already) await deleteLoose(item);  // record is durable — remove the original
+    if (kind === 'submittals') syncAllSubmittals().catch(() => {});
     sortSections(); renderJob();
     toast(`Filed “${item.name}” under ${s.number} · ${ST[status].label}`);
     assignModal(i + 1);
@@ -3919,6 +3928,7 @@ function renderTable() {
 function secRowHtml(s) {
   const st = ST[s.status || 'not_started'];
   const rl = relOf(s);
+  const mfrVal = s.manufacturer || s.spec || '';   // Manufacturer column; falls back to the old Spec value
   const changeTs = sectionChangeTs(s);
   const hitTag = matchedTag(s, query.trim().toLowerCase());
   const editing = editRow === s.key;
@@ -3932,15 +3942,15 @@ function secRowHtml(s) {
     title = `<input class="cell-in cell-title" data-key="${s.key}" data-field="title"
         value="${esc(s.title || '')}" placeholder="(untitled)"
         onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','title',this.value)">`;
-    spec = `<input class="cell-in" data-key="${s.key}" data-field="spec"
-        value="${esc(s.spec || '')}" placeholder="—"
-        onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','spec',this.value)">`;
+    spec = `<input class="cell-in" data-key="${s.key}" data-field="manufacturer"
+        value="${esc(mfrVal)}" placeholder="—"
+        onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','manufacturer',this.value)">`;
     vendor = `<input class="cell-in" data-key="${s.key}" data-field="vendor"
         value="${esc(s.vendor || '')}" placeholder="—"
         onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','vendor',this.value)">`;
   } else {
     title = `<span class="cell-title">${esc(s.title || '(untitled)')}</span>`;
-    spec = `<span class="cell-ro">${s.spec ? esc(s.spec) : '<span class="muted">—</span>'}</span>`;
+    spec = `<span class="cell-ro">${mfrVal ? esc(mfrVal) : '<span class="muted">—</span>'}</span>`;
     vendor = `<span class="cell-ro">${s.vendor ? esc(s.vendor) : '<span class="muted">—</span>'}</span>`;
   }
   const desc = editing
@@ -3950,14 +3960,14 @@ function secRowHtml(s) {
     : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : '');
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
-  const specEmpty = !editing && !s.spec, vendorEmpty = !editing && !s.vendor;
+  const specEmpty = !editing && !mfrVal, vendorEmpty = !editing && !s.vendor;
   const noteLine = (s.showNote && s.notes) ? `<div class="pin-note">📌 ${esc(s.notes)}</div>` : '';
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title">
         <div class="t-line">${title}${pencil}</div>
         ${tags}${desc}${noteLine}</td>
-      <td class="c-spec${specEmpty ? ' is-empty' : ''}" data-label="Spec">${spec}</td>
+      <td class="c-spec${specEmpty ? ' is-empty' : ''}" data-label="Manufacturer">${spec}</td>
       <td class="c-vendor${vendorEmpty ? ' is-empty' : ''}" data-label="Vendor">${vendor}</td>
       <td class="c-status" data-label="Status" onclick="event.stopPropagation()">
         <select class="st-select" style="color:${cvar(st.color)};background:${csf(st.color)};border-color:${cvar(st.color)}"
@@ -4151,9 +4161,7 @@ function renderDrawer() {
               placeholder="e.g. 6 or 6-7" onchange="setField('${s.key}','leadWeeks',this.value)"></div>
           ${expectedField(s)}
           <div class="field"><label class="fl">Manufacturer</label>
-            <input class="input" value="${esc(s.manufacturer || '')}" oninput="setField('${s.key}','manufacturer',this.value)"></div>
-          <div class="field"><label class="fl">Spec</label>
-            <input class="input" value="${esc(s.spec || '')}" oninput="setField('${s.key}','spec',this.value)"></div>
+            <input class="input" value="${esc(s.manufacturer || s.spec || '')}" oninput="setField('${s.key}','manufacturer',this.value)"></div>
           <div class="field" style="grid-column:1/-1"><label class="fl">Description</label>
             <input class="input" value="${esc(s.description || '')}" oninput="setField('${s.key}','description',this.value)"></div>
         </div>
@@ -4251,7 +4259,10 @@ async function renameDoc(doc, persist, rerender) {
 function renameSectionDoc(key, kind, docId) {
   const s = findSection(key); const d = (s && (s[kind] || []).find(x => x.id === docId));
   if (!d) return;
-  renameDoc(d, () => patchSection(key, { [kind]: s[kind] }), () => { if (openKey === key) renderDrawer(); renderTable(); });
+  renameDoc(d, () => patchSection(key, { [kind]: s[kind] }), () => {
+    if (openKey === key) renderDrawer(); renderTable();
+    if (kind === 'submittals') syncAllSubmittals().catch(() => {});
+  });
 }
 function renameRfiDoc(id, docId) {
   const r = rfiById(id); const d = (r && (r.docs || []).find(x => x.id === docId));
@@ -4684,6 +4695,28 @@ function chooseUploadStatus(id) {
   closePdf();
   if (r) r(id);
 }
+/* Prefix a superseded PDF's name (and its file on disk) with "OLD - " so it's
+   obvious in ShareFile it isn't the current revision. Idempotent. */
+async function prefixOld(doc) {
+  if (!doc || isLink(doc)) return;
+  if (/^OLD\s*-\s*/i.test(doc.name || '')) return;      // already marked
+  const newName = 'OLD - ' + (doc.name || doc.file || 'document.pdf');
+  if (!doc.file || !jobFolder) { doc.name = newName; return; }   // no readable file → flag the record only
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const dh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
+    const blob = await (await dh.getFileHandle(doc.file)).getFile();
+    const target = await uniqueFileName(dh, sanitizeFileName(newName));
+    const fh = await dh.getFileHandle(target, { create: true });
+    const w = await fh.createWritable(); await w.write(blob); await w.close();
+    if (target !== doc.file) { try { await dh.removeEntry(doc.file); } catch (e) {} }
+    if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
+    doc.name = target; doc.file = target;
+  } catch (e) { doc.name = newName; }
+}
+async function markPriorOld(s, kind, priorIds) {
+  for (const d of (s[kind] || [])) if (priorIds.has(d.id) && !isLink(d)) await prefixOld(d);
+}
 async function addFiles(key, kind, files) {
   const s = findSection(key);
   if (!s || !files.length) return;
@@ -4697,6 +4730,7 @@ async function addFiles(key, kind, files) {
   if (!status) return;
   markPending(key);
   s[kind] = s[kind] || [];
+  const priorIds = new Set(s[kind].map(d => d.id));   // the docs this upload supersedes
   let added = 0;
   for (const f of pdfs) {
     const docId = uid('doc');
@@ -4714,6 +4748,7 @@ async function addFiles(key, kind, files) {
     }
   }
   if (!added) return;
+  await markPriorOld(s, kind, priorIds);   // the previous PDFs are now superseded → "OLD - …"
   applyStatus(s, status);           // the section's status becomes the newest upload's
   sortSections(); renderJob();
   if (openKey === key) renderDrawer();
@@ -4725,6 +4760,7 @@ async function addFiles(key, kind, files) {
     });
   } catch (e) { toast(writeError(e), true); return; }
   noteFolderChanged();
+  if (kind === 'submittals') syncAllSubmittals().catch(() => {});
   toast(`${added} PDF${added === 1 ? '' : 's'} filed under ${ST[status].label}`);
 }
 async function removeDoc(key, kind, docId) {
@@ -4738,6 +4774,7 @@ async function removeDoc(key, kind, docId) {
   renderDrawer(); renderTable();
   try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
   noteFolderChanged();
+  if (kind === 'submittals') syncAllSubmittals().catch(() => {});
 }
 function docOf(key, kind, docId) {
   const s = findSection(key);
@@ -5513,9 +5550,13 @@ function folderReadmeText() {
     '        the register as a spreadsheet you can open or send.',
     '  • the "files" folder — every PDF, sorted into subfolders:',
     '        files/Submittals/<status>/        submittals & responses, by status',
+    '        files/Submittals/All Submittals/  a copy of each section\'s current submittal',
     '        files/RFIs/Questions, files/RFIs/Answers',
     '        files/Change Orders/              change-order PDFs',
     '        files/Emails/<category>/          saved emails & attachments',
+    '',
+    'A superseded PDF (an old revision) is renamed with an "OLD - " prefix so the',
+    'current one is obvious.',
     '',
     'Deleting or moving these files breaks the link to the tool or loses documents.',
     'To view or edit this job, open the ASM Job Tool and load this folder.',
@@ -5557,7 +5598,8 @@ async function markFolderLoaded(handle) {
   updateFolderBar();
   if (openKey) renderDrawer();
   renderTable();
-  maybeAutoOrganize();          // migrate an old flat layout into parent folders
+  await maybeAutoOrganize();     // migrate/consolidate the folder layout (awaited so the mirror doesn't race it)
+  syncAllSubmittals().catch(() => {});   // build/refresh the "All Submittals" mirror
 }
 async function tryAutoLoadFolder(jobId) {
   jobFolder = null; folderRemembered = null; jobFolderCount = null;
@@ -5745,16 +5787,91 @@ async function refileAll(filesRoot) {
   }
   return moves.length;
 }
-/* Remove the now-empty flat folders from the pre-nesting layout. */
+/* Where each old flat folder's leftovers belong now. */
+const OLD_FLAT_TARGET = {
+  'Submitted to GC':     'Submittals/Submitted to GC',
+  'Partial Approval':    'Submittals/Partial Approval',
+  'Approved':            'Submittals/Approved',
+  'Revise and Resubmit': 'Submittals/Revise and Resubmit',
+  'Waiting on Vendor':   'Submittals/Waiting on Vendor',
+  'Not Required':        'Submittals/Not Required',
+  'Specs':               'Submittals/Specs',
+  'RFI Questions':       'RFIs/Questions',
+  'RFI Answers':         'RFIs/Answers'
+};
+/* Consolidate any files still sitting in a pre-nesting top-level folder into the
+   matching nested folder (dropping exact-duplicate leftovers), then remove the
+   empty old folder. Returns how many stray files were handled. */
 async function cleanupEmptyOldDirs(filesRoot) {
+  let touched = 0;
   for (const name of OLD_FLAT_DIRS) {
+    let dh;
+    try { dh = await filesRoot.getDirectoryHandle(name); } catch (e) { continue; }   // not present
+    const targetRel = OLD_FLAT_TARGET[name];
+    const names = [];
+    try { for await (const e of dh.values()) if (e.kind === 'file') names.push(e.name); } catch (e) {}
+    for (const fn of names) {
+      try {
+        const srcBlob = await (await dh.getFileHandle(fn)).getFile();
+        const targetDh = await walkDirCreate(filesRoot, targetRel);
+        let dup = false;                          // same file already filed in the nested folder?
+        try { const tf = await (await targetDh.getFileHandle(fn)).getFile(); if (tf.size === srcBlob.size) dup = true; } catch (e) {}
+        if (!dup) {
+          const want = await uniqueFileName(targetDh, fn);
+          const fh = await targetDh.getFileHandle(want, { create: true });
+          const w = await fh.createWritable(); await w.write(srcBlob); await w.close();
+        }
+        await dh.removeEntry(fn);
+        touched++;
+      } catch (e) {}
+    }
     try {
-      const dh = await filesRoot.getDirectoryHandle(name);
-      let empty = true;
-      for await (const _ of dh.values()) { empty = false; break; }
+      let empty = true; for await (const _ of dh.values()) { empty = false; break; }
       if (empty) await filesRoot.removeEntry(name, { recursive: false });
-    } catch (e) {}                               // missing or non-empty → leave it
+    } catch (e) {}
   }
+  return touched;
+}
+
+/* Mirror the current submittal PDF of every section (that has one) into
+   files/Submittals/All Submittals/<section>/ — a one-stop folder of the latest
+   submittals (double-stored copies). Idempotent; only copies when the mirrored
+   file is missing/out of date, and prunes sections that no longer qualify. */
+let _syncingAll = false;
+async function syncAllSubmittals(filesRoot) {
+  if (!jobFolder || _syncingAll) return;
+  _syncingAll = true;
+  try {
+    filesRoot = filesRoot || await jobFolder.getDirectoryHandle('files', { create: true });
+    const allDh = await walkDirCreate(filesRoot, 'Submittals/All Submittals');
+    const wanted = new Map();                    // folderName -> current submittal doc
+    for (const s of sectionsOf(job)) {
+      const subs = (s.submittals || []).filter(d => !isLink(d) && d.file);
+      if (!subs.length) continue;
+      subs.sort((a, b) => (b.uploaded || 0) - (a.uploaded || 0));   // newest first
+      const folderName = sanitizeAnyName(`${s.number} ${s.title || ''}`.trim().slice(0, 90), s.number);
+      wanted.set(folderName, subs[0]);
+    }
+    for (const [folderName, cur] of wanted) {
+      try {
+        const secDh = await allDh.getDirectoryHandle(folderName, { create: true });
+        const want = sanitizeFileName(cur.name);
+        let has = false; const stale = [];
+        for await (const e of secDh.values()) { if (e.kind === 'file') { if (e.name === want) has = true; else stale.push(e.name); } }
+        if (!has) {
+          const blob = await readDocBlob(cur);
+          if (blob) { const fh = await secDh.getFileHandle(want, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }
+        }
+        for (const n of stale) { try { await secDh.removeEntry(n); } catch (e) {} }
+      } catch (e) {}
+    }
+    try {                                         // drop section folders that no longer qualify
+      for await (const e of allDh.values()) {
+        if (e.kind === 'directory' && !wanted.has(e.name)) { try { await allDh.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+      }
+    } catch (e) {}
+  } catch (e) { console.error(e); }
+  finally { _syncingAll = false; }
 }
 /* Any doc still sitting in an old flat folder? (cheap, no disk access) */
 function needsOrganize() {
@@ -5769,18 +5886,20 @@ let _organizing = false;
 /* When a folder loads (or its records arrive) with the old flat layout, quietly
    reorganise it into the parent folders. Idempotent and re-entrancy-guarded. */
 async function maybeAutoOrganize() {
-  if (!jobFolder || _organizing || !needsOrganize()) return;
+  if (!jobFolder || _organizing) return;
   _organizing = true;
   try {
-    stickyToast('Organising the ShareFile folder…');
     const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
-    const n = await refileAll(filesRoot);
-    await cleanupEmptyOldDirs(filesRoot);
-    toast(n ? `Organised ${n} file${n === 1 ? '' : 's'} into folders` : ' ');
-    if (openKey) renderDrawer();
-    renderTable();
-    await noteFolderChanged();
-  } catch (e) { console.error(e); toast(' '); }
+    let n = 0;
+    if (needsOrganize()) { stickyToast('Organising the ShareFile folder…'); n = await refileAll(filesRoot); }
+    const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
+    if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
+    if (n || stray) {
+      if (openKey) renderDrawer();
+      renderTable();
+      await noteFolderChanged();
+    }
+  } catch (e) { console.error(e); }
   finally { _organizing = false; }
 }
 
@@ -5799,6 +5918,7 @@ async function saveToFolder() {
     // then tidy away the empty old flat folders.
     const moved = await refileAll(filesRoot);
     await cleanupEmptyOldDirs(filesRoot);
+    await syncAllSubmittals(filesRoot);            // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
     // current. Records and files are already consistent, so a failure here only

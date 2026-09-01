@@ -281,11 +281,18 @@ section panel. It records only that the thing arrived — no date is asked for
 and none is invented.
 
 The main page carries the section number, title, a one-line description, the
-spec, the vendor, the status and the release. Clicking a row opens the section;
-the small **pencil** on a row turns its title, description, spec and vendor into
+**manufacturer**, the vendor, the status and the release (with the date the
+status/release last changed). Clicking a row opens the section; the small
+**pencil** on a row turns its title, description, manufacturer and vendor into
 inline fields so you can edit them right there without opening the panel (the
 tick puts the row back). Status and release are always live on the row. The
-manufacturer, and the submittal and response counts, live in the section panel.
+submittal and response counts live in the section panel.
+
+When a newer PDF is uploaded for a section (a revised submittal, say), the
+previous one is renamed with an **"OLD - "** prefix so it's obvious in ShareFile
+which is current. A **Submittals/All Submittals/** folder also keeps a copy of
+each section's current submittal, one subfolder per spec section, for grabbing
+them all at once (double-stored on purpose).
 
 A section can hold several releases (phase 1, phase 2, …) and **every one of them
 shows on the row** — each with its release date, delivery window and delivered
@@ -368,6 +375,7 @@ the status, not the whole record.
 <job folder>/Submittal Register.csv                       the register as a spreadsheet
 <job folder>/READ ME - do not delete.txt                  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
+<job folder>/files/Submittals/All Submittals/<section>/   a copy of each section's current submittal
 <job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
 <job folder>/files/Submittals/Approved/<name>.pdf        approved responses
 <job folder>/files/Submittals/Revise and Resubmit/<name>.pdf
