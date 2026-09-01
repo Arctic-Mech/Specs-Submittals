@@ -49,7 +49,8 @@ Two places, split by what the data is:
 ### Loading a job's ShareFile folder
 
 Open a job, then **Load ShareFile folder** and pick that job's folder. The app
-drops a small `job.json` marker and keeps its PDFs under `files/` there. This
+drops a clearly-named marker and a `READ ME - do not delete.txt` and keeps its
+PDFs under `files/` there. This
 needs **Chrome or Edge** and the folder available locally (ShareFile Drive, or
 any sync that makes it a normal folder).
 
@@ -96,20 +97,38 @@ folder tree.
 The **Save to folder** button (top of a job) writes a complete copy of the
 register into the ShareFile folder, overwriting the previous one:
 
-- **`register.json`** — a full machine-readable snapshot of the job (every
-  section, its statuses, releases, tags, spec text, and PDF references).
-- **`register.csv`** — the register as a clean submittal-register spreadsheet
-  ready to send to a GC: a title block (project, job no., date), columns grouped
-  by division, US-format dates, readable statuses and lead times, and every
-  release listed. The ⤓ **CSV** button downloads the same thing.
+- **`Submittal Register - data (do not delete).json`** — a full machine-readable
+  snapshot of the job (every section, its statuses, releases, tags, spec text,
+  and PDF references).
+- **`Submittal Register.csv`** — the register as a clean submittal-register
+  spreadsheet ready to send to a GC: a title block (project, job no., date),
+  columns grouped by division, US-format dates, readable statuses and lead times,
+  and every release listed. The ⤓ **CSV** button downloads the same thing.
 - It also **re-files the PDFs** so each one sits under the status subfolder it
   belongs to, keeping its original name — repairing anything that got moved, and
   pulling any older flat files into the sorted layout.
 
-The register already syncs live to the cloud, so this is for keeping a
-self-contained, offline copy in ShareFile alongside the PDFs. It overwrites
-`register.json`/`register.csv` each time and never deletes PDFs it doesn't
-recognise.
+### Named so nobody deletes them
+
+The app's own files in a job folder are given obvious, self-explanatory names so a
+coworker browsing ShareFile can see what they are: the job marker is
+`ASM Job Tool - job link (do not delete).json`, the data backup is
+`Submittal Register - data (do not delete).json`, and a plain-text
+`READ ME - do not delete.txt` at the folder root explains everything and warns
+against deleting. The marker and the READ ME are **self-healing** — if someone
+deletes them, the app recreates them the next time the folder loads (and the
+register data/CSV are rewritten on the next **Save to folder**). Folders created
+under the old cryptic names (`job.json`, `register.json`, `register.csv`) are
+renamed to these automatically on the next load.
+
+The app can't set ShareFile permissions from the browser, so it can't *stop*
+deletions outright — to truly lock the files, set the folder (or those files) to
+restrict delete/edit in **ShareFile's own folder permissions**. The PDFs
+themselves can't be auto-restored if deleted, so that's the belt-and-braces step.
+
+The register already syncs live to the cloud, so the folder copy is for keeping a
+self-contained, offline copy in ShareFile alongside the PDFs. It never deletes
+PDFs it doesn't recognise.
 
 ## RFIs
 
@@ -344,7 +363,10 @@ the status, not the whole record.
 **The PDFs — in each job's ShareFile folder, under a parent folder per feature:**
 
 ```
-<job folder>/job.json                                    { id, name } — which job this folder is
+<job folder>/ASM Job Tool - job link (do not delete).json  links this folder to the job
+<job folder>/Submittal Register - data (do not delete).json  register data backup
+<job folder>/Submittal Register.csv                       the register as a spreadsheet
+<job folder>/READ ME - do not delete.txt                  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
 <job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
 <job folder>/files/Submittals/Approved/<name>.pdf        approved responses

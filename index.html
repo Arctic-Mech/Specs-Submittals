@@ -762,7 +762,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <span class="job-title" id="crumbJob"></span>
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
-    <button class="btn ghost" onclick="saveToFolder()" title="Save to ShareFile folder — overwrite register.json + register.csv and re-file the PDFs by status">💾 <span class="lbl">Save to folder</span></button>
+    <button class="btn ghost" onclick="saveToFolder()" title="Save to ShareFile folder — write the Submittal Register spreadsheet + data backup and re-file the PDFs by status">💾 <span class="lbl">Save to folder</span></button>
     <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="Spec files — view, import or remove">📄 <span class="lbl">Spec</span></button>
     <button class="btn ghost" onclick="exportCsv()" title="Download the register as CSV">⤓ <span class="lbl">CSV</span></button>
   </div>
@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.2';
+const APP_VERSION = 'v4.3';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5454,27 +5454,104 @@ async function ensureRW(handle) {
   } catch (e) { return true; }          // shims without the permission API
 }
 
+/* The app's own files in the ShareFile folder are named so a coworker browsing
+   the folder can see what they are and knows not to delete them. Old cryptic
+   names are read for back-compat and migrated away. */
+const MARKER_FILE     = 'ASM Job Tool - job link (do not delete).json';
+const MARKER_FILE_OLD = 'job.json';
+const REGISTER_JSON     = 'Submittal Register - data (do not delete).json';
+const REGISTER_JSON_OLD = 'register.json';
+const REGISTER_CSV      = 'Submittal Register.csv';
+const REGISTER_CSV_OLD  = 'register.csv';
+const FOLDER_README     = 'READ ME - do not delete.txt';
+
+async function fileText(handle, name) {
+  try { return await (await (await handle.getFileHandle(name)).getFile()).text(); } catch (e) { return null; }
+}
+/* Write only when the content differs, so opening a folder doesn't churn
+   ShareFile with identical re-syncs. */
+async function writeIfChanged(handle, name, text, type) {
+  if ((await fileText(handle, name)) === text) return;
+  const fh = await handle.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(new Blob([text], { type: type || 'text/plain' }));
+  await w.close();
+}
+
 /* the marker file that ties a folder to a job */
 async function readJobMarker(handle) {
-  try {
-    const fh = await handle.getFileHandle('job.json');
-    const t = await (await fh.getFile()).text();
-    return t && t.trim() ? JSON.parse(t) : null;
-  } catch (e) { return null; }
+  for (const name of [MARKER_FILE, MARKER_FILE_OLD]) {
+    try { const t = await (await (await handle.getFileHandle(name)).getFile()).text(); if (t && t.trim()) return JSON.parse(t); } catch (e) {}
+  }
+  return null;
 }
 async function writeJobMarker(handle, j) {
   try {
-    const fh = await handle.getFileHandle('job.json', { create: true });
-    const w = await fh.createWritable();
-    await w.write(new Blob([JSON.stringify({ id: j.id, name: j.name })], { type: 'application/json' }));
-    await w.close();
+    const payload = JSON.stringify({
+      tool: 'ASM Job Tool', id: j.id, name: j.name,
+      note: 'This file links this ShareFile folder to a job in the ASM Job Tool. Please do not delete or rename it, or the tool will lose track of this folder.'
+    }, null, 2);
+    await writeIfChanged(handle, MARKER_FILE, payload, 'application/json');
+    try { await handle.removeEntry(MARKER_FILE_OLD); } catch (e) {}   // retire the old cryptic name
   } catch (e) { /* non-fatal */ }
+}
+function folderReadmeText() {
+  return [
+    'ASM JOB TOOL — PLEASE DON’T DELETE OR RENAME ANYTHING IN THIS FOLDER',
+    '====================================================================',
+    '',
+    'This ShareFile folder belongs to a job in the ASM Job Tool',
+    '(arctic-mech.github.io/Specs-Submittals). It holds this job’s submittal, RFI',
+    'and change-order PDFs, plus the data that ties them to the register.',
+    '',
+    'What’s in here:',
+    '  • "' + MARKER_FILE + '"',
+    '        links this folder to the job in the tool — do not delete.',
+    '  • "' + REGISTER_JSON + '"',
+    '        a backup copy of the register data — do not delete.',
+    '  • "' + REGISTER_CSV + '"',
+    '        the register as a spreadsheet you can open or send.',
+    '  • the "files" folder — every PDF, sorted into subfolders:',
+    '        files/Submittals/<status>/        submittals & responses, by status',
+    '        files/RFIs/Questions, files/RFIs/Answers',
+    '        files/Change Orders/              change-order PDFs',
+    '        files/Emails/<category>/          saved emails & attachments',
+    '',
+    'Deleting or moving these files breaks the link to the tool or loses documents.',
+    'To view or edit this job, open the ASM Job Tool and load this folder.',
+    ''
+  ].join('\r\n');
+}
+async function writeFolderReadme(handle) { try { await writeIfChanged(handle, FOLDER_README, folderReadmeText()); } catch (e) {} }
+/* Rename the old cryptic register files to the obvious names (once). */
+async function migrateOldFolderFiles(handle) {
+  for (const [oldN, newN] of [[REGISTER_JSON_OLD, REGISTER_JSON], [REGISTER_CSV_OLD, REGISTER_CSV]]) {
+    try {
+      const oldFh = await handle.getFileHandle(oldN);           // throws if the old file isn't there
+      let hasNew = true; try { await handle.getFileHandle(newN); } catch (e) { hasNew = false; }
+      if (!hasNew) {
+        const blob = await oldFh.getFile();
+        const nf = await handle.getFileHandle(newN, { create: true });
+        const w = await nf.createWritable(); await w.write(blob); await w.close();
+      }
+      await handle.removeEntry(oldN);
+    } catch (e) {}
+  }
+}
+/* Keep the folder self-explanatory and self-healing: (re)create the marker and
+   the READ ME, and retire any old cryptic filenames. Runs on every folder load. */
+async function ensureFolderDocs(handle) {
+  if (!job) return;
+  await writeJobMarker(handle, job);
+  await migrateOldFolderFiles(handle);
+  await writeFolderReadme(handle);
 }
 
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function markFolderLoaded(handle) {
   jobFolder = handle; folderRemembered = null;
+  await ensureFolderDocs(handle);   // self-explanatory marker + READ ME; retire old names
   await refreshFolderCount();
   jobUnassigned = await scanUnassignedFiles();
   updateFolderBar();
@@ -5723,16 +5800,18 @@ async function saveToFolder() {
     const moved = await refileAll(filesRoot);
     await cleanupEmptyOldDirs(filesRoot);
 
-    // Write the snapshot + CSV. Records and files are already consistent, so a
-    // failure here only means the snapshot is stale, not that data is lost.
+    // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
+    // current. Records and files are already consistent, so a failure here only
+    // means the snapshot is stale, not that data is lost.
     const snap = await buildRegisterSnapshot();
-    await writeFolderFile('register.json', JSON.stringify(snap, null, 2), 'application/json');
-    await writeFolderFile('register.csv', '﻿' + buildCsv(), 'text/csv;charset=utf-8');
+    await writeFolderFile(REGISTER_JSON, JSON.stringify(snap, null, 2), 'application/json');
+    await writeFolderFile(REGISTER_CSV, '﻿' + buildCsv(), 'text/csv;charset=utf-8');
+    await ensureFolderDocs(jobFolder);
 
     if (openKey) renderDrawer();
     renderTable();
     await noteFolderChanged();
-    toast(`Saved to the ShareFile folder — register.json + register.csv written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
+    toast(`Saved to the ShareFile folder — "${REGISTER_CSV}" written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
   } catch (e) {
     console.error(e);
     toast('Could not save to the folder: ' + (e.message || e), true);
