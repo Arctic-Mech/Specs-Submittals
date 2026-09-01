@@ -911,7 +911,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v4.3';
+const APP_VERSION = 'v4.4';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1717,7 +1717,6 @@ async function saveJobMeta(j) {
 
 async function saveSection(s) {
   if (!job || !s) return;
-  s.updated = Date.now();
   markPending(s.key);
   try {
     await FB.setDoc(sectionRef(job.id, s.key), clean(logFields(s)));
@@ -1729,16 +1728,13 @@ async function saveSection(s) {
    every connected browser, which for the heaviest sections is tens of KB. */
 async function patchSection(key, fields) {
   if (!job) return;
-  const s = findSection(key);
-  const ts = Date.now();
-  if (s) s.updated = ts;
-  fields = Object.assign({ updated: ts }, fields);   // stamp the last-change time on every write
   markPending(key);
   try {
     await FB.updateDoc(sectionRef(job.id, key), clean(fields));
     await saveJobMeta();
   } catch (e) {
     if (String((e && e.code) || '').includes('not-found')) {
+      const s = findSection(key);
       if (s) { await FB.setDoc(sectionRef(job.id, key), clean(logFields(s))); await saveJobMeta(); }
     } else throw e;
   } finally { pendingSections.delete(key); }
@@ -1754,8 +1750,7 @@ function logFields(s) {
 
 async function saveSections(list) {
   if (!job || !list.length) return;
-  const ts = Date.now();
-  list.forEach(s => { s.updated = ts; markPending(s.key); });
+  list.forEach(s => markPending(s.key));
   try {
     for (let i = 0; i < list.length; i += 400) {         // Firestore caps a batch at 500
       const batch = FB.writeBatch(FB.db);
@@ -2873,16 +2868,18 @@ function latestResponseTs(s) {
   if (!t && s.returnedDate) t = new Date(s.returnedDate + 'T00:00:00').getTime() || 0;
   return t;
 }
-/* When a section last changed. New writes stamp `updated`; for sections not
-   touched since that was added, fall back to the newest recorded activity. */
-function lastActivityTs(s) {
+/* Date of the latest STATUS or RELEASE change only — general edits (notes,
+   pin, vendor, tags, dates) do not count. Status changes are recorded in
+   history with a timestamp; release-category changes stamp releaseChangedAt. */
+function sectionChangeTs(s) {
   let t = 0;
-  for (const h of (s.history || [])) if ((h.ts || 0) > t) t = h.ts;
-  for (const kind of ['submittals', 'responses']) for (const d of (s[kind] || [])) { const dt = d.uploaded || d.added || 0; if (dt > t) t = dt; }
-  for (const r of (s.releases || [])) if (r.date) { const ms = new Date(r.date + 'T00:00:00').getTime(); if (ms > t) t = ms; }
+  for (const h of (s.history || [])) if ((h.ts || 0) > t) t = h.ts;          // status changes
+  if (s.releaseChangedAt && s.releaseChangedAt > t) t = s.releaseChangedAt;   // release-category changes
+  for (const r of (s.releases || [])) if (r.date) {                          // fallback for pre-existing releases
+    const ms = new Date(r.date + 'T00:00:00').getTime(); if (ms > t) t = ms;
+  }
   return t;
 }
-function sectionChangeTs(s) { return s.updated || lastActivityTs(s); }
 function visibleSections() {
   const q = query.trim().toLowerCase();
   const list = sectionsOf(job).filter(s => {
@@ -3967,7 +3964,7 @@ function secRowHtml(s) {
           onchange="setStatus('${s.key}', this.value)">
           ${STATUSES.map(o => `<option value="${o.id}" ${o.id === st.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select>
-        ${changeTs ? `<div class="changed" title="Date of the latest change to this submittal">changed ${fmtDate(changeTs)}</div>` : ''}</td>
+        ${changeTs ? `<div class="changed" title="When this submittal's status or release last changed">changed ${fmtDate(changeTs)}</div>` : ''}</td>
       <td class="c-rel${rl.id === 'not_ready' ? ' is-empty' : ''}" data-label="Release">${releaseCell(s, rl)}</td>
     </tr>`;
 }
@@ -4452,6 +4449,7 @@ async function setRelease(key, state) {
   if (!s || (s.releaseState || 'not_ready') === state) return;
   markPending(key);
   s.releaseState = state;
+  s.releaseChangedAt = Date.now();      // counts as a change on the register
   // Flipping straight to Released is a full release: record it, so there is a
   // date to run the lead time from instead of a blank delivery.
   if ((state === 'released' || state === 'partial') && !(s.releases || []).length) {
@@ -4463,7 +4461,7 @@ async function setRelease(key, state) {
     }];
   }
   renderDrawer(); renderTable();
-  try { await patchSection(key, { releaseState: state, releases: s.releases || [] }); }
+  try { await patchSection(key, { releaseState: state, releases: s.releases || [], releaseChangedAt: s.releaseChangedAt }); }
   catch (e) { toast(writeError(e), true); }
 }
 
@@ -4560,9 +4558,10 @@ async function saveRelease(key, relId) {
     s.releaseState = scope === 'partial' ? 'partial' : 'released';
   }
   if (weeks && !s.leadWeeks) s.leadWeeks = weeks;
+  s.releaseChangedAt = Date.now();       // recording/editing a release counts as a change
   closePdf();
   renderDrawer(); renderTable();
-  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState, leadWeeks: s.leadWeeks || '' }); }
+  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState, leadWeeks: s.leadWeeks || '', releaseChangedAt: s.releaseChangedAt }); }
   catch (e) { toast(writeError(e), true); return; }
   toast(existing ? 'Release updated' : 'Release recorded');
 }
@@ -4591,8 +4590,9 @@ async function removeRelease(key, relId) {
   markPending(key);
   s.releases = s.releases.filter(x => x.id !== relId);
   if (!s.releases.length && s.releaseState === 'partial') s.releaseState = 'ready';
+  s.releaseChangedAt = Date.now();
   renderDrawer(); renderTable();
-  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState }); }
+  try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState, releaseChangedAt: s.releaseChangedAt }); }
   catch (e) { toast(writeError(e), true); }
 }
 
