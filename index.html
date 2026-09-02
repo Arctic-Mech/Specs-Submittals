@@ -919,7 +919,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.4';
+const APP_VERSION = 'v5.5';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5107,8 +5107,11 @@ async function openEmailBlob(blob, name) {
   } catch (e) { console.error('email parse failed', e); mail = null; }
   showEmail(mail, name, blob);
 }
+/* Registered MIME types so a downloaded email opens in Outlook (Windows routes it
+   by extension + type): .msg → Outlook message, .eml → an internet mail message. */
+function emailMime(name) { return /\.msg$/i.test(name || '') ? 'application/vnd.ms-outlook' : 'message/rfc822'; }
 function showEmail(mail, name, blob) {
-  const dlUrl = URL.createObjectURL(blob);
+  const dlUrl = URL.createObjectURL(new Blob([blob], { type: emailMime(name) }));   // re-type so "Open" hands it to Outlook, not the browser/Notepad
   const hdr = (label, val) => val ? `<div class="em-hdr"><span class="em-hl">${label}</span><span>${esc(val)}</span></div>` : '';
   let body;
   if (!mail) {
