@@ -159,9 +159,12 @@ chasing down. The RFI row shows how many are still open.
 
 The **Change Orders** tab logs each CO with an **amount**, a **description**, a
 status (**Pending → Submitted → Approved / Rejected**), the submitted / approved
-dates, the CO PDF (filed under `files/Change Orders/`), any **emails** attached to
-the CO (`.msg`/`.eml`, filed under `files/Change Orders/Emails/`), notes, and
-action items. Emails are added in the CO drawer (upload or drag-drop), and a loose
+dates, the CO PDF, any **emails** attached to the CO (`.msg`/`.eml`), notes, and
+action items. Each change order gets **its own folder** under `files/Change
+Orders/` named `CO <number> - <description>`, holding its PDFs with an **Emails**
+subfolder for its emails. Existing jobs are reorganised into this layout
+automatically on the next load or **Save to folder**, and renaming a CO moves its
+files into the new folder and clears the empty old one. Emails are added in the CO drawer (upload or drag-drop), and a loose
 email dropped in the folder can be **assigned to a change order** from the Assign
 prompt (alongside filing it under a Job Tracking category).
 
@@ -405,20 +408,22 @@ the status, not the whole record.
 <job folder>/files/Submittals/Waiting on Vendor/<name>.pdf
 <job folder>/files/RFIs/<RFI# - subject>/Question/<name>.pdf   the RFI as sent out
 <job folder>/files/RFIs/<RFI# - subject>/Answered/<name>.pdf   its response (empty until one arrives)
-<job folder>/files/Change Orders/<name>.pdf              change-order PDFs
-<job folder>/files/Change Orders/Emails/<name>          emails attached to change orders
+<job folder>/files/Change Orders/<CO# - desc>/<name>.pdf        one folder per change order — its PDFs
+<job folder>/files/Change Orders/<CO# - desc>/Emails/<name>    emails attached to that change order
 <job folder>/files/Emails/<category>/<name>              tracking emails and files, by category
 ```
 
 Opening `files/` shows four parent folders — **Submittals**, **RFIs**,
 **Change Orders** and **Emails** — with the submittal statuses nested under
-Submittals and, under RFIs, **one folder per RFI named "<RFI# - subject>"** (as
-shown on the website), each holding a **Question** and an **Answered** subfolder
-(Answered stays empty until a response comes back). A job whose files were in an
-older layout (the loose status folders, or the flat RFIs/Questions & RFIs/Answers
-buckets) is reorganised into this structure automatically the next time its folder
-loads, and **Save to folder** keeps it tidy — renaming an RFI moves its PDFs into
-the new folder and clears the empty old one.
+Submittals; under RFIs, **one folder per RFI named "<RFI# - subject>"** (as shown
+on the website), each holding a **Question** and an **Answered** subfolder
+(Answered stays empty until a response comes back); and under Change Orders, **one
+folder per CO named "CO <number> - <description>"**, each holding its PDFs and an
+**Emails** subfolder. A job whose files were in an older layout (the loose status
+folders, the flat RFIs/Questions & RFIs/Answers buckets, or CO files loose in
+Change Orders) is reorganised into this structure automatically the next time its
+folder loads, and **Save to folder** keeps it tidy — renaming an RFI or CO moves
+its files into the new folder and clears the empty old one.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
 was filed under, so the folder reads like a filing cabinet. The section's document

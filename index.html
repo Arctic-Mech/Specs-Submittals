@@ -919,7 +919,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.3';
+const APP_VERSION = 'v5.4';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -997,7 +997,7 @@ const CO_STATUSES = [
 ];
 const CS = Object.fromEntries(CO_STATUSES.map(s => [s.id, s]));
 const CO_DOC_DIR = 'Change Orders';
-const CO_EMAIL_DIR = 'Change Orders/Emails';   // emails attached to a change order
+const CO_EMAIL_DIR = 'Change Orders/Emails';   // legacy shared CO-email bucket (now per-CO: coEmailDir)
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = v => {
@@ -1921,6 +1921,17 @@ function rfiFolderName(r) {
   return sanitizeAnyName(base.slice(0, 90), 'RFI');
 }
 function rfiDocDir(r, kind) { return RFI_DIR + '/' + rfiFolderName(r) + '/' + (RFI_SUBDIR[kind] || RFI_SUBDIR.question); }
+/* Change-order files live in a per-CO folder named "CO <number> - <description>",
+   with the CO PDFs at its top and an "Emails" subfolder for CO emails.
+   CO_DOC_DIR (above) is now the parent; CO_EMAIL_DIR names the legacy shared bucket. */
+function coFolderName(c) {
+  const num = ((c && c.number) || '').trim(), desc = ((c && c.description) || '').trim();
+  const label = num ? 'CO ' + num : '';
+  const base = (label + (label && desc ? ' - ' : '') + desc).trim() || ('CO ' + ((c && c.id) || ''));
+  return sanitizeAnyName(base.slice(0, 90), 'CO');
+}
+function coDocDir(c) { return CO_DOC_DIR + '/' + coFolderName(c); }
+function coEmailDir(c) { return coDocDir(c) + '/Emails'; }
 /* Old flat folder names from before the reorg — used to detect and clean up the
    pre-nesting layout. */
 const OLD_FLAT_DIRS = ['Submitted to GC', 'Partial Approval', 'Approved', 'Revise and Resubmit',
@@ -2294,9 +2305,10 @@ async function assignEmailToCo(i) {
   try {
     const blob = await readLooseBlob(item);
     if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
-    const already = (item.at === 'files' && item.dir === CO_EMAIL_DIR);
+    const wantDir = coEmailDir(c);
+    const already = (item.at === 'files' && item.dir === wantDir);
     let dir = item.dir, file = item.file;
-    if (!already) { const rec = await putFileInDir(blob, CO_EMAIL_DIR, sanitizeAnyName(item.name, 'email')); dir = rec.dir; file = rec.file; }
+    if (!already) { const rec = await putFileInDir(blob, wantDir, sanitizeAnyName(item.name, 'email')); dir = rec.dir; file = rec.file; }
     c.emails = c.emails || [];
     const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file, added: Date.now() };
     c.emails.push(doc);
@@ -2304,6 +2316,7 @@ async function assignEmailToCo(i) {
     try { await FB.setDoc(coRef(job.id, c.id), clean(c)); }   // throws on failure → rollback below
     catch (e) { c.emails = c.emails.filter(x => x.id !== doc.id); if (!already) await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
     if (!already) await deleteLoose(item);
+    syncCoFolders().catch(() => {});   // ensure this CO's folder + Emails subfolder exist
     renderJob();
     toast(`Filed “${item.name}” on CO ${c.number || ''}`);
     assignModal(i + 1);
@@ -3768,6 +3781,8 @@ async function patchCo(id, fields) {
   Object.assign(c, fields);
   renderCos();
   await saveCo(c);
+  // Number/description drive the CO's folder name — move its files and tidy the old folder.
+  if (jobFolder && ('number' in fields || 'description' in fields)) maybeAutoOrganize();
 }
 function setCoStatus(id, statusId) {
   const c = coById(id); if (!c) return;
@@ -3791,6 +3806,7 @@ async function deleteCo(id) {
   if (openCo === id) closeCoDrawer();
   renderCos();
   try { await FB.deleteDoc(coRef(job.id, id)); await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+  if (jobFolder) syncCoFolders().catch(() => {});   // remove the CO's folder if it's now empty (files, if any, stay)
 }
 
 /* CO PDFs into files/Change Orders/ */
@@ -3811,7 +3827,7 @@ async function addCoFiles(id, all) {
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putFileInDir(f, CO_DOC_DIR, sanitizeFileName(f.name));
+      const { dir, file } = await putFileInDir(f, coDocDir(coById(id)), sanitizeFileName(f.name));
       newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
@@ -3821,6 +3837,7 @@ async function addCoFiles(id, all) {
   c.docs = (c.docs || []).concat(newDocs);
   renderCos(); if (openCo === id) renderCoDrawer();
   await saveCo(c);
+  syncCoFolders().catch(() => {});   // ensure this CO's folder exists
   noteFolderChanged();
   toast(`${newDocs.length} PDF${newDocs.length === 1 ? '' : 's'} added`);
 }
@@ -3868,7 +3885,7 @@ async function addCoEmails(id, all) {
   for (const f of emails) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putFileInDir(f, CO_EMAIL_DIR, sanitizeAnyName(f.name, 'email'));
+      const { dir, file } = await putFileInDir(f, coEmailDir(coById(id)), sanitizeAnyName(f.name, 'email'));
       newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
@@ -3878,6 +3895,7 @@ async function addCoEmails(id, all) {
   c.emails = (c.emails || []).concat(newDocs);
   renderCos(); if (openCo === id) renderCoDrawer();
   await saveCo(c);
+  syncCoFolders().catch(() => {});   // ensure this CO's folder + Emails subfolder exist
   noteFolderChanged();
   toast(`${newDocs.length} email${newDocs.length === 1 ? '' : 's'} added`);
 }
@@ -5911,7 +5929,7 @@ function folderReadmeText() {
     '        files/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        files/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
-    '        files/Change Orders/              change-order PDFs (with an "Emails" subfolder for CO emails)',
+    '        files/Change Orders/<CO# - desc>/  one folder per change order — its PDFs + an "Emails" subfolder',
     '        files/Emails/<category>/          saved emails & attachments',
     '',
     'When a PDF is replaced by a newer revision, the old one is renamed with an',
@@ -6122,8 +6140,8 @@ async function refileAll(filesRoot) {
     for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, statusDirName('spec'), () => { specChanged = true; }); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
-  for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, CO_DOC_DIR, () => coSet.add(c)); }
-  for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, CO_EMAIL_DIR, () => coSet.add(c)); }
+  for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, coDocDir(c), () => coSet.add(c)); }
+  for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, coEmailDir(c), () => coSet.add(c)); }
   for (const cat of tracking) for (const d of (cat.files || [])) { if (!isLink(d)) await plan(d, EMAIL_DIR + '/' + sanitizeAnyName(cat.name, 'Uncategorised'), () => catSet.add(cat)); }
 
   if (!moves.length) return 0;   // nothing actually movable (e.g. an orphaned record whose file is gone) → no toast, no churn
@@ -6319,6 +6337,39 @@ async function syncRfiFolders() {
   } catch (e) { console.error(e); }
   finally { _syncingRfi = false; }
 }
+/* Give every change order its own folder under files/Change Orders/ named
+   "CO <number> - <description>" (its PDFs at the top, an "Emails" subfolder for CO
+   emails). refileAll moves the files in; this ensures the folders exist and clears
+   empty leftovers — the old shared Change Orders/Emails bucket and folders left by
+   a rename. Never removes a folder that still holds files (a deleted CO keeps its
+   files on disk). */
+let _syncingCo = false, _syncCoAgain = false;
+async function syncCoFolders() {
+  if (!jobFolder) return;
+  if (_syncingCo) { _syncCoAgain = true; return; }
+  _syncingCo = true;
+  try {
+    do {
+      _syncCoAgain = false;
+      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const coRoot = await walkDirCreate(filesRoot, CO_DOC_DIR);
+      const wantNames = new Set();
+      for (const c of cos) {
+        if (!(((c.number || '').trim()) || ((c.description || '').trim()))) continue;   // skip blank/new COs
+        const name = coFolderName(c);
+        wantNames.add(name);
+        try { await coRoot.getDirectoryHandle(name, { create: true }); } catch (e) {}
+      }
+      try {
+        for await (const e of coRoot.values()) {   // clear the empty legacy Emails bucket + empty renamed/deleted CO folders (leave loose CO PDFs for refileAll)
+          if (e.kind !== 'directory' || wantNames.has(e.name)) continue;
+          if (await isDirEmptyDeep(e)) { try { await coRoot.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+        }
+      } catch (e) {}
+    } while (_syncCoAgain);
+  } catch (e) { console.error(e); }
+  finally { _syncingCo = false; }
+}
 /* Any doc still sitting in an old flat folder? (cheap, no disk access) */
 function needsOrganize() {
   if (!job) return false;
@@ -6328,7 +6379,9 @@ function needsOrganize() {
       || (s.submittals || []).some(misarchived) || (s.responses || []).some(misarchived)) return true;
   if ((job.specs || []).some(old)) return true;
   for (const r of rfis) if ((r.docs || []).some(d => !isLink(d) && d.dir && (old(d) || d.dir !== rfiDocDir(r, d.kind)))) return true;
-  return false;                                  // CO ('Change Orders') and email ('Emails/…') dirs were never flat
+  for (const c of cos) if ((c.docs || []).some(d => !isLink(d) && d.dir && d.dir !== coDocDir(c))
+      || (c.emails || []).some(d => !isLink(d) && d.dir && d.dir !== coEmailDir(c))) return true;
+  return false;                                  // tracking email ('Emails/<category>') dirs were never flat
 }
 let _organizing = false;
 /* When a folder loads (or its records arrive) with the old flat layout, quietly
@@ -6342,6 +6395,7 @@ async function maybeAutoOrganize() {
     if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
+    await syncCoFolders();                                // per-CO folders after any moves
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
     if (n || stray) {
       if (openKey) renderDrawer();
@@ -6368,6 +6422,7 @@ async function saveToFolder() {
     const moved = await refileAll(filesRoot);
     await cleanupEmptyOldDirs(filesRoot);
     await syncRfiFolders();                         // per-RFI folders (+ Question/Answered), tidy renamed/empty ones
+    await syncCoFolders();                          // per-CO folders, tidy renamed/empty ones
     await syncAllSubmittals();                     // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
