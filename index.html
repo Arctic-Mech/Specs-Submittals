@@ -163,6 +163,16 @@ header {
 /* `hidden` must win, so the display lives in a class rather than inline. */
 .job-actions { display: flex; gap: 8px; align-items: center; }
 .job-actions[hidden] { display: none; }
+.save-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3);
+  padding: 4px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; user-select: none; }
+.save-status:hover { background: var(--surface-2); color: var(--text-2); }
+.save-status[hidden] { display: none; }
+.save-status.saving { color: var(--text-2); }
+.save-status.err { color: var(--red); }
+.save-status .ss-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+.save-status.saving .ss-dot { background: var(--amber); animation: ss-pulse 1s ease-in-out infinite; }
+.save-status.err .ss-dot { background: var(--red); }
+@keyframes ss-pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
 .icon-btn {
   width: 32px; height: 32px; border-radius: 6px; border: 1px solid transparent;
   background: transparent; cursor: pointer; display: grid; place-items: center;
@@ -770,7 +780,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <span class="job-title" id="crumbJob"></span>
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
-    <button class="btn ghost" onclick="saveToFolder()" title="Save to ShareFile folder — write the Submittal Register spreadsheet + data backup and re-file the PDFs by status">💾 <span class="lbl">Save to folder</span></button>
+    <span id="folderSaveStatus" class="save-status" hidden onclick="saveNow()"></span>
     <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="Spec files — view, import or remove">📄 <span class="lbl">Spec</span></button>
     <button class="btn ghost" onclick="openExportMenu()" title="Export the submittal register (PDF or CSV)">⤓ <span class="lbl">Export</span></button>
   </div>
@@ -919,7 +929,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.7';
+const APP_VERSION = 'v5.8';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2535,6 +2545,7 @@ function watchJobs() {
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
+          if (jobFolder) scheduleFolderSave();   // job name/number feed the folder snapshot
         } else if (view === 'job' && !jobEditDepth) {
           toast('This job was deleted', true);
           go('jobs');
@@ -2583,7 +2594,7 @@ function watchSections(jobId) {
         const ae = document.activeElement;
         if (openKey && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawer();
       }
-      if (jobFolder) maybeAutoOrganize();      // sections arrived after the folder loaded
+      if (jobFolder) { maybeAutoOrganize(); scheduleFolderSave(); }   // sections arrived / changed after the folder loaded
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2602,7 +2613,7 @@ function watchRfis(jobId) {
         if (openRfi && !(ae && ae.closest && ae.closest('.drawer'))) renderRfiDrawer();
       }
       refreshActionModalIfSafe();
-      if (jobFolder) maybeAutoOrganize();      // RFIs arrived after the folder loaded
+      if (jobFolder) { maybeAutoOrganize(); scheduleFolderSave(); }   // RFIs arrived / changed after the folder loaded
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2619,6 +2630,7 @@ function watchTracking(jobId) {
       if (!trackCat && tracking.length) trackCat = tracking[0].id;
       if (view === 'job' && jobTab === 'tracking') renderJob();
       refreshActionModalIfSafe();
+      if (jobFolder) scheduleFolderSave();
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2637,6 +2649,7 @@ function watchCos(jobId) {
         if (openCo && !(ae && ae.closest && ae.closest('.drawer'))) renderCoDrawer();
       }
       refreshActionModalIfSafe();
+      if (jobFolder) scheduleFolderSave();
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -2748,6 +2761,7 @@ function go(where, id) {
     if (unsubRfis) { unsubRfis(); unsubRfis = null; }
     if (unsubTracking) { unsubTracking(); unsubTracking = null; }
     if (unsubCos) { unsubCos(); unsubCos = null; }
+    clearTimeout(_folderSaveTimer); clearInterval(_saveTicker); folderSaveState = 'idle';
     job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = [];
     $('crumbJob').textContent = ''; renderJobs();
   }
@@ -2759,6 +2773,8 @@ async function openJob(id) {
   const j = jobs.find(x => x.id === id);
   if (!j) { toast('Job not found', true); return; }
   job = Object.assign({}, j, { sections: [] });
+  clearTimeout(_folderSaveTimer); clearInterval(_saveTicker);   // reset the per-job save indicator
+  folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
   openRfi = null; trackCat = null; openCo = null;
@@ -6106,6 +6122,13 @@ async function markFolderLoaded(handle) {
   renderTable();
   await maybeAutoOrganize();     // migrate/consolidate the folder layout (awaited so the mirror doesn't race it)
   syncAllSubmittals().catch(() => {});   // build/refresh the "All Submittals" mirror
+  // Seed the "last saved" indicator from the folder's own snapshot (shared via
+  // ShareFile sync) or this device's record, then track changes from here.
+  folderSaveAt = 0;
+  try { const j = JSON.parse(await (await (await handle.getFileHandle(REGISTER_JSON)).getFile()).text()); if (j && j.savedAt) folderSaveAt = j.savedAt; } catch (e) {}
+  try { const ls = +localStorage.getItem('sr_saved_' + job.id) || 0; if (ls > folderSaveAt) folderSaveAt = ls; } catch (e) {}
+  folderSaveState = 'idle'; _lastSavedSig = registerSig();   // baseline — don't force a save just for opening
+  renderSaveStatus(); startSaveTicker();
 }
 async function tryAutoLoadFolder(jobId) {
   jobFolder = null; folderRemembered = null; jobFolderCount = null;
@@ -6202,8 +6225,9 @@ function updateFolderBar() {
   }
 }
 
-/* ── manual "Save to folder": overwrite the folder's copy of the register and
-   re-file every PDF so the folder exactly reflects the current register.
+/* ── save to folder (auto, debounced via scheduleFolderSave; auto=false forces it
+   from the saveNow() indicator click): overwrite the folder's copy of the register
+   and re-file every PDF so the folder exactly reflects the current register.
    register.json + register.csv are rewritten each time; PDFs are moved to match
    the status they are filed under (keeping their names). ── */
 async function writeFolderFile(name, text, type) {
@@ -6532,14 +6556,54 @@ async function maybeAutoOrganize() {
   finally { _organizing = false; }
 }
 
-async function saveToFolder() {
+/* ── auto-save to the ShareFile folder + a "last saved" indicator ──
+   Replaces the old manual Save button. Whenever the register changes (a local edit
+   or another user's change) and the folder is loaded, the snapshot + CSV are
+   re-written and the PDFs re-filed — debounced so bursts coalesce. The header shows
+   when it last saved; clicking it saves now. */
+let folderSaveAt = 0, folderSaveState = 'idle';   // 'idle' | 'saving' | 'saved' | 'error'
+let _lastSavedSig = null, _folderSaveTimer = null, _saveTicker = null;
+/* A cheap in-memory signature of everything the folder copy captures. */
+function registerSig() {
+  try { return JSON.stringify([job && job.name, job && job.number, job && job.specs, sectionsOf(job), rfis, cos, tracking]); }
+  catch (e) { return 'sig' + Date.now(); }
+}
+function relTime(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + ' hr' + (h === 1 ? '' : 's') + ' ago';
+  const d = Math.round(h / 24); return d + ' day' + (d === 1 ? '' : 's') + ' ago';
+}
+function renderSaveStatus() {
+  const el = $('folderSaveStatus'); if (!el) return;
+  if (!job || !jobFolder) { el.hidden = true; return; }
+  el.hidden = false;
+  if (folderSaveState === 'saving') { el.className = 'save-status saving'; el.innerHTML = '<span class="ss-dot"></span>Saving…'; el.title = 'Saving the register + backup to the ShareFile folder'; return; }
+  if (folderSaveState === 'error') { el.className = 'save-status err'; el.innerHTML = '<span class="ss-dot"></span>Save failed — retry'; el.title = 'Could not save to the folder. Click to try again.'; return; }
+  el.className = 'save-status';
+  el.innerHTML = '<span class="ss-dot"></span>' + (folderSaveAt ? 'Saved to folder ' + relTime(folderSaveAt) : 'Not saved to folder yet');
+  el.title = (folderSaveAt ? 'Register + backup last written to the ShareFile folder ' + new Date(folderSaveAt).toLocaleString() + '.\n' : '') + 'Saves automatically when the register changes — click to save now.';
+}
+function startSaveTicker() { clearInterval(_saveTicker); _saveTicker = setInterval(() => { if (job && jobFolder && folderSaveState !== 'saving') renderSaveStatus(); }, 30000); }
+function scheduleFolderSave() {
+  if (!job || !jobFolder) return;
+  clearTimeout(_folderSaveTimer);
+  _folderSaveTimer = setTimeout(() => {
+    if (!job || !jobFolder) return;
+    if (saveToFolder._busy) { scheduleFolderSave(); return; }   // a save is running — retry after it
+    if (registerSig() !== _lastSavedSig) saveToFolder(true);
+  }, 12000);
+}
+function saveNow() { clearTimeout(_folderSaveTimer); saveToFolder(false); }   // clicking the indicator forces an immediate save
+async function saveToFolder(auto) {
   if (!job) return;
-  if (saveToFolder._busy) { toast('A save is already in progress…', true); return; }
-  if (!jobFolder) { if (!(await ensureJobFolder())) return; }
+  if (saveToFolder._busy) { if (!auto) toast('A save is already in progress…', true); return; }
+  if (!jobFolder) { if (auto) return; if (!(await ensureJobFolder())) return; }
   saveToFolder._busy = true;
-  const btn = document.querySelector('#jobActions button[onclick="saveToFolder()"]');
-  if (btn) btn.disabled = true;
-  stickyToast('Saving to the ShareFile folder…');
+  folderSaveState = 'saving'; renderSaveStatus();
+  if (!auto) stickyToast('Saving to the ShareFile folder…');
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
 
@@ -6559,16 +6623,18 @@ async function saveToFolder() {
     await writeFolderFile(REGISTER_CSV, '﻿' + buildCsv(), 'text/csv;charset=utf-8');
     await ensureFolderDocs(jobFolder);
 
-    if (openKey) renderDrawer();
-    renderTable();
+    folderSaveAt = Date.now(); folderSaveState = 'saved'; _lastSavedSig = registerSig();
+    try { localStorage.setItem('sr_saved_' + job.id, String(folderSaveAt)); } catch (e) {}
+    if (moved) { if (openKey) renderDrawer(); renderTable(); }
     await noteFolderChanged();
-    toast(`Saved to the ShareFile folder — "${REGISTER_CSV}" written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
+    renderSaveStatus();
+    if (!auto) toast(`Saved to the ShareFile folder — "${REGISTER_CSV}" written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
   } catch (e) {
     console.error(e);
-    toast('Could not save to the folder: ' + (e.message || e), true);
+    folderSaveState = 'error'; renderSaveStatus();
+    if (!auto) toast('Could not save to the folder: ' + (e.message || e), true);
   } finally {
     saveToFolder._busy = false;
-    if (btn) btn.disabled = false;
   }
 }
 

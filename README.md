@@ -94,10 +94,13 @@ asking. Anything the register already references — every filed submittal, RFI,
 change order and email — is recognised and left alone, wherever it sits in the
 folder tree.
 
-### Save to folder
+### Saving to the folder (automatic)
 
-The **Save to folder** button (top of a job) writes a complete copy of the
-register into the ShareFile folder, overwriting the previous one:
+While a job's ShareFile folder is loaded, the register **saves itself
+automatically** — a few seconds after any change (yours or another user's), a
+complete copy is written into the folder, overwriting the previous one. There's no
+Save button; instead the header shows a **"Saved to folder …"** indicator with how
+long ago it last saved (click it to save immediately). Each automatic save writes:
 
 - **`Submittal Register - data (do not delete).json`** — a full machine-readable
   snapshot of the job (every section, its statuses, releases, tags, spec text,
@@ -112,6 +115,11 @@ register into the ShareFile folder, overwriting the previous one:
   belongs to, keeping its original name — repairing anything that got moved, and
   pulling any older flat files into the sorted layout.
 
+The "last saved" time is read from the folder's own snapshot, so it reflects the
+most recent save from **any** machine (once ShareFile has synced it), not just this
+one. Automatic saving only happens on a machine that has the folder loaded — the
+register itself is always saved live to the cloud regardless.
+
 ### Named so nobody deletes them
 
 The app's own files in a job folder are given obvious, self-explanatory names so a
@@ -121,7 +129,7 @@ coworker browsing ShareFile can see what they are: the job marker is
 `READ ME - do not delete.txt` at the folder root explains everything and warns
 against deleting. The marker and the READ ME are **self-healing** — if someone
 deletes them, the app recreates them the next time the folder loads (and the
-register data/CSV are rewritten on the next **Save to folder**). Folders created
+register data/CSV are rewritten on the next automatic save). Folders created
 under the old cryptic names (`job.json`, `register.json`, `register.csv`) are
 renamed to these automatically on the next load.
 
@@ -165,7 +173,7 @@ dates, the CO PDF, any **emails** attached to the CO (`.msg`/`.eml`), notes, and
 action items. Each change order gets **its own folder** under `files/Change
 Orders/` named `CO <number> - <description>`, holding its PDFs with an **Emails**
 subfolder for its emails. Existing jobs are reorganised into this layout
-automatically on the next load or **Save to folder**, and renaming a CO moves its
+automatically on the next load, and renaming a CO moves its
 files into the new folder and clears the empty old one. Emails are added in the CO drawer (upload or drag-drop), and a loose
 email dropped in the folder can be **assigned to a change order** from the Assign
 prompt (alongside filing it under a Job Tracking category).
@@ -311,7 +319,7 @@ previous one is renamed with an **"OLD - "** prefix and moved into a
 **Submittals/Archive/** folder, so the live status folders only ever hold the
 current PDFs while the superseded revisions stay together, out of the way but not
 lost. (Older folders created before this get tidied into Archive automatically on
-the next load or **Save to folder**.) A **Submittals/All Submittals/** folder also keeps a per-section snapshot: one
+the next load.) A **Submittals/All Submittals/** folder also keeps a per-section snapshot: one
 subfolder per spec section that has a PDF, holding that section's **current PDF**
 (submittal or response) named by status (e.g. `Approved - Valve.pdf`), plus a
 nested **Archive/** folder with a labelled copy of every superseded PDF for that
@@ -424,7 +432,7 @@ folder per CO named "CO <number> - <description>"**, each holding its PDFs and a
 **Emails** subfolder. A job whose files were in an older layout (the loose status
 folders, the flat RFIs/Questions & RFIs/Answers buckets, or CO files loose in
 Change Orders) is reorganised into this structure automatically the next time its
-folder loads, and **Save to folder** keeps it tidy — renaming an RFI or CO moves
+folder loads, and automatic saving keeps it tidy — renaming an RFI or CO moves
 its files into the new folder and clears the empty old one.
 
 Each PDF keeps its uploaded filename and sits in the subfolder for the status it
