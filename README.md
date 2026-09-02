@@ -95,6 +95,27 @@ asking. Anything the register already references — every filed submittal, RFI,
 change order and email — is recognised and left alone, wherever it sits in the
 folder tree.
 
+### Adding PDFs from a phone
+
+A phone or tablet **can't write to the ShareFile folder** (the File System Access
+API is desktop Chrome/Edge only). So on a phone, adding a PDF to a section instead
+**uploads it to Firebase temporarily**, and the next time someone opens that job on
+a computer with the folder loaded, the app **files it into ShareFile automatically**
+(into the right status subfolder, superseding any older revision) and clears the
+temporary copy.
+
+In a section's drawer, under **Submittals** or **Submittal responses**:
+
+- **📋 Paste** — the easy way on an iPhone: copy a PDF (from Files, an email, etc.),
+  then tap Paste. If the browser won't hand over the pasted file, use **+ PDF**.
+- **+ PDF** — choose a PDF from Files/iCloud.
+
+You pick the status just like a normal upload. The PDF then shows in the list with a
+**📱 on phone — will file to ShareFile** badge; you (and everyone) can still **View**
+or **Download** it straight from the phone in the meantime. There's a **25 MB** cap
+per phone upload. Filing happens on a computer that has the folder loaded — until
+then the PDF lives only in the cloud copy, not in ShareFile.
+
 ### Saving to the folder (automatic)
 
 While a job's ShareFile folder is loaded, the register **saves itself

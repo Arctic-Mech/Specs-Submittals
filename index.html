@@ -933,7 +933,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.1';
+const APP_VERSION = 'v6.2';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2012,7 +2012,9 @@ async function walkDirCreate(root, relDir) {
   return dh;
 }
 async function readDocBlob(doc) {
-  if (!doc || !jobFolder) return null;
+  if (!doc) return null;
+  if (doc.staged && doc.stagedId) return readStagedBlob(doc.stagedId).catch(() => null);   // phone upload held in Firebase
+  if (!jobFolder) return null;
   try {
     const filesRoot = await jobFolder.getDirectoryHandle('files');
     if (doc.dir && doc.file) {
@@ -2022,6 +2024,29 @@ async function readDocBlob(doc) {
     if (doc.fileId) return await (await filesRoot.getFileHandle(doc.fileId + '.pdf')).getFile();
   } catch (e) {}
   return null;
+}
+/* ── Phone uploads: hold a PDF in Firestore (chunked base64) until a computer with
+   the ShareFile folder loaded files it in. iPhones/iPads can't write the folder
+   (the File System Access API is desktop-only), so this is how they add PDFs. ── */
+const STAGE_MAX = 25 * 1024 * 1024;      // 25 MB cap on a phone upload
+const STAGE_PART = 500000;               // base64 chars per chunk doc (well under Firestore's 1 MB doc limit)
+function bytesToB64(bytes) { let s = ''; const C = 0x8000; for (let i = 0; i < bytes.length; i += C) s += String.fromCharCode.apply(null, bytes.subarray(i, i + C)); return btoa(s); }
+const stagedRef  = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'staged', id);
+const stagedPart = (jobId, id, i) => FB.doc(FB.db, 'jobs', jobId, 'staged', id, 'parts', String(i));
+async function stageBlob(blob, name) {
+  const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
+  const id = uid('stg'), parts = Math.ceil(b64.length / STAGE_PART) || 1;
+  await FB.setDoc(stagedRef(job.id, id), { n: parts, name: name || 'file.pdf', size: blob.size, type: blob.type || 'application/pdf', added: Date.now() });
+  for (let i = 0; i < parts; i++) await FB.setDoc(stagedPart(job.id, id, i), { d: b64.slice(i * STAGE_PART, (i + 1) * STAGE_PART) });
+  return id;
+}
+async function readStagedBlob(id) {
+  const meta = (await FB.getDoc(stagedRef(job.id, id))).data(); if (!meta) return null;
+  let b64 = ''; for (let i = 0; i < (meta.n || 0); i++) b64 += ((await FB.getDoc(stagedPart(job.id, id, i))).data() || {}).d || '';
+  return new Blob([b64ToBytes(b64)], { type: meta.type || 'application/pdf' });
+}
+async function deleteStaged(id) {
+  try { const meta = (await FB.getDoc(stagedRef(job.id, id))).data() || {}; for (let i = 0; i < (meta.n || 0); i++) { try { await FB.deleteDoc(stagedPart(job.id, id, i)); } catch (e) {} } await FB.deleteDoc(stagedRef(job.id, id)); } catch (e) {}
 }
 async function docUrl(doc) {
   if (!doc) return null;
@@ -2600,7 +2625,7 @@ function watchSections(jobId) {
         const ae = document.activeElement;
         if (openKey && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawer();
       }
-      if (jobFolder) { maybeAutoOrganize(); scheduleFolderSave(); }   // sections arrived / changed after the folder loaded
+      if (jobFolder) { maybeAutoOrganize(); fileStagedUploads(); scheduleFolderSave(); }   // sections arrived / changed after the folder loaded
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -4322,18 +4347,20 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Submittals <span style="display:flex;gap:6px">
+        <h4>Submittals <span style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="linkModal('${s.key}','submittals',null)">+ ShareFile link</button>
-          <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></span></h4>
+          <button class="btn sm" onclick="pastePdf('${s.key}','submittals')" title="Paste a PDF you copied — the easy way on a phone">📋 Paste</button>
+          <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ PDF</button></span></h4>
         <div id="listSub">${fileList(s, 'submittals')}</div>
         <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">
           Drop submittal PDFs here<br><span class="muted">Saved to this job’s ShareFile folder</span></div>
       </div>
 
       <div class="sec">
-        <h4>Submittal responses <span style="display:flex;gap:6px">
+        <h4>Submittal responses <span style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="linkModal('${s.key}','responses',null)">+ ShareFile link</button>
-          <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ Upload PDF</button></span></h4>
+          <button class="btn sm" onclick="pastePdf('${s.key}','responses')" title="Paste a PDF you copied — the easy way on a phone">📋 Paste</button>
+          <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ PDF</button></span></h4>
         <div id="listRes">${fileList(s, 'responses')}</div>
         <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">
           Drop the returned / stamped PDFs here</div>
@@ -4513,13 +4540,13 @@ function fileList(s, kind) {
       <button class="btn sm ghost" onclick="linkModal('${s.key}','${kind}','${f.id}')" title="Edit">✎</button>
       <button class="btn sm ghost" onclick="removeDoc('${s.key}','${kind}','${f.id}')" title="Remove">✕</button>
     </div>` : `<div class="file-row">
-      <span class="fi">${kind === 'responses' ? '✔' : '📄'}</span>
+      <span class="fi">${f.staged ? '📱' : (kind === 'responses' ? '✔' : '📄')}</span>
       <span class="fn"><b title="${esc(f.name)}">${esc(f.name)}</b>
-        <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}${f.dir ? ' · in ' + esc(f.dir) : ''}</small></span>
+        <small>${fmtBytes(f.size || 0)} · ${fmtDate(f.uploaded)}${f.staged ? ' · <b style="color:var(--amber)">on phone — will file to ShareFile</b>' : (f.dir ? ' · in ' + esc(f.dir) : '')}</small></span>
       ${f.status && ST[f.status] ? `<span class="pill" style="color:${cvar(ST[f.status].color)};background:${csf(ST[f.status].color)}"><i></i>${esc(ST[f.status].short)}</span>` : ''}
       ${f.rev ? `<span class="rev-tag">${esc(f.rev)}</span>` : ''}
       <button class="btn sm" onclick="viewDoc('${s.key}','${kind}','${f.id}')">${bluebeamMode ? 'Bluebeam' : 'View'}</button>
-      <button class="btn sm ghost" onclick="renameSectionDoc('${s.key}','${kind}','${f.id}')" title="Rename">✎</button>
+      ${f.staged ? '' : `<button class="btn sm ghost" onclick="renameSectionDoc('${s.key}','${kind}','${f.id}')" title="Rename">✎</button>`}
       <button class="btn sm ghost" onclick="downloadDoc('${s.key}','${kind}','${f.id}')" title="Download">⤓</button>
       <button class="btn sm ghost" onclick="removeDoc('${s.key}','${kind}','${f.id}')" title="Remove">✕</button>
     </div>`).join('');
@@ -4867,9 +4894,9 @@ async function setField(key, field, value) {
 
 /* ── uploads ── */
 async function pickFiles(key, kind) {
-  // Load the folder first (this click is a clean user gesture for the picker);
-  // opening the file chooser only once the PDFs have somewhere to go.
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  // On desktop, load the folder first (this click is a clean gesture for the picker)
+  // so the PDF has somewhere to go. On a phone there's no folder — it stages to Firebase.
+  if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'application/pdf,.pdf';
@@ -4945,11 +4972,15 @@ async function markPriorOld(s, kind, priorIds) {
 async function addFiles(key, kind, files) {
   const s = findSection(key);
   if (!s || !files.length) return;
-  // PDFs go into this job's ShareFile folder — make sure it is loaded first.
-  if (!jobFolder) { if (!(await ensureJobFolder())) return; }
   const pdfs = files.filter(f => !(f.type && f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)));
   if (pdfs.length < files.length) toast('Non-PDF files were skipped', true);
   if (!pdfs.length) return;
+  // On a phone the ShareFile folder can't be written — stage the PDF in Firebase
+  // and let a computer file it. On desktop, load the folder and file it directly.
+  if (!jobFolder) {
+    if (fsSupported()) { if (!(await ensureJobFolder())) return; }
+    else return stageSectionPdfs(key, kind, pdfs);
+  }
   // A status must be chosen for the upload — this is what tracks history.
   const status = await pickUploadStatus(kind);
   if (!status) return;
@@ -4988,13 +5019,90 @@ async function addFiles(key, kind, files) {
   syncAllSubmittals().catch(() => {});
   toast(`${added} PDF${added === 1 ? '' : 's'} filed under ${ST[status].label}`);
 }
+/* Phone path: no ShareFile folder here, so stage the PDF(s) in Firebase against the
+   section. A computer with the folder loaded files them in automatically. */
+async function stageSectionPdfs(key, kind, pdfs) {
+  const s = findSection(key); if (!s) return;
+  const big = pdfs.find(f => f.size > STAGE_MAX);
+  if (big) { toast(`"${big.name}" is too big to upload from a phone (25 MB max)`, true); pdfs = pdfs.filter(f => f.size <= STAGE_MAX); }
+  if (!pdfs.length) return;
+  const status = await pickUploadStatus(kind);
+  if (!status) return;
+  s[kind] = s[kind] || [];
+  let added = 0;
+  for (const f of pdfs) {
+    try {
+      stickyToast(`Uploading ${f.name}…`);
+      const stagedId = await stageBlob(f, f.name);
+      s[kind].push({ id: uid('doc'), name: f.name, size: f.size, status, uploaded: Date.now(), staged: true, stagedId,
+        rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' });
+      added++;
+    } catch (e) { console.error(e); toast('Upload failed: ' + (e.message || e), true); }
+  }
+  if (!added) { toast(' '); return; }
+  applyStatus(s, status);
+  sortSections(); renderJob(); if (openKey === key) renderDrawer();
+  try { await patchSection(key, { [kind]: s[kind], status: s.status, history: s.history || [], submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || '', releaseState: s.releaseState || 'not_ready' }); }
+  catch (e) { toast(writeError(e), true); return; }
+  toast(`${added} PDF${added === 1 ? '' : 's'} uploaded — a computer will file ${added === 1 ? 'it' : 'them'} into ShareFile`);
+}
+/* Paste a copied PDF (the easy way to add one on an iPhone). */
+async function pastePdf(key, kind) {
+  try {
+    if (!(navigator.clipboard && navigator.clipboard.read)) { toast('This browser can’t paste files — tap “+ PDF” to choose one.', true); return; }
+    const items = await navigator.clipboard.read();
+    const files = [];
+    for (const it of items) {
+      const t = (it.types || []).find(x => /pdf/i.test(x));
+      if (t) { const b = await it.getType(t); files.push(new File([b], ('Pasted ' + coLogDate(today()) + '.pdf').replace(/\//g, '-'), { type: 'application/pdf' })); }
+    }
+    if (!files.length) { toast('No PDF on the clipboard — copy the PDF first, then paste (or tap “+ PDF”).', true); return; }
+    addFiles(key, kind, files);
+  } catch (e) { console.error(e); toast('Couldn’t read the clipboard — tap “+ PDF” to choose the file.', true); }
+}
+/* On a computer with the folder loaded, pull any phone-staged PDFs out of Firebase,
+   file them into ShareFile, supersede the ones they replace, and clear the staging. */
+let _filingStaged = false;
+async function fileStagedUploads() {
+  if (!jobFolder || _filingStaged) return;
+  const hasStaged = sectionsOf(job).some(s => ['submittals', 'responses'].some(k => (s[k] || []).some(d => d.staged && d.stagedId)));
+  if (!hasStaged) return;
+  _filingStaged = true;
+  let filed = 0;
+  try {
+    for (const s of sectionsOf(job)) {
+      let dirty = false;
+      for (const kind of ['submittals', 'responses']) {
+        const staged = (s[kind] || []).filter(d => d.staged && d.stagedId).sort((a, b) => (a.uploaded || 0) - (b.uploaded || 0));
+        for (const d of staged) {
+          try {
+            const blob = await readStagedBlob(d.stagedId);
+            if (!blob) continue;                                   // still uploading / unreadable — try next time
+            const file = new File([blob], d.name || 'document.pdf', { type: 'application/pdf' });
+            const priorIds = new Set((s[kind] || []).filter(x => x !== d && !x.staged && !isLink(x)).map(x => x.id));
+            const rec = await putFile(file, d.status || (kind === 'responses' ? 'approved' : 'submitted_gc'));
+            const gone = d.stagedId;
+            d.dir = rec.dir; d.file = rec.file; delete d.staged; delete d.stagedId;
+            await markPriorOld(s, kind, priorIds);
+            await deleteStaged(gone);
+            filed++; dirty = true;
+          } catch (e) { console.error(e); }
+        }
+      }
+      if (dirty) { try { await patchSection(s.key, { submittals: s.submittals || [], responses: s.responses || [], status: s.status, history: s.history || [] }); } catch (e) {} }
+    }
+  } catch (e) { console.error(e); }
+  finally { _filingStaged = false; }
+  if (filed) { toast(`Filed ${filed} phone upload${filed === 1 ? '' : 's'} into ShareFile`); sortSections(); renderJob(); if (openKey) renderDrawer(); noteFolderChanged(); syncAllSubmittals().catch(() => {}); }
+}
 async function removeDoc(key, kind, docId) {
   const s = findSection(key);
   const d = (s[kind] || []).find(x => x.id === docId);
   if (!d) return;
   if (!confirm(`Remove "${d.name}" for everyone?`)) return;
   markPending(key);
-  if (!isLink(d)) await deleteStoredDoc(d);
+  if (d.staged && d.stagedId) await deleteStaged(d.stagedId);
+  else if (!isLink(d)) await deleteStoredDoc(d);
   s[kind] = s[kind].filter(x => x.id !== docId);
   renderDrawer(); renderTable();
   try { await patchSection(key, { [kind]: s[kind] }); } catch (e) { toast(writeError(e), true); }
@@ -5009,6 +5117,13 @@ async function resolveDoc(key, kind, docId) {
   const d = docOf(key, kind, docId);
   if (!d) return null;
   if (d.url) return { url: d.url, name: d.name };            // a ShareFile link
+  if (d.staged && d.stagedId) {                              // phone upload held in Firebase — view without the folder
+    stickyToast(`Opening ${d.name}…`);
+    const blob = await readStagedBlob(d.stagedId).catch(() => null);
+    toast(' ');
+    if (!blob) { toast('Still uploading, or couldn’t load it — try again in a moment', true); return null; }
+    return { url: URL.createObjectURL(blob), name: d.name };
+  }
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
   stickyToast(`Opening ${d.name}…`);
   const url = await docUrl(d);
@@ -6283,6 +6398,7 @@ async function markFolderLoaded(handle) {
   if (openKey) renderDrawer();
   renderTable();
   await maybeAutoOrganize();     // migrate/consolidate the folder layout (awaited so the mirror doesn't race it)
+  fileStagedUploads().catch(() => {});   // file any phone uploads waiting in Firebase
   syncAllSubmittals().catch(() => {});   // build/refresh the "All Submittals" mirror
   // Seed the "last saved" indicator from the folder's own snapshot (shared via
   // ShareFile sync) or this device's record, then track changes from here.
