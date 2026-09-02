@@ -105,7 +105,9 @@ register into the ShareFile folder, overwriting the previous one:
 - **`Submittal Register.csv`** — the register as a clean submittal-register
   spreadsheet ready to send to a GC: a title block (project, job no., date),
   columns grouped by division, US-format dates, readable statuses and lead times,
-  and every release listed. The ⤓ **CSV** button downloads the same thing.
+  and every release listed. The ⤓ **Export** button offers the same register as
+  either a **branded PDF** (Arctic letterhead, grouped by division, colour-coded
+  statuses — ready to send to a GC or PM) or this **CSV** spreadsheet.
 - It also **re-files the PDFs** so each one sits under the status subfolder it
   belongs to, keeping its original name — repairing anything that got moved, and
   pulling any older flat files into the sorted layout.
