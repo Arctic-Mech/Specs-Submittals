@@ -199,6 +199,16 @@ well before it's paid — so you check it off (on the row or in the drawer) when
 money comes in, and it records the paid date. The register footer totals the CO
 amounts and how much has been paid, and the status chips include a **Paid** filter.
 
+**Change Order Log PDF.** The **⤓ CO Log PDF** button on the Change Orders tab
+exports the classic Arctic Sheet Metal *Change Order Log* — the black-and-white
+grid form (ASM # · MOD · RFI,CCD,ASI · Description · Pending Cost · Date ·
+Approved Cost) with the numbered rows, a **Main Contract** row, and the per-page,
+cumulative and grand totals. Set the original contract value in the **Main
+contract $** box on the tab to fill the Main Contract row and the totals. Each CO
+lands in a numbered row: its **notes** go in the RFI/CCD/ASI column, its
+description in Description, and its amount in **Pending Cost** or (once approved)
+in **Approved Cost** with the approved date.
+
 ## Job Tracking
 
 The **Job Tracking** tab is for everything on a job that isn't a submittal or an

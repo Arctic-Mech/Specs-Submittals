@@ -163,6 +163,8 @@ header {
 /* `hidden` must win, so the display lives in a class rather than inline. */
 .job-actions { display: flex; gap: 8px; align-items: center; }
 .job-actions[hidden] { display: none; }
+.co-contract { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.co-contract input { width: 120px; }
 .save-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3);
   padding: 4px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; user-select: none; }
 .save-status:hover { background: var(--surface-2); color: var(--text-2); }
@@ -892,6 +894,8 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <div id="tab-changeorders" hidden>
       <div class="toolbar">
         <div class="search"><input class="input" id="coSearch" placeholder="Search change orders…" autocomplete="off"></div>
+        <label class="co-contract" title="The original contract amount — shown as the Main Contract row on the Change Order Log">Main contract $<input class="input" id="coContract" inputmode="decimal" placeholder="0.00" autocomplete="off" onchange="setContractAmount(this.value)"></label>
+        <button class="btn ghost" onclick="exportCoLog()" title="Export the Change Order Log as a PDF">⤓ <span class="lbl">CO Log PDF</span></button>
         <div class="spacer"></div>
         <span class="muted" id="coCount"></span>
       </div>
@@ -929,7 +933,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.0';
+const APP_VERSION = 'v6.1';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1736,6 +1740,7 @@ async function saveJobMeta(j) {
     folderUrl: target.folderUrl || '',
     sfFolderName: target.sfFolderName || '',
     ignoredFiles: target.ignoredFiles || [],
+    contractAmount: target.contractAmount || '',
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -2542,6 +2547,7 @@ function watchJobs() {
             job.name = fresh.name; job.number = fresh.number; job.folderUrl = fresh.folderUrl;
             job.sfFolderName = fresh.sfFolderName || '';
             job.ignoredFiles = fresh.ignoredFiles || [];
+            job.contractAmount = fresh.contractAmount || '';
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -3737,6 +3743,12 @@ function visibleCos() {
   return cos.filter(c => (!coStatusFilter || (coStatusFilter === 'paid' ? c.paid : (c.status || 'pending') === coStatusFilter)) && matchCo(c, coQuery));
 }
 function setCoFilter(id) { coStatusFilter = (coStatusFilter === id) ? null : id; renderCos(); }
+function setContractAmount(v) {
+  if (!job) return;
+  const n = parseFloat(String(v || '').replace(/[^0-9.\-]/g, ''));
+  job.contractAmount = isFinite(n) ? n : '';
+  saveJobMeta().catch(() => {});
+}
 
 function renderCos() {
   if (!job) return;
@@ -3756,6 +3768,8 @@ function renderCos() {
       onclick="setCoFilter('paid')"><i style="background:${cvar('green')}"></i>Paid<span class="n">${paidN}</span></button>` +
     (coStatusFilter ? `<button class="chip" onclick="setCoFilter(null)">Clear ✕</button>` : '');
 
+  const cc = $('coContract');
+  if (cc && document.activeElement !== cc) cc.value = (job.contractAmount || job.contractAmount === 0) ? job.contractAmount : '';
   const list = visibleCos();
   const totLabel = total ? ` · ${fmtMoney(total)} total, ${fmtMoney(paidAmt)} paid` : '';
   $('coCount').textContent = (list.length === cos.length ? `${cos.length} change order${cos.length === 1 ? '' : 's'}` : `${list.length} of ${cos.length}`) + totLabel;
@@ -5830,6 +5844,138 @@ function exportPdf() {
     doc.save(jobFileBase() + '_Submittal_Register.pdf');
     toast('PDF register downloaded');
   }).catch(e => { console.error(e); toast('Could not build the PDF: ' + (e.message || e), true); });
+}
+
+/* ── Change Order Log PDF — reproduces the Arctic Sheet Metal grid template ── */
+function coLogNum(v) { const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : 0; }
+function coLogDollars(n) { return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function coLogDate(iso) { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[2] + '/' + m[3] + '/' + m[1].slice(2) : (iso || ''); }
+function coLogClip(doc, s, maxW) { s = String(s || ''); if (doc.getTextWidth(s) <= maxW) return s; while (s.length > 1 && doc.getTextWidth(s + '…') > maxW) s = s.slice(0, -1); return s + '…'; }
+function drawCoLog(doc, m) {
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 22;
+  const tableW = pageW - 2 * M;
+  const cw = [0.068, 0.057, 0.295, 0.295, 0.11, 0.063, 0.112].map(f => Math.round(f * tableW));
+  cw[3] += tableW - cw.reduce((a, b) => a + b, 0);            // absorb rounding into Description
+  const cx = [M]; cw.forEach(w => cx.push(cx[cx.length - 1] + w));
+  const rowH = 15.4, numberedP1 = 24, numberedRest = 25;
+  const N = m.rows.length;
+  const pages = N <= numberedP1 ? 1 : 1 + Math.ceil((N - numberedP1) / numberedRest);
+  const line = (x1, y1, x2, y2) => doc.line(x1, y1, x2, y2);
+  const txt = (s, x, y, opt) => doc.text(String(s == null ? '' : s), x, y, opt);
+  const money = (n, cellL, cellR, y, always) => { if (!always && !n) return; doc.setFont('helvetica', 'normal'); txt('$', cellL + 4, y); txt(n ? coLogDollars(n) : '-', cellR - 4, y, { align: 'right' }); };
+  let cumP = 0, cumA = 0;
+  const grandP = m.rows.reduce((a, r) => a + (r.pending || 0), 0);
+  const grandA = (m.contract || 0) + m.rows.reduce((a, r) => a + (r.approved || 0), 0);
+  for (let p = 0; p < pages; p++) {
+    if (p > 0) doc.addPage();
+    doc.setDrawColor(0); doc.setTextColor(0); doc.setLineWidth(0.8);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(19);
+    txt('Arctic Sheet Metal', pageW / 2, 30, { align: 'center' });
+    txt('Change Order Log', pageW / 2, 52, { align: 'center' });
+    let y = 64; const jbH = 20;
+    doc.rect(M, y, tableW, jbH);
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold');
+    txt('Job Name:', M + 8, y + 13); txt(m.jobName || '', M + 80, y + 13);
+    txt('DATE:', cx[5] - 30, y + 13); txt(m.date || '', cx[6] + 6, y + 13);
+    const hT = y + jbH + 2, tierH = 15, labH = 17, hB = hT + tierH + labH;
+    doc.rect(M, hT, tableW, tierH + labH);
+    for (let i = 1; i < 7; i++) line(cx[i], hT, cx[i], hB);
+    line(cx[4], hT + tierH, cx[7], hT + tierH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    txt('Pending', (cx[4] + cx[5]) / 2, hT + 11, { align: 'center' });
+    txt('Approved', (cx[6] + cx[7]) / 2, hT + 11, { align: 'center' });
+    doc.setFontSize(10.5);
+    const midFull = hT + (tierH + labH) / 2 + 3, midBot = hT + tierH + labH / 2 + 3;
+    txt('ASM #', (cx[0] + cx[1]) / 2, midFull, { align: 'center' });
+    txt('MOD', (cx[1] + cx[2]) / 2, midFull, { align: 'center' });
+    txt('RFI,CCD, ASI', (cx[2] + cx[3]) / 2, midFull, { align: 'center' });
+    txt('Description', (cx[3] + cx[4]) / 2, midFull, { align: 'center' });
+    txt('Cost', (cx[4] + cx[5]) / 2, midBot, { align: 'center' });
+    txt('Date', (cx[5] + cx[6]) / 2, midBot, { align: 'center' });
+    txt('Cost', (cx[6] + cx[7]) / 2, midBot, { align: 'center' });
+    const gT = hB, rowsThis = 25;
+    doc.setLineWidth(0.5);
+    let pendPage = 0, apprPage = 0;
+    for (let r = 0; r < rowsThis; r++) {
+      const ry = gT + r * rowH;
+      doc.rect(M, ry, tableW, rowH);
+      for (let i = 1; i < 7; i++) line(cx[i], ry, cx[i], ry + rowH);
+      const baseY = ry + rowH - 4.5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      if (p === 0 && r === 0) {
+        txt('Main Contract', cx[3] + 4, baseY);
+        if (m.contract) { money(m.contract, cx[6], cx[7], baseY, false); apprPage += m.contract; }
+      } else {
+        let asmNum, coIdx;
+        if (p === 0) { asmNum = r; coIdx = r - 1; }
+        else { asmNum = numberedP1 + (p - 1) * numberedRest + r + 1; coIdx = asmNum - 1; }
+        txt(asmNum, (cx[0] + cx[1]) / 2, baseY, { align: 'center' });
+        const co = m.rows[coIdx];
+        if (co) {
+          doc.setFontSize(8.5);
+          txt(coLogClip(doc, co.note || '', cw[2] - 6), cx[2] + 3, baseY);
+          txt(coLogClip(doc, co.desc || '', cw[3] - 6), cx[3] + 3, baseY);
+          doc.setFontSize(9);
+          if (co.pending) { money(co.pending, cx[4], cx[5], baseY, false); pendPage += co.pending; }
+          if (co.approvedDate) txt(co.approvedDate, (cx[5] + cx[6]) / 2, baseY, { align: 'center' });
+          if (co.approved) { money(co.approved, cx[6], cx[7], baseY, false); apprPage += co.approved; }
+        }
+      }
+    }
+    const gB = gT + rowsThis * rowH;
+    doc.setLineWidth(0.8);
+    const f1 = gB, fH = 18;
+    doc.rect(cx[3], f1, cw[3], fH); doc.rect(cx[4], f1, cw[4], fH); doc.rect(cx[5], f1, cw[5], fH); doc.rect(cx[6], f1, cw[6], fH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    txt('Page ' + (p + 1) + ' - Total Pending', (cx[3] + cx[4]) / 2, f1 + 12, { align: 'center' });
+    money(pendPage, cx[4], cx[5], f1 + 12, true);
+    doc.setFontSize(8); txt('Pg ' + (p + 1) + ' -Total', (cx[5] + cx[6]) / 2, f1 + 8, { align: 'center' }); txt('Approved', (cx[5] + cx[6]) / 2, f1 + 16, { align: 'center' });
+    doc.setFontSize(10); money(apprPage, cx[6], cx[7], f1 + 12, true);
+    const f2 = f1 + fH; cumP += pendPage; cumA += apprPage;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    if (pages === 1 || p === 0) {
+      doc.rect(cx[3], f2, cw[3], fH + 6); doc.rect(cx[6], f2, cw[6], fH + 6);
+      txt('Page ' + (p + 1) + ' -  TOTAL', (cx[3] + cx[4]) / 2, f2 + 11, { align: 'center' });
+      doc.setFontSize(9); txt('(Pending & Approved ):', (cx[3] + cx[4]) / 2, f2 + 21, { align: 'center' });
+      doc.setFontSize(10); money(pendPage + apprPage, cx[6], cx[7], f2 + 15, true);
+    } else {
+      const lbl = (p + 1 === 2) ? 'Pages 1 & 2 Totals:' : 'Pages 1 thru ' + (p + 1) + ' Totals:';
+      doc.rect(cx[3], f2, cw[3], fH); doc.rect(cx[4], f2, cw[4], fH); doc.rect(cx[5], f2, cw[5], fH); doc.rect(cx[6], f2, cw[6], fH);
+      txt(lbl, (cx[3] + cx[4]) / 2, f2 + 12, { align: 'center' });
+      money(cumP, cx[4], cx[5], f2 + 12, true); money(cumA, cx[6], cx[7], f2 + 12, true);
+    }
+    if (pages > 1 && p === pages - 1) {
+      const f3 = f2 + fH;
+      doc.rect(cx[3], f3, cw[3], fH + 6); doc.rect(cx[6], f3, cw[6], fH + 6);
+      doc.setFontSize(10); txt('Grand Total', (cx[3] + cx[4]) / 2, f3 + 11, { align: 'center' });
+      doc.setFontSize(9); txt('(Pending & Approved):', (cx[3] + cx[4]) / 2, f3 + 21, { align: 'center' });
+      doc.setFontSize(10); money(grandP + grandA, cx[6], cx[7], f3 + 15, true);
+    }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    txt(m.jobName || '', M, pageH - 40);
+    txt('Page ' + (p + 1) + ' of  ' + pages, pageW / 2, pageH - 24, { align: 'center' });
+  }
+}
+function exportCoLog() {
+  if (!job) return;
+  stickyToast('Building the Change Order Log…');
+  ensureJsPDF().then(jspdf => {
+    const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+    const list = cos.slice().sort((a, b) => String(a.number || '').localeCompare(String(b.number || ''), undefined, { numeric: true }));
+    const rows = list.map(c => {
+      const amt = coLogNum(c.amount), st = c.status || 'pending', approved = st === 'approved';
+      const desc = /^\s*change order/i.test(c.description || '') ? (c.description || '') : ('Change order #' + (c.number || '') + ' ' + (c.description || '')).trim();
+      return {
+        note: (c.notes || '').replace(/\s+/g, ' '), desc,
+        pending: (!approved && st !== 'rejected') ? amt : 0,
+        approved: approved ? amt : 0,
+        approvedDate: approved ? coLogDate(c.dateApproved) : ''
+      };
+    });
+    drawCoLog(doc, { jobName: job.name || '', date: coLogDate(today()), contract: coLogNum(job.contractAmount), rows });
+    doc.save(jobFileBase() + '_Change_Order_Log.pdf');
+    toast('Change Order Log downloaded');
+  }).catch(e => { console.error(e); toast('Could not build the log: ' + (e.message || e), true); });
 }
 
 /* Load JSZip on demand (only used by the responses export). */
