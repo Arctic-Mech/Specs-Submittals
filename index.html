@@ -929,7 +929,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.9';
+const APP_VERSION = 'v6.0';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5662,7 +5662,7 @@ function buildCsv() {
 
   push(['Spec Section', 'Title', 'Description', 'Manufacturer', 'Vendor / Supplier', 'Submittal No.',
     'Status', 'Date to GC', 'Date Returned', 'Lead Time', 'Anticipated Delivery',
-    'Released', 'Delivered', 'Notes']);
+    'Released', 'Delivered']);
 
   let lastDiv = null;
   for (const s of secs) {
@@ -5690,8 +5690,7 @@ function buildCsv() {
       csvDate(s.submittedDate), csvDate(s.returnedDate),
       leadLabel(s.leadWeeks) || '',
       csvWindow(expectedWindow(s)),
-      released, delivered,
-      (s.notes || '').replace(/\s+/g, ' ')
+      released, delivered
     ]);
   }
   return L.join('\r\n');
@@ -5778,7 +5777,7 @@ function exportPdf() {
     const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
     const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 34;
     const secs = sectionsOf(job).slice().sort(sectionOrder);
-    const head = [['Spec Section', 'Title', 'Manufacturer', 'Vendor', 'Status', 'To GC', 'Returned', 'Lead', 'Anticipated Delivery', 'Released', 'Notes']];
+    const head = [['Spec Section', 'Title', 'Manufacturer', 'Vendor', 'Status', 'To GC', 'Returned', 'Lead', 'Anticipated Delivery', 'Released']];
     const body = [];
     let lastDiv = null;
     for (const s of secs) {
@@ -5797,7 +5796,7 @@ function exportPdf() {
         { content: st.label || '', _sc: st.color },
         csvDate(s.submittedDate), csvDate(s.returnedDate),
         leadLabel(s.leadWeeks) || '', csvWindow(expectedWindow(s)),
-        released, (s.notes || '').replace(/\s+/g, ' ')
+        released
       ]);
     }
     doc.autoTable({
@@ -5810,7 +5809,7 @@ function exportPdf() {
         0: { cellWidth: 56, fontStyle: 'bold' }, 1: { cellWidth: 96 }, 2: { cellWidth: 78 }, 3: { cellWidth: 66 },
         4: { cellWidth: 62, halign: 'center', fontStyle: 'bold' }, 5: { cellWidth: 46, halign: 'center' },
         6: { cellWidth: 46, halign: 'center' }, 7: { cellWidth: 38, halign: 'center' },
-        8: { cellWidth: 68, halign: 'center' }, 9: { cellWidth: 92 }, 10: { cellWidth: 'auto' },
+        8: { cellWidth: 68, halign: 'center' }, 9: { cellWidth: 'auto' },
       },
       didParseCell: data => {
         const raw = data.cell.raw;
