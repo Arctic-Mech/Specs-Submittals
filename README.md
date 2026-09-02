@@ -51,8 +51,9 @@ Two places, split by what the data is:
 ### Loading a job's ShareFile folder
 
 Open a job, then **Load ShareFile folder** and pick that job's folder. The app
-drops a clearly-named marker and a `READ ME - do not delete.txt` and keeps its
-PDFs under `files/` there. This
+keeps its PDFs under `files/` there and drops a `link to this folder` folder (a
+clearly-named marker + a `READ ME - do not delete.txt`) plus an
+`Open The Dingus.html` shortcut at the root. This
 needs **Chrome or Edge** and the folder available locally (ShareFile Drive, or
 any sync that makes it a normal folder).
 
@@ -122,16 +123,24 @@ register itself is always saved live to the cloud regardless.
 
 ### Named so nobody deletes them
 
-The app's own files in a job folder are given obvious, self-explanatory names so a
-coworker browsing ShareFile can see what they are: the job marker is
-`The Dingus - job link (do not delete).json`, the data backup is
-`Submittal Register - data (do not delete).json`, and a plain-text
-`READ ME - do not delete.txt` at the folder root explains everything and warns
-against deleting. The marker and the READ ME are **self-healing** — if someone
-deletes them, the app recreates them the next time the folder loads (and the
-register data/CSV are rewritten on the next automatic save). Folders created
-under the old cryptic names (`job.json`, `register.json`, `register.csv`) are
-renamed to these automatically on the next load.
+Opening a job folder, you'll see just three things: the **`files`** folder (all
+the PDFs), a **`link to this folder`** folder, and the **`Open The Dingus.html`**
+shortcut (double-click it to open the tool at this job). The `link to this folder`
+folder holds the tool's bookkeeping, given obvious, self-explanatory names so a
+coworker browsing ShareFile knows not to delete them: the job marker
+(`The Dingus - job link (do not delete).json`), the data backup
+(`Submittal Register - data (do not delete).json`), the `Submittal Register.csv`
+spreadsheet, and a plain-text `READ ME - do not delete.txt` that explains
+everything. The marker and the READ ME are **self-healing** — if someone deletes
+them, the app recreates them the next time the folder loads (and the register
+data/CSV are rewritten on the next automatic save). Folders created under the old
+layout — cryptic names (`job.json`, `register.json`, `register.csv`) or the
+bookkeeping loose at the folder root — are renamed and tidied into
+`link to this folder` automatically on the next load.
+
+Point the website at this **job folder** (the one that contains `files` and
+`link to this folder`) — the marker inside `link to this folder` is what ties it to
+the job.
 
 The app can't set ShareFile permissions from the browser, so it can't *stop*
 deletions outright — to truly lock the files, set the folder (or those files) to
@@ -403,10 +412,10 @@ the status, not the whole record.
 
 ```
 <job folder>/Open The Dingus.html                            double-click to open the tool at this job
-<job folder>/The Dingus - job link (do not delete).json  links this folder to the job
-<job folder>/Submittal Register - data (do not delete).json  register data backup
-<job folder>/Submittal Register.csv                       the register as a spreadsheet
-<job folder>/READ ME - do not delete.txt                  what all of this is
+<job folder>/link to this folder/The Dingus - job link (do not delete).json  links this folder to the job
+<job folder>/link to this folder/Submittal Register - data (do not delete).json  register data backup
+<job folder>/link to this folder/Submittal Register.csv   the register as a spreadsheet
+<job folder>/link to this folder/READ ME - do not delete.txt  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
 <job folder>/files/Submittals/All Submittals/<section>/            the section's current PDF, named by status
 <job folder>/files/Submittals/All Submittals/<section>/Archive/   that section's past PDFs, named by status
