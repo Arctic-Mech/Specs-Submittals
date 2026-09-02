@@ -919,7 +919,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v5.5';
+const APP_VERSION = 'v5.6';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5126,7 +5126,7 @@ function showEmail(mail, name, blob) {
       <div class="modal wide">
         <div class="modal-head">
           <h3>✉️ ${esc((mail && mail.subject) || name)}</h3>
-          <a class="btn sm" href="${dlUrl}" download="${escAttr(name)}">Download</a>
+          <a class="btn sm" href="${dlUrl}" download="${escAttr(name)}" title="Saves the email, then opens in your computer's default app for ${/\.msg$/i.test(name) ? '.msg' : '.eml'} files. If that's the wrong app (e.g. Bluebeam), set the default to Outlook in Windows Settings → Apps → Default apps.">Download</a>
           <button class="icon-btn" onclick="closePdf()">✕</button>
         </div>
         <div class="modal-body">
