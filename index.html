@@ -916,6 +916,11 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
       <div id="coEmpty"></div>
     </div>
 
+    <!-- CONTRACTS / VENDOR QUOTES / PO's TABS (rendered by JS) -->
+    <div id="tab-contracts" hidden></div>
+    <div id="tab-quotes" hidden></div>
+    <div id="tab-pos" hidden></div>
+
     <!-- BILLING TAB -->
     <div id="tab-billing" hidden>
       <div id="billingPanel"></div>
@@ -936,7 +941,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.5';
+const APP_VERSION = 'v6.6';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2123,6 +2128,8 @@ function trackedPaths() {
   for (const r of rfis) { (r.docs || []).forEach(add); }
   for (const c of tracking) { (c.files || []).forEach(add); }
   for (const c of cos) { (c.docs || []).forEach(add); (c.emails || []).forEach(add); }
+  for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) { (it.docs || []).forEach(add); (it.emails || []).forEach(add); }
+  for (const ct of (contracts || [])) { (ct.docs || []).forEach(add); (ct.emails || []).forEach(add); (ct.changes || []).forEach(ch => (ch.docs || []).forEach(add)); }
   return set;
 }
 /* Files sitting in the ShareFile folder that the register doesn't reference —
@@ -2803,8 +2810,12 @@ function go(where, id) {
     if (unsubRfis) { unsubRfis(); unsubRfis = null; }
     if (unsubTracking) { unsubTracking(); unsubTracking = null; }
     if (unsubCos) { unsubCos(); unsubCos = null; }
+    if (window._unsub_quotes) { window._unsub_quotes(); window._unsub_quotes = null; }
+    if (window._unsub_pos) { window._unsub_pos(); window._unsub_pos = null; }
+    if (_unsubContracts) { _unsubContracts(); _unsubContracts = null; }
     clearTimeout(_folderSaveTimer); clearInterval(_saveTicker); folderSaveState = 'idle';
     job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = [];
+    ledgerData = { quotes: [], pos: [] }; contracts = []; openLedger = { key: null, id: null };
     $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
@@ -2819,6 +2830,7 @@ async function openJob(id) {
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
+  ledgerData = { quotes: [], pos: [] }; contracts = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
   openRfi = null; trackCat = null; openCo = null;
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
   $('searchBox').value = '';
@@ -2828,6 +2840,7 @@ async function openJob(id) {
   watchRfis(job.id);              // RFIs for this job
   watchTracking(job.id);          // job-tracking categories
   watchCos(job.id);               // change orders
+  watchLedger('quotes'); watchLedger('pos'); watchContracts(job.id);   // vendor quotes, POs, contracts
   tryAutoLoadFolder(job.id);      // load this job's PDF folder if the grant stands
 }
 
@@ -3089,6 +3102,9 @@ function renderJob() {
     : 'No spec imported yet');
   else if (jobTab === 'rfis') bits.push(`${rfis.length} RFI${rfis.length === 1 ? '' : 's'}`);
   else if (jobTab === 'changeorders') bits.push(`${cos.length} change order${cos.length === 1 ? '' : 's'}`);
+  else if (jobTab === 'quotes') bits.push(`${litems('quotes').length} vendor quote${litems('quotes').length === 1 ? '' : 's'}`);
+  else if (jobTab === 'pos') bits.push(`${litems('pos').length} PO${litems('pos').length === 1 ? '' : 's'}`);
+  else if (jobTab === 'contracts') bits.push(`${(contracts || []).length} contract${(contracts || []).length === 1 ? '' : 's'}`);
   else if (jobTab === 'tracking') bits.push(`${tracking.length} categor${tracking.length === 1 ? 'y' : 'ies'}`);
   else if (jobTab === 'billing') bits.push('Billing');
   $('jobMeta').textContent = bits.join(' · ');
@@ -3097,6 +3113,9 @@ function renderJob() {
   applyTabVisibility();
   if (jobTab === 'rfis') { renderRfis(); return; }
   if (jobTab === 'changeorders') { renderCos(); return; }
+  if (jobTab === 'quotes') { renderLedger('quotes'); return; }
+  if (jobTab === 'pos') { renderLedger('pos'); return; }
+  if (jobTab === 'contracts') { renderContracts(); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
   if (jobTab === 'billing') { renderBilling(); return; }
 
@@ -3151,6 +3170,8 @@ function renderJobTabs() {
     { id: 'submittals',   label: 'Submittals',    n: sectionsOf(job).length },
     { id: 'rfis',         label: 'RFIs',          n: rfis.length },
     { id: 'changeorders', label: 'Change Orders', n: cos.length },
+    { id: 'quotes',       label: 'Vendor Quotes', n: litems('quotes').length },
+    { id: 'pos',          label: "PO's",          n: litems('pos').length },
     { id: 'tracking',     label: 'Job Tracking',  n: tracking.length },
     { id: 'billing',      label: 'Billing',       n: null }
   ];
@@ -3162,12 +3183,17 @@ const TAB_ACTIONS = {
   submittals:   '+ Add section',
   rfis:         '+ New RFI',
   changeorders: '+ New change order',
+  quotes:       '+ New quote',
+  pos:          '+ New PO',
   tracking:     '+ New category'
 };
 function applyTabVisibility() {
   $('tab-submittals').hidden   = jobTab !== 'submittals';
   $('tab-rfis').hidden         = jobTab !== 'rfis';
   $('tab-changeorders').hidden = jobTab !== 'changeorders';
+  $('tab-quotes').hidden       = jobTab !== 'quotes';
+  $('tab-pos').hidden          = jobTab !== 'pos';
+  $('tab-contracts').hidden    = jobTab !== 'contracts';
   $('tab-tracking').hidden     = jobTab !== 'tracking';
   $('tab-billing').hidden      = jobTab !== 'billing';
   const act = $('tabAction');
@@ -3178,7 +3204,7 @@ function applyTabVisibility() {
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer();
+  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer();
   renderJob();
   window.scrollTo(0, 0);
 }
@@ -3186,6 +3212,8 @@ function tabAction() {
   if (jobTab === 'submittals') addSectionManually();
   else if (jobTab === 'rfis') newRfi();
   else if (jobTab === 'changeorders') newChangeOrder();
+  else if (jobTab === 'quotes') newLedger('quotes');
+  else if (jobTab === 'pos') newLedger('pos');
   else if (jobTab === 'tracking') newTrackCategory();
 }
 
@@ -4105,6 +4133,312 @@ function renderCoDrawer() {
   wireDropZone($('coDrop'), files => addCoFiles(c.id, files));
   wireDropZone($('coEmailDrop'), files => addCoEmails(c.id, files));
   autosizeAll($('drawerHost'));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6d2. LEDGERS  —  Vendor Quotes and Purchase Orders. One generic register with
+   per-item ShareFile folders, PDF + email attachments, amounts and status.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const LEDGERS = {
+  quotes: {
+    coll: 'quotes', dir: 'Vendor Quotes', label: 'Vendor Quotes', add: '+ New quote',
+    one: 'quote', prefix: 'q', numLabel: 'Quote #', descLabel: 'Scope / item', dateLabel: 'Date received',
+    statuses: [
+      { id: 'requested', label: 'Requested', color: 'grey' },
+      { id: 'received',  label: 'Received',  color: 'blue' },
+      { id: 'selected',  label: 'Selected',  color: 'green' },
+      { id: 'declined',  label: 'Not used',  color: 'red' }
+    ]
+  },
+  pos: {
+    coll: 'purchaseorders', dir: 'Purchase Orders', label: "PO's", add: '+ New PO',
+    one: 'PO', prefix: 'po', numLabel: 'PO #', descLabel: 'Description', dateLabel: 'Date issued',
+    statuses: [
+      { id: 'draft',    label: 'Draft',    color: 'grey' },
+      { id: 'issued',   label: 'Issued',   color: 'blue' },
+      { id: 'received', label: 'Received', color: 'green' },
+      { id: 'closed',   label: 'Closed',   color: 'teal' }
+    ]
+  }
+};
+let ledgerData = { quotes: [], pos: [] };
+let openLedger = { key: null, id: null };
+let ledgerQuery = { quotes: '', pos: '' };
+let contracts = [];   // Contracts tab
+let openContract = null;
+let _unsubContracts = null;
+function watchContracts(jobId) {
+  if (_unsubContracts) { _unsubContracts(); _unsubContracts = null; }
+  _unsubContracts = FB.onSnapshot(FB.collection(FB.db, 'jobs', jobId, 'contracts'),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      contracts = snap.docs.map(d => d.data()).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'gc' ? -1 : 1) || (a.created || 0) - (b.created || 0));
+      if (view === 'job' && jobTab === 'contracts') {
+        renderContracts();
+        const ae = document.activeElement;
+        if (openContract && !(ae && ae.closest && ae.closest('.drawer'))) renderContractDrawer();
+      }
+      if (jobFolder && typeof syncContractFolders === 'function') syncContractFolders().catch(() => {});
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+function renderContracts() { const h = $('tab-contracts'); if (h) h.innerHTML = '<div class="empty"><b>Contracts — coming up next.</b></div>'; }
+const lcfg = lk => LEDGERS[lk];
+const litems = lk => ledgerData[lk] || [];
+const lStatus = (lk, id) => lcfg(lk).statuses.find(s => s.id === id) || lcfg(lk).statuses[0];
+const ledgerColl = lk => FB.collection(FB.db, 'jobs', job.id, lcfg(lk).coll);
+const ledgerRef = (lk, id) => FB.doc(FB.db, 'jobs', job.id, lcfg(lk).coll, String(id));
+const ledgerById = (lk, id) => litems(lk).find(x => x.id === id);
+function ledgerFolderName(lk, it) {
+  const base = [it.number, it.vendor].map(s => (s || '').trim()).filter(Boolean).join(' - ')
+    || (it.description || '').trim() || (lcfg(lk).one + ' ' + (it.id || ''));
+  return sanitizeAnyName(base.slice(0, 90), lcfg(lk).one);
+}
+function ledgerDocDir(lk, it) { return lcfg(lk).dir + '/' + ledgerFolderName(lk, it); }
+function ledgerEmailDir(lk, it) { return ledgerDocDir(lk, it) + '/Emails'; }
+async function saveLedger(lk, it) { it.updated = Date.now(); try { await FB.setDoc(ledgerRef(lk, it.id), clean(it)); } catch (e) { toast(writeError(e), true); } }
+function newLedger(lk) {
+  if (!job) return;
+  const it = { id: uid(lcfg(lk).prefix), number: '', vendor: '', description: '', amount: '',
+    status: lcfg(lk).statuses[0].id, date: '', docs: [], emails: [], notes: '', created: Date.now(), updated: Date.now() };
+  ledgerData[lk] = [it].concat(litems(lk));
+  renderLedger(lk); openLedgerDrawer(lk, it.id);
+  saveLedger(lk, it);
+}
+function matchLedger(it, q) {
+  if (!q) return true;
+  return [it.number, it.vendor, it.description, it.notes, it.amount, ...(it.docs || []).map(d => d.name), ...(it.emails || []).map(d => d.name)]
+    .join(' ').toLowerCase().includes(q.toLowerCase());
+}
+function renderLedger(lk) {
+  const host = $('tab-' + lk); if (!host) return;
+  const cfg = lcfg(lk), items = litems(lk).slice();
+  const tally = {}; cfg.statuses.forEach(s => tally[s.id] = 0);
+  let total = 0;
+  items.forEach(it => { tally[it.status || cfg.statuses[0].id] = (tally[it.status || cfg.statuses[0].id] || 0) + 1;
+    const n = parseFloat(String(it.amount).replace(/[^0-9.-]/g, '')); if (isFinite(n)) total += n; });
+  const q = ledgerQuery[lk] || '';
+  const visible = items.filter(it => matchLedger(it, q));
+  host.innerHTML = `
+    <div class="toolbar">
+      <div class="search"><input class="input" id="ledgerSearch_${lk}" placeholder="Search ${esc(cfg.label.toLowerCase())}…" value="${esc(q)}" autocomplete="off"
+        oninput="ledgerQuery['${lk}']=this.value; renderLedger('${lk}'); const el=$('ledgerSearch_${lk}'); el.focus(); el.setSelectionRange(el.value.length,el.value.length)"></div>
+      <div class="spacer"></div>
+      <span class="muted">${items.length} ${esc(cfg.label.toLowerCase())}${total ? ' · ' + fmtMoney(total) + ' total' : ''}</span>
+    </div>
+    <div class="chips">${cfg.statuses.map(s => `<span class="chip" style="color:${cvar(s.color)};background:${csf(s.color)}"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id] || 0}</span></span>`).join('')}</div>
+    ${items.length ? (visible.length ? `<div class="table-card"><table>
+      <thead><tr><th style="width:110px">${esc(cfg.numLabel)}</th><th style="width:180px">Vendor</th><th>${esc(cfg.descLabel)}</th><th style="width:130px">Amount</th><th style="width:140px">Status</th></tr></thead>
+      <tbody>${visible.map(it => ledgerRowHtml(lk, it)).join('')}</tbody></table></div>`
+      : `<div class="empty">Nothing matches. <button class="btn sm ghost" onclick="ledgerQuery['${lk}']='';renderLedger('${lk}')">Clear</button></div>`)
+    : `<div class="empty"><b>No ${esc(cfg.label.toLowerCase())} yet.</b><br><span class="muted">Log each one with its amount and status and attach the PDF + emails.</span><br><br>
+        <button class="btn primary" onclick="newLedger('${lk}')">${esc(cfg.add)}</button></div>`}`;
+}
+function ledgerRowHtml(lk, it) {
+  const st = lStatus(lk, it.status);
+  const nDocs = (it.docs || []).length + (it.emails || []).length;
+  return `<tr onclick="openLedgerDrawer('${lk}','${it.id}')">
+    <td data-label="${esc(lcfg(lk).numLabel)}"><b>${esc(it.number || '—')}</b></td>
+    <td data-label="Vendor">${esc(it.vendor || '—')}</td>
+    <td data-label="${esc(lcfg(lk).descLabel)}">${esc(it.description || '')}${nDocs ? `<small>📎 ${nDocs}</small>` : ''}</td>
+    <td data-label="Amount">${it.amount ? esc(fmtMoney(it.amount) || it.amount) : '<span class="muted">—</span>'}</td>
+    <td data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
+  </tr>`;
+}
+function closeLedgerDrawer() { openLedger = { key: null, id: null }; $('drawerHost').innerHTML = ''; }
+function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; renderLedgerDrawer(); }
+function patchLedger(lk, id, fields) {
+  const it = ledgerById(lk, id); if (!it) return;
+  Object.assign(it, fields);
+  renderLedger(lk);
+  saveLedger(lk, it);
+  if (jobFolder && ('number' in fields || 'vendor' in fields)) maybeAutoOrganize();
+}
+function setLedgerStatus(lk, id, status) { patchLedger(lk, id, { status }); if (openLedger.id === id) renderLedgerDrawer(); }
+async function deleteLedgerItem(lk, id) {
+  const it = ledgerById(lk, id); if (!it) return;
+  if (!confirm(`Delete this ${lcfg(lk).one}? The record is removed for everyone. Any PDFs stay in the ShareFile folder.`)) return;
+  ledgerData[lk] = litems(lk).filter(x => x.id !== id);
+  if (openLedger.id === id) closeLedgerDrawer();
+  renderLedger(lk);
+  try { await FB.deleteDoc(ledgerRef(lk, id)); } catch (e) { toast(writeError(e), true); }
+  if (jobFolder) syncLedgerFolders(lk).catch(() => {});
+}
+function ledgerDocList(it, kind, lk) {
+  const docs = it[kind] || [];
+  if (!docs.length) return '';
+  const email = kind === 'emails';
+  return `<div class="file-list">` + docs.map(d => `
+    <div class="file-row"><span class="fi">${email ? '✉️' : '📄'}</span>
+      <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}${d.staged ? ' · <b style="color:var(--amber)">on phone</b>' : ''}</small></span>
+      <button class="btn sm" onclick="viewLedgerDoc('${lk}','${it.id}','${kind}','${d.id}')">Open</button>
+      <button class="icon-btn" title="Remove" onclick="removeLedgerDoc('${lk}','${it.id}','${kind}','${d.id}')">🗑</button>
+    </div>`).join('') + `</div>`;
+}
+function renderLedgerDrawer() {
+  const lk = openLedger.key, it = ledgerById(lk, openLedger.id);
+  if (!it) { closeLedgerDrawer(); return; }
+  const cfg = lcfg(lk), st = lStatus(lk, it.status);
+  const statusButtons = cfg.statuses.map(o => `
+    <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
+      onclick="setLedgerStatus('${lk}','${it.id}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
+  $('drawerHost').innerHTML = `
+  <div class="scrim" onclick="closeLedgerDrawer()"></div>
+  <aside class="drawer" role="dialog" aria-label="${esc(cfg.one)}">
+    <div class="drawer-head">
+      <div style="flex:1;min-width:0"><div class="num">${esc(cfg.label)}</div>
+        <h2>${esc(it.number ? cfg.numLabel.replace(' #', ' ') + it.number : 'New ' + cfg.one)}</h2></div>
+      <button class="icon-btn" onclick="deleteLedgerItem('${lk}','${it.id}')" title="Delete">🗑</button>
+      <button class="icon-btn" onclick="closeLedgerDrawer()" title="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="sec">
+        <div class="grid2">
+          <div class="field"><label class="fl">${esc(cfg.numLabel)}</label>
+            <input class="input" value="${esc(it.number || '')}" onchange="patchLedger('${lk}','${it.id}',{number:this.value.trim()})"></div>
+          <div class="field"><label class="fl">Vendor</label>
+            <input class="input" value="${esc(it.vendor || '')}" onchange="patchLedger('${lk}','${it.id}',{vendor:this.value.trim()})"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Amount</label>
+            <input class="input" inputmode="decimal" value="${esc(fmtAmountInput(it.amount || ''))}" placeholder="e.g. 4,200" onchange="this.value=fmtAmountInput(this.value); patchLedger('${lk}','${it.id}',{amount:this.value})"></div>
+          <div class="field"><label class="fl">${esc(cfg.dateLabel)}</label>
+            <input class="input" type="date" value="${esc(it.date || '')}" onchange="patchLedger('${lk}','${it.id}',{date:this.value})"></div>
+        </div>
+        <div class="field"><label class="fl">${esc(cfg.descLabel)}</label>
+          <textarea class="input autosize" rows="2" onchange="patchLedger('${lk}','${it.id}',{description:this.value.trim()})">${esc(it.description || '')}</textarea></div>
+      </div>
+      <div class="sec">
+        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
+        <div class="status-grid">${statusButtons}</div>
+      </div>
+      <div class="sec">
+        <h4>PDFs <button class="btn sm" onclick="pickLedgerFiles('${lk}','${it.id}')">+ Upload PDF</button></h4>
+        ${ledgerDocList(it, 'docs', lk)}
+        <div class="drop" id="ledgerDrop" onclick="pickLedgerFiles('${lk}','${it.id}')">Drop the PDF here<br><span class="muted">Saved to this job's ShareFile folder</span></div>
+      </div>
+      <div class="sec">
+        <h4>Emails <button class="btn sm" onclick="pickLedgerEmails('${lk}','${it.id}')">+ Add email</button></h4>
+        ${ledgerDocList(it, 'emails', lk)}
+        <div class="drop" id="ledgerEmailDrop" onclick="pickLedgerEmails('${lk}','${it.id}')">Drop emails (.msg / .eml) here</div>
+      </div>
+      <div class="sec">
+        <h4>Notes</h4>
+        <textarea class="input autosize" rows="4" onchange="patchLedger('${lk}','${it.id}',{notes:this.value})">${esc(it.notes || '')}</textarea>
+      </div>
+    </div>
+  </aside>`;
+  wireDropZone($('ledgerDrop'), files => addLedgerFiles(lk, it.id, files));
+  wireDropZone($('ledgerEmailDrop'), files => addLedgerEmails(lk, it.id, files));
+  autosizeAll($('drawerHost'));
+}
+async function pickLedgerFiles(lk, id) {
+  if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
+  inp.onchange = () => addLedgerFiles(lk, id, Array.from(inp.files)); inp.click();
+}
+async function pickLedgerEmails(lk, id) {
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
+  inp.onchange = () => addLedgerEmails(lk, id, Array.from(inp.files)); inp.click();
+}
+async function addLedgerFiles(lk, id, all) {
+  const it = ledgerById(lk, id); if (!it || !all.length) return;
+  const pdfs = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (!pdfs.length) { toast('Non-PDF files were skipped', true); return; }
+  if (!jobFolder && !fsSupported()) {                 // phone: stage to Firebase
+    const big = pdfs.find(f => f.size > STAGE_MAX); if (big) { toast(`"${big.name}" is too big (25 MB max)`, true); return; }
+    it.docs = it.docs || [];
+    for (const f of pdfs) { try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); it.docs.push({ id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid, added: Date.now() }); } catch (e) { toast('Upload failed', true); } }
+    renderLedgerDrawer(); await saveLedger(lk, it); toast('Uploaded — a computer will file it into ShareFile'); return;
+  }
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  it.docs = it.docs || [];
+  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, ledgerDocDir(lk, it), sanitizeFileName(f.name)); it.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  renderLedger(lk); renderLedgerDrawer(); await saveLedger(lk, it); syncLedgerFolders(lk).catch(() => {}); noteFolderChanged();
+}
+async function addLedgerEmails(lk, id, all) {
+  const it = ledgerById(lk, id); if (!it || !all.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name));
+  if (!emails.length) { toast('Only .msg / .eml emails were kept', true); return; }
+  it.emails = it.emails || [];
+  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, ledgerEmailDir(lk, it), sanitizeAnyName(f.name, 'email')); it.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  renderLedgerDrawer(); await saveLedger(lk, it); syncLedgerFolders(lk).catch(() => {}); noteFolderChanged();
+}
+function viewLedgerDoc(lk, id, kind, docId) {
+  const it = ledgerById(lk, id); const d = it && (it[kind] || []).find(x => x.id === docId);
+  if (d) openStoredDoc(d);
+}
+async function removeLedgerDoc(lk, id, kind, docId) {
+  const it = ledgerById(lk, id); if (!it) return;
+  const d = (it[kind] || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  if (d.staged && d.stagedId) await deleteStaged(d.stagedId); else await deleteStoredDoc(d);
+  it[kind] = it[kind].filter(x => x.id !== docId);
+  renderLedgerDrawer(); renderLedger(lk); await saveLedger(lk, it); noteFolderChanged();
+}
+/* per-item ShareFile folders, tidy renamed/empty ones (never removes a non-empty folder) */
+let _syncingLedger = {};
+async function syncLedgerFolders(lk) {
+  if (!jobFolder || _syncingLedger[lk]) return;
+  _syncingLedger[lk] = true;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const root = await walkDirCreate(filesRoot, lcfg(lk).dir);
+    const want = new Set();
+    for (const it of litems(lk)) {
+      if (!ledgerFolderName(lk, it)) continue;
+      if (!((it.number || '').trim() || (it.vendor || '').trim() || (it.description || '').trim())) continue;
+      const name = ledgerFolderName(lk, it); want.add(name);
+      try { await root.getDirectoryHandle(name, { create: true }); } catch (e) {}
+    }
+    for await (const e of root.values()) {
+      if (e.kind !== 'directory' || want.has(e.name)) continue;
+      if (await isDirEmptyDeep(e)) { try { await root.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+    }
+  } catch (e) { console.error(e); }
+  finally { _syncingLedger[lk] = false; }
+}
+/* Move any misplaced ledger PDFs/emails into their item's current folder (after a
+   rename), copy → persist → delete, then tidy the folders. */
+let _reconcilingLedgers = false;
+async function reconcileLedgers() {
+  if (!jobFolder || _reconcilingLedgers) return;
+  _reconcilingLedgers = true;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const moves = [], dirty = new Map();
+    for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) {
+      for (const d of (it.docs || [])) if (!isLink(d) && !d.staged) { const m = await planRefile(filesRoot, d, ledgerDocDir(lk, it)); if (m) { moves.push(m); dirty.set(lk + '|' + it.id, { lk, it }); } }
+      for (const d of (it.emails || [])) if (!isLink(d)) { const m = await planRefile(filesRoot, d, ledgerEmailDir(lk, it)); if (m) { moves.push(m); dirty.set(lk + '|' + it.id, { lk, it }); } }
+    }
+    if (moves.length) {
+      for (const m of moves) { m.doc.dir = m.newDir; m.doc.file = m.newFile; }
+      for (const { lk, it } of dirty.values()) { try { await saveLedger(lk, it); } catch (e) {} }
+      for (const m of moves) { try { const od = m.oldDir ? await walkDir(filesRoot, m.oldDir) : filesRoot; await od.removeEntry(m.oldFile); } catch (e) {} if (blobUrlCache.has(m.doc.id)) { URL.revokeObjectURL(blobUrlCache.get(m.doc.id)); blobUrlCache.delete(m.doc.id); } }
+    }
+    await syncLedgerFolders('quotes'); await syncLedgerFolders('pos');
+  } catch (e) { console.error(e); }
+  finally { _reconcilingLedgers = false; }
+}
+function watchLedger(lk) {
+  const un = '_unsub_' + lk;
+  if (window[un]) { window[un](); window[un] = null; }
+  const jobId = job.id;
+  window[un] = FB.onSnapshot(ledgerColl(lk),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      ledgerData[lk] = snap.docs.map(d => d.data())
+        .sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }) || (b.created || 0) - (a.created || 0));
+      if (view === 'job' && jobTab === lk) {
+        renderLedger(lk);
+        const ae = document.activeElement;
+        if (openLedger.key === lk && openLedger.id && !(ae && ae.closest && ae.closest('.drawer'))) renderLedgerDrawer();
+      }
+      if (jobFolder) syncLedgerFolders(lk).catch(() => {});
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -6847,6 +7181,7 @@ async function maybeAutoOrganize() {
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     await syncCoFolders();                                // per-CO folders after any moves
+    await reconcileLedgers();                             // vendor-quote / PO folders
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
     if (n || stray) {
       if (openKey) renderDrawer();
@@ -6920,6 +7255,7 @@ async function saveToFolder(auto) {
     await cleanupEmptyOldDirs(filesRoot);
     await syncRfiFolders();                         // per-RFI folders (+ Question/Answered), tidy renamed/empty ones
     await syncCoFolders();                          // per-CO folders, tidy renamed/empty ones
+    await reconcileLedgers();                       // vendor-quote / PO folders
     await syncAllSubmittals();                     // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
