@@ -955,7 +955,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.8';
+const APP_VERSION = 'v6.9';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6881,16 +6881,23 @@ const REGISTER_CSV      = 'Submittal Register.csv';
 const REGISTER_CSV_OLD  = 'register.csv';
 const FOLDER_README     = 'READ ME - do not delete.txt';
 const LAUNCHER_FILE     = 'Open The Dingus.html';   // double-click in ShareFile to open the tool at this job (stays at the folder root)
-const LINK_DIR          = 'link to this folder';    // the marker + register backup + READ ME live here, out of the way
+const LINK_DIR          = 'Dingus data (do not delete)';   // the marker + register backup + READ ME live here, out of the way
+const LINK_DIR_OLDS     = ['link to this folder'];         // earlier names — migrated into LINK_DIR on load
+/* The internal subfolders a user should NOT pick when pairing (the browser can't
+   step up to the parent, so pairing one of these can never reach the job's files). */
+function isInternalFolderPick(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return n === 'files' || n === LINK_DIR.toLowerCase() || LINK_DIR_OLDS.some(o => o.toLowerCase() === n);
+}
 async function linkDirHandle(handle) { return (handle || jobFolder).getDirectoryHandle(LINK_DIR, { create: true }); }
-/* Move a bookkeeping file from the folder root into "link to this folder/" (used to
-   migrate existing folders). No-op if it isn't at the root. */
-async function moveToLink(handle, ld, srcName, destName) {
-  let srcFh; try { srcFh = await handle.getFileHandle(srcName); } catch (e) { return; }   // not at root → nothing to move
+/* Move a bookkeeping file from `srcHandle` into the link folder (used to migrate
+   existing folders). No-op if it isn't there. */
+async function moveToLink(srcHandle, ld, srcName, destName) {
+  let srcFh; try { srcFh = await srcHandle.getFileHandle(srcName); } catch (e) { return; }   // not present → nothing to move
   try {
     let hasDest = true; try { await ld.getFileHandle(destName); } catch (e) { hasDest = false; }
     if (!hasDest) { const blob = await srcFh.getFile(); const df = await ld.getFileHandle(destName, { create: true }); const w = await df.createWritable(); await w.write(blob); await w.close(); }
-    await handle.removeEntry(srcName);
+    await srcHandle.removeEntry(srcName);
   } catch (e) {}
 }
 
@@ -6911,7 +6918,7 @@ async function writeIfChanged(handle, name, text, type) {
    with a fallback to the folder root for the old layout. */
 async function readJobMarker(handle) {
   const places = [];
-  try { places.push(await handle.getDirectoryHandle(LINK_DIR)); } catch (e) {}
+  for (const dir of [LINK_DIR, ...LINK_DIR_OLDS]) { try { places.push(await handle.getDirectoryHandle(dir)); } catch (e) {} }
   places.push(handle);
   for (const h of places) for (const name of [MARKER_FILE, ...MARKER_FILE_OLDS]) {
     try { const t = await (await (await h.getFileHandle(name)).getFile()).text(); if (t && t.trim()) return JSON.parse(t); } catch (e) {}
@@ -6984,6 +6991,15 @@ async function writeFolderReadme(handle) { try { await writeIfChanged(handle, FO
    folders reorganise themselves. The launcher shortcut stays at the root. */
 async function migrateOldFolderFiles(handle) {
   const ld = await linkDirHandle(handle);
+  // Pull the contents of any earlier-named link folder ("link to this folder") into
+  // the current one, then remove the old folder.
+  for (const oldName of LINK_DIR_OLDS) {
+    let oldLd; try { oldLd = await handle.getDirectoryHandle(oldName); } catch (e) { continue; }
+    const names = []; try { for await (const e of oldLd.values()) if (e.kind === 'file') names.push(e.name); } catch (e) {}
+    for (const n of names) await moveToLink(oldLd, ld, n, n);
+    try { await handle.removeEntry(oldName, { recursive: true }); } catch (e) {}
+  }
+  // Pull any root-level bookkeeping (old cryptic + current names) into the link folder.
   for (const old of MARKER_FILE_OLDS) await moveToLink(handle, ld, old, MARKER_FILE);
   await moveToLink(handle, ld, MARKER_FILE, MARKER_FILE);
   await moveToLink(handle, ld, REGISTER_JSON_OLD, REGISTER_JSON);
@@ -6991,7 +7007,7 @@ async function migrateOldFolderFiles(handle) {
   await moveToLink(handle, ld, REGISTER_CSV_OLD, REGISTER_CSV);
   await moveToLink(handle, ld, REGISTER_CSV, REGISTER_CSV);
   await moveToLink(handle, ld, FOLDER_README, FOLDER_README);
-  try { await ld.removeEntry(LINK_DIR, { recursive: true }); } catch (e) {}   // clear a stray nested link folder from a mis-pick
+  for (const nested of [LINK_DIR, ...LINK_DIR_OLDS]) { try { await ld.removeEntry(nested, { recursive: true }); } catch (e) {} }   // clear a stray nested link folder from a mis-pick
 }
 /* Keep the folder self-explanatory and self-healing: reorganise the bookkeeping
    into "link to this folder/", (re)create the marker + READ ME there, and keep the
@@ -7008,7 +7024,7 @@ async function ensureFolderDocs(handle) {
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function markFolderLoaded(handle) {
-  if ((handle && handle.name || '').trim().toLowerCase() === LINK_DIR.toLowerCase()) {   // wrong folder was remembered — the link subfolder, not the job root
+  if (isInternalFolderPick(handle && handle.name)) {   // wrong folder was remembered — an internal subfolder, not the job root
     if (job) await forgetHandle(job.id);
     jobFolder = null; folderRemembered = null; updateFolderBar();
     return;
@@ -7086,9 +7102,9 @@ async function loadJobFolder(forcePick) {
   // PDFs live in its sibling "files" folder, and a browser can't step up to the
   // parent from here. So if that's what got picked (or was remembered), send the
   // user back up one level rather than pairing an empty folder.
-  if ((handle.name || '').trim().toLowerCase() === LINK_DIR.toLowerCase()) {
+  if (isInternalFolderPick(handle.name)) {
     await forgetHandle(job.id);
-    alert('You picked the “' + LINK_DIR + '” folder.\n\nBrowsers can’t open the folder above it from here, so please pick the job folder just ABOVE it — the one that contains the “files” folder and “' + LINK_DIR + '” (for example “The Dingus”).');
+    alert('You picked the “' + (handle.name || '') + '” folder, which is inside the job folder.\n\nA browser can’t open the folder above it from here, so please pick the job folder itself — the one that contains “files” and “' + LINK_DIR + '” (for example “The Dingus”).');
     return false;
   }
   await writeJobMarker(handle, job);

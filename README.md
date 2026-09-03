@@ -56,7 +56,7 @@ Two places, split by what the data is:
 ### Loading a job's ShareFile folder
 
 Open a job, then **Load ShareFile folder** and pick that job's folder. The app
-keeps its PDFs under `files/` there and drops a `link to this folder` folder (a
+keeps its PDFs under `files/` there and drops a `Dingus data (do not delete)` folder (a
 clearly-named marker + a `READ ME - do not delete.txt`) plus an
 `Open The Dingus.html` shortcut at the root. This
 needs **Chrome or Edge** and the folder available locally (ShareFile Drive, or
@@ -123,8 +123,8 @@ then the PDF lives only in the cloud copy, not in ShareFile.
 While a job's ShareFile folder is loaded, the register **saves itself
 automatically** — a few seconds after any change (yours or another user's), a
 complete copy is written into the folder, overwriting the previous one. There's no
-Save button; instead the header shows a **"Saved to folder …"** indicator with how
-long ago it last saved (click it to save immediately). Each automatic save writes:
+Save button; instead the header shows a **"Saved …"** indicator with the time it
+last saved (click it to save immediately). Each automatic save writes:
 
 - **`Submittal Register - data (do not delete).json`** — a full machine-readable
   snapshot of the job (every section, its statuses, releases, tags, spec text,
@@ -148,8 +148,8 @@ register itself is always saved live to the cloud regardless.
 ### Named so nobody deletes them
 
 Opening a job folder, you'll see just three things: the **`files`** folder (all
-the PDFs), a **`link to this folder`** folder, and the **`Open The Dingus.html`**
-shortcut (double-click it to open the tool at this job). The `link to this folder`
+the PDFs), a **`Dingus data (do not delete)`** folder, and the **`Open The Dingus.html`**
+shortcut (double-click it to open the tool at this job). The `Dingus data (do not delete)`
 folder holds the tool's bookkeeping, given obvious, self-explanatory names so a
 coworker browsing ShareFile knows not to delete them: the job marker
 (`The Dingus - job link (do not delete).json`), the data backup
@@ -160,11 +160,11 @@ them, the app recreates them the next time the folder loads (and the register
 data/CSV are rewritten on the next automatic save). Folders created under the old
 layout — cryptic names (`job.json`, `register.json`, `register.csv`) or the
 bookkeeping loose at the folder root — are renamed and tidied into
-`link to this folder` automatically on the next load.
+`Dingus data (do not delete)` automatically on the next load.
 
 Point the website at this **job folder** (the one that contains `files` and
-`link to this folder`) — the marker inside `link to this folder` is what ties it to
-the job. **Don't select the `link to this folder` subfolder itself:** a browser
+`Dingus data (do not delete)`) — the marker inside `Dingus data (do not delete)` is what ties it to
+the job. **Don't select the `Dingus data (do not delete)` subfolder itself:** a browser
 can't step up to a parent folder, so from inside it the app can't reach the `files`
 folder. If you do pick it by mistake the app now says so and sends you back up one
 level.
@@ -473,10 +473,10 @@ the status, not the whole record.
 
 ```
 <job folder>/Open The Dingus.html                            double-click to open the tool at this job
-<job folder>/link to this folder/The Dingus - job link (do not delete).json  links this folder to the job
-<job folder>/link to this folder/Submittal Register - data (do not delete).json  register data backup
-<job folder>/link to this folder/Submittal Register.csv   the register as a spreadsheet
-<job folder>/link to this folder/READ ME - do not delete.txt  what all of this is
+<job folder>/Dingus data (do not delete)/The Dingus - job link (do not delete).json  links this folder to the job
+<job folder>/Dingus data (do not delete)/Submittal Register - data (do not delete).json  register data backup
+<job folder>/Dingus data (do not delete)/Submittal Register.csv   the register as a spreadsheet
+<job folder>/Dingus data (do not delete)/READ ME - do not delete.txt  what all of this is
 <job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
 <job folder>/files/Submittals/All Submittals/<section>/            the section's current PDF, named by status
 <job folder>/files/Submittals/All Submittals/<section>/Archive/   that section's past PDFs, named by status
