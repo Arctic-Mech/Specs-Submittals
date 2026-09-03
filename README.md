@@ -104,11 +104,8 @@ a computer with the folder loaded, the app **files it into ShareFile automatical
 (into the right status subfolder, superseding any older revision) and clears the
 temporary copy.
 
-In a section's drawer, under **Submittals** or **Submittal responses**:
-
-- **📋 Paste** — the easy way on an iPhone: copy a PDF (from Files, an email, etc.),
-  then tap Paste. If the browser won't hand over the pasted file, use **+ PDF**.
-- **+ PDF** — choose a PDF from Files/iCloud.
+In a section's drawer, under **Submittals** or **Submittal responses**, tap
+**+ Upload PDF** and choose a PDF from Files/iCloud.
 
 You pick the status just like a normal upload. The PDF then shows in the list with a
 **📱 on phone — will file to ShareFile** badge; you (and everyone) can still **View**
@@ -225,10 +222,11 @@ exports the classic Arctic Sheet Metal *Change Order Log* — the black-and-whit
 grid form (ASM # · MOD · RFI,CCD,ASI · Description · Pending Cost · Date ·
 Approved Cost) with the numbered rows, a **Main Contract** row, and the per-page,
 cumulative and grand totals. Set the original contract value in the **Main
-contract $** box on the tab to fill the Main Contract row and the totals. Each CO
-lands in a numbered row: its **notes** go in the RFI/CCD/ASI column, its
+contract $** box on the tab to fill the Main Contract row and the totals (amounts
+comma-group as you type them). Each CO lands in a numbered row: its **MOD** and
+**RFI, CCD, ASI** fields (both on the CO drawer) go in those columns, its
 description in Description, and its amount in **Pending Cost** or (once approved)
-in **Approved Cost** with the approved date.
+in **Approved Cost** with the approved date. The log carries the Arctic logo.
 
 ## Job Tracking
 

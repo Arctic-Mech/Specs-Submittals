@@ -894,7 +894,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <div id="tab-changeorders" hidden>
       <div class="toolbar">
         <div class="search"><input class="input" id="coSearch" placeholder="Search change orders…" autocomplete="off"></div>
-        <label class="co-contract" title="The original contract amount — shown as the Main Contract row on the Change Order Log">Main contract $<input class="input" id="coContract" inputmode="decimal" placeholder="0.00" autocomplete="off" onchange="setContractAmount(this.value)"></label>
+        <label class="co-contract" title="The original contract amount — shown as the Main Contract row on the Change Order Log">Main contract $<input class="input" id="coContract" inputmode="decimal" placeholder="0.00" autocomplete="off" onchange="setContractAmount(this.value); this.value=fmtAmountInput(this.value)"></label>
         <button class="btn ghost" onclick="exportCoLog()" title="Export the Change Order Log as a PDF">⤓ <span class="lbl">CO Log PDF</span></button>
         <div class="spacer"></div>
         <span class="muted" id="coCount"></span>
@@ -933,7 +933,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.2';
+const APP_VERSION = 'v6.3';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1019,6 +1019,14 @@ const fmtMoney = v => {
   if (!isFinite(n)) return '';
   return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+/* Comma-group a money input's text, keeping decimals only if the user typed them. */
+function fmtAmountInput(v) {
+  const raw = String(v == null ? '' : v).trim();
+  if (!raw) return '';
+  const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(n)) return raw;
+  return n.toLocaleString('en-US', /\.\d/.test(raw) ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 });
+}
 
 function addWeeks(dateStr, weeks) {
   const w = parseFloat(weeks);
@@ -3794,7 +3802,7 @@ function renderCos() {
     (coStatusFilter ? `<button class="chip" onclick="setCoFilter(null)">Clear ✕</button>` : '');
 
   const cc = $('coContract');
-  if (cc && document.activeElement !== cc) cc.value = (job.contractAmount || job.contractAmount === 0) ? job.contractAmount : '';
+  if (cc && document.activeElement !== cc) cc.value = (job.contractAmount || job.contractAmount === 0) ? fmtAmountInput(String(job.contractAmount)) : '';
   const list = visibleCos();
   const totLabel = total ? ` · ${fmtMoney(total)} total, ${fmtMoney(paidAmt)} paid` : '';
   $('coCount').textContent = (list.length === cos.length ? `${cos.length} change order${cos.length === 1 ? '' : 's'}` : `${list.length} of ${cos.length}`) + totLabel;
@@ -4009,8 +4017,14 @@ function renderCoDrawer() {
         <div class="grid2">
           <div class="field"><label class="fl">CO number</label>
             <input class="input" id="coNum" value="${esc(c.number || '')}" onchange="patchCo('${c.id}',{number:this.value.trim()})"></div>
+          <div class="field"><label class="fl">MOD</label>
+            <input class="input" value="${esc(c.mod || '')}" placeholder="e.g. 1" onchange="patchCo('${c.id}',{mod:this.value.trim()})"></div>
+        </div>
+        <div class="grid2">
           <div class="field"><label class="fl">Amount</label>
-            <input class="input" id="coAmt" value="${esc(c.amount || '')}" placeholder="e.g. 4200" onchange="patchCo('${c.id}',{amount:this.value.trim()})"></div>
+            <input class="input" id="coAmt" inputmode="decimal" value="${esc(fmtAmountInput(c.amount || ''))}" placeholder="e.g. 4,200" onchange="this.value=fmtAmountInput(this.value); patchCo('${c.id}',{amount:this.value})"></div>
+          <div class="field"><label class="fl">RFI, CCD, ASI</label>
+            <input class="input" value="${esc(c.rfiCcdAsi || '')}" placeholder="RFI / CCD / ASI ref or status" onchange="patchCo('${c.id}',{rfiCcdAsi:this.value.trim()})"></div>
         </div>
         <div class="field"><label class="fl">Description</label>
           <textarea class="input autosize" rows="2" placeholder="What the change covers" onchange="patchCo('${c.id}',{description:this.value.trim()})">${esc(c.description || '')}</textarea></div>
@@ -4349,8 +4363,7 @@ function renderDrawer() {
       <div class="sec">
         <h4>Submittals <span style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="linkModal('${s.key}','submittals',null)">+ ShareFile link</button>
-          <button class="btn sm" onclick="pastePdf('${s.key}','submittals')" title="Paste a PDF you copied — the easy way on a phone">📋 Paste</button>
-          <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ PDF</button></span></h4>
+          <button class="btn sm" onclick="pickFiles('${s.key}','submittals')">+ Upload PDF</button></span></h4>
         <div id="listSub">${fileList(s, 'submittals')}</div>
         <div class="drop" id="dropSub" onclick="pickFiles('${s.key}','submittals')">
           Drop submittal PDFs here<br><span class="muted">Saved to this job’s ShareFile folder</span></div>
@@ -4359,8 +4372,7 @@ function renderDrawer() {
       <div class="sec">
         <h4>Submittal responses <span style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="linkModal('${s.key}','responses',null)">+ ShareFile link</button>
-          <button class="btn sm" onclick="pastePdf('${s.key}','responses')" title="Paste a PDF you copied — the easy way on a phone">📋 Paste</button>
-          <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ PDF</button></span></h4>
+          <button class="btn sm" onclick="pickFiles('${s.key}','responses')">+ Upload PDF</button></span></h4>
         <div id="listRes">${fileList(s, 'responses')}</div>
         <div class="drop" id="dropRes" onclick="pickFiles('${s.key}','responses')">
           Drop the returned / stamped PDFs here</div>
@@ -5045,20 +5057,6 @@ async function stageSectionPdfs(key, kind, pdfs) {
   try { await patchSection(key, { [kind]: s[kind], status: s.status, history: s.history || [], submittedDate: s.submittedDate || '', returnedDate: s.returnedDate || '', releaseState: s.releaseState || 'not_ready' }); }
   catch (e) { toast(writeError(e), true); return; }
   toast(`${added} PDF${added === 1 ? '' : 's'} uploaded — a computer will file ${added === 1 ? 'it' : 'them'} into ShareFile`);
-}
-/* Paste a copied PDF (the easy way to add one on an iPhone). */
-async function pastePdf(key, kind) {
-  try {
-    if (!(navigator.clipboard && navigator.clipboard.read)) { toast('This browser can’t paste files — tap “+ PDF” to choose one.', true); return; }
-    const items = await navigator.clipboard.read();
-    const files = [];
-    for (const it of items) {
-      const t = (it.types || []).find(x => /pdf/i.test(x));
-      if (t) { const b = await it.getType(t); files.push(new File([b], ('Pasted ' + coLogDate(today()) + '.pdf').replace(/\//g, '-'), { type: 'application/pdf' })); }
-    }
-    if (!files.length) { toast('No PDF on the clipboard — copy the PDF first, then paste (or tap “+ PDF”).', true); return; }
-    addFiles(key, kind, files);
-  } catch (e) { console.error(e); toast('Couldn’t read the clipboard — tap “+ PDF” to choose the file.', true); }
 }
 /* On a computer with the folder loaded, pull any phone-staged PDFs out of Firebase,
    file them into ShareFile, supersede the ones they replace, and clear the staging. */
@@ -5984,6 +5982,7 @@ function drawCoLog(doc, m) {
   for (let p = 0; p < pages; p++) {
     if (p > 0) doc.addPage();
     doc.setDrawColor(0); doc.setTextColor(0); doc.setLineWidth(0.8);
+    try { if (typeof ARCTIC_LOGO === 'string' && ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 12, 48, 48); } catch (e) {}
     doc.setFont('helvetica', 'bold'); doc.setFontSize(19);
     txt('Arctic Sheet Metal', pageW / 2, 30, { align: 'center' });
     txt('Change Order Log', pageW / 2, 52, { align: 'center' });
@@ -5993,7 +5992,8 @@ function drawCoLog(doc, m) {
     txt('Job Name:', M + 8, y + 13); txt(m.jobName || '', M + 80, y + 13);
     txt('DATE:', cx[5] - 30, y + 13); txt(m.date || '', cx[6] + 6, y + 13);
     const hT = y + jbH + 2, tierH = 15, labH = 17, hB = hT + tierH + labH;
-    doc.rect(M, hT, tableW, tierH + labH);
+    doc.setFillColor(237, 238, 240); doc.rect(M, hT, tableW, tierH + labH, 'F');   // subtle header shading
+    doc.setDrawColor(0); doc.rect(M, hT, tableW, tierH + labH);
     for (let i = 1; i < 7; i++) line(cx[i], hT, cx[i], hB);
     line(cx[4], hT + tierH, cx[7], hT + tierH);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
@@ -6028,6 +6028,7 @@ function drawCoLog(doc, m) {
         const co = m.rows[coIdx];
         if (co) {
           doc.setFontSize(8.5);
+          if (co.mod) txt(coLogClip(doc, co.mod, cw[1] - 4), (cx[1] + cx[2]) / 2, baseY, { align: 'center' });
           txt(coLogClip(doc, co.note || '', cw[2] - 6), cx[2] + 3, baseY);
           txt(coLogClip(doc, co.desc || '', cw[3] - 6), cx[3] + 3, baseY);
           doc.setFontSize(9);
@@ -6081,7 +6082,8 @@ function exportCoLog() {
       const amt = coLogNum(c.amount), st = c.status || 'pending', approved = st === 'approved';
       const desc = /^\s*change order/i.test(c.description || '') ? (c.description || '') : ('Change order #' + (c.number || '') + ' ' + (c.description || '')).trim();
       return {
-        note: (c.notes || '').replace(/\s+/g, ' '), desc,
+        mod: (c.mod || '').trim(),
+        note: (c.rfiCcdAsi || '').replace(/\s+/g, ' '), desc,
         pending: (!approved && st !== 'rejected') ? amt : 0,
         approved: approved ? amt : 0,
         approvedDate: approved ? coLogDate(c.dateApproved) : ''
@@ -6855,6 +6857,12 @@ function relTime(ts) {
   const h = Math.round(m / 60); if (h < 24) return h + ' hr' + (h === 1 ? '' : 's') + ' ago';
   const d = Math.round(h / 24); return d + ' day' + (d === 1 ? '' : 's') + ' ago';
 }
+/* The exact clock time a save was made (e.g. "9/3 2:47:03 PM"). */
+function fmtClock(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
 function renderSaveStatus() {
   const el = $('folderSaveStatus'); if (!el) return;
   if (!job || !jobFolder) { el.hidden = true; return; }
@@ -6862,8 +6870,8 @@ function renderSaveStatus() {
   if (folderSaveState === 'saving') { el.className = 'save-status saving'; el.innerHTML = '<span class="ss-dot"></span>Saving…'; el.title = 'Saving the register + backup to the ShareFile folder'; return; }
   if (folderSaveState === 'error') { el.className = 'save-status err'; el.innerHTML = '<span class="ss-dot"></span>Save failed — retry'; el.title = 'Could not save to the folder. Click to try again.'; return; }
   el.className = 'save-status';
-  el.innerHTML = '<span class="ss-dot"></span>' + (folderSaveAt ? 'Saved to folder ' + relTime(folderSaveAt) : 'Not saved to folder yet');
-  el.title = (folderSaveAt ? 'Register + backup last written to the ShareFile folder ' + new Date(folderSaveAt).toLocaleString() + '.\n' : '') + 'Saves automatically when the register changes — click to save now.';
+  el.innerHTML = '<span class="ss-dot"></span>' + (folderSaveAt ? 'Saved ' + fmtClock(folderSaveAt) : 'Not saved to folder yet');
+  el.title = (folderSaveAt ? 'Register + backup last written to the ShareFile folder at ' + new Date(folderSaveAt).toLocaleString() + '.\n' : '') + 'Saves automatically when the register changes — click to save now.';
 }
 function startSaveTicker() { clearInterval(_saveTicker); _saveTicker = setInterval(() => { if (job && jobFolder && folderSaveState !== 'saving') renderSaveStatus(); }, 30000); }
 function scheduleFolderSave() {
