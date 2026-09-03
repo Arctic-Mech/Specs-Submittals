@@ -276,17 +276,23 @@ header {
 .job-tabs button .n { font-size: 11px; color: var(--text-3); margin-left: 5px; font-weight: 600; }
 
 /* ── job tracking board ── */
-.track-wrap { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
-.track-cats { display: flex; flex-direction: column; gap: 4px; }
+.track-wrap { display: grid; grid-template-columns: 224px 1fr; gap: 16px; align-items: start; }
+.track-cats { display: flex; flex-direction: column; gap: 5px; }
 .track-cat {
-  display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 8px; cursor: pointer;
-  border: 1px solid transparent; font-size: 13.5px; color: var(--text-2);
+  display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); font-size: 13.5px; color: var(--text); text-align: left; width: 100%;
 }
-.track-cat:hover { background: var(--surface-2); }
-.track-cat.on { background: var(--accent-sf); border-color: var(--accent); color: var(--text); font-weight: 600; }
-.track-cat .n { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.track-cat:hover { border-color: var(--border-2); background: var(--surface-2); }
+.track-cat.on { background: var(--accent-sf); border-color: var(--accent); }
+.track-cat .tc-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-cat .tc-sub { font-size: 11px; color: var(--text-3); }
+.track-cat.on .tc-sub { color: var(--accent); }
+.track-cat.add { color: var(--text-3); border-style: dashed; align-items: center; margin-top: 2px; font-weight: 500; }
 .track-panel { min-width: 0; }
-.track-sec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+.track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.track-col { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 1040px) { .track-body { grid-template-columns: 1fr; } }
+.track-sec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .track-sec h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
   margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .track-sec h4 .spacer { flex: 1; }
@@ -327,18 +333,14 @@ textarea.autosize { overflow: hidden; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
 .note-item .nm button { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; }
 .email-drop {
-  border: 1.5px dashed var(--border-2); border-radius: 8px; padding: 20px; text-align: center;
-  color: var(--text-3); font-size: 13px; cursor: pointer;
+  border: 1.5px dashed var(--border-2); border-radius: 8px; padding: 11px 14px; text-align: center;
+  color: var(--text-3); font-size: 12.5px; cursor: pointer; margin-top: 10px;
 }
+.email-drop:hover { border-color: var(--border-2); background: var(--surface-2); }
 .email-drop.over { border-color: var(--accent); background: var(--accent-sf); color: var(--text); }
-.email-drop code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
-.email-drop b { color: var(--text); font-size: 13.5px; }
 .track-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .track-head h3 { font-size: 17px; margin: 0; }
 .track-head .spacer { flex: 1; }
-.track-cat.add { color: var(--text-3); border-style: dashed; justify-content: center; margin-top: 4px; }
-.track-cat .tc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-cat .tc-n { font-size: 11px; color: var(--text-3); flex: none; }
 .add-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .add-row .input { flex: 1; }
 .check-row .ct { word-break: break-word; }
@@ -756,6 +758,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   .track-wrap { grid-template-columns: 1fr; }
   .track-cats { flex-direction: row; flex-wrap: wrap; }
   .track-cat { flex: 0 0 auto; }
+  .track-body { grid-template-columns: 1fr; }
   .grid3 { grid-template-columns: 1fr; }
   .job-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .job-tabs button { white-space: nowrap; }
@@ -933,7 +936,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.4';
+const APP_VERSION = 'v6.5';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3509,11 +3512,16 @@ function renderTracking() {
   if (!job) return;
   if (trackCat && !catById(trackCat)) trackCat = null;
   if (!trackCat && tracking.length) trackCat = tracking[0].id;
-  $('trackCats').innerHTML = tracking.map(c =>
-    `<button class="track-cat ${trackCat === c.id ? 'on' : ''}" onclick="selectTrackCat('${c.id}')">
+  $('trackCats').innerHTML = tracking.map(c => {
+    const nf = (c.files || []).length, na = (c.checklist || []).filter(i => !i.done).length;
+    const bits = [];
+    if (nf) bits.push(nf + ' file' + (nf === 1 ? '' : 's'));
+    if (na) bits.push(na + ' to do');
+    return `<button class="track-cat ${trackCat === c.id ? 'on' : ''}" onclick="selectTrackCat('${c.id}')">
        <span class="tc-name">${esc(c.name)}</span>
-       <span class="tc-n">${(c.files || []).length + (c.checklist || []).filter(i => !i.done).length ? ((c.files || []).length ? '📎' + (c.files || []).length + ' ' : '') + ((c.checklist || []).filter(i => !i.done).length ? '☐' + (c.checklist || []).filter(i => !i.done).length : '') : ''}</span>
-     </button>`).join('') +
+       <span class="tc-sub">${bits.join(' · ') || 'empty'}</span>
+     </button>`;
+  }).join('') +
     `<button class="track-cat add" onclick="newTrackCategory()">+ New category</button>`;
 
   const c = catById(trackCat);
@@ -3532,43 +3540,43 @@ function renderTracking() {
       <button class="btn sm ghost" onclick="deleteTrackCat('${c.id}')">Delete</button>
     </div>
 
-    <div class="track-sec">
-      <h4>Emails &amp; files <button class="btn sm" onclick="pickEmailFiles('${c.id}')">+ Upload</button></h4>
-      <div class="email-drop" id="emailDrop">
-        <b>Drop email conversations or files here</b><br>
-        <span class="muted">In Outlook, drag the message to your desktop first (that saves a <code>.msg</code>), then drop it here — or use “Save As”. Attachments and PDFs work too.</span>
+    <div class="track-body">
+      <div class="track-col">
+        <div class="track-sec">
+          <h4>Emails &amp; files <span class="spacer"></span><button class="btn sm" onclick="pickEmailFiles('${c.id}')">+ Add</button></h4>
+          ${files.length ? `<div class="file-list">` + files.map(f => `
+            <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
+              <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
+              <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
+              <button class="btn sm ghost" title="Rename" onclick="renameEmailDoc('${c.id}','${f.id}')">✎</button>
+              <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
+            </div>`).join('') + `</div>` : `<div class="muted" style="font-size:13px">No emails or files yet.</div>`}
+          <div class="email-drop" id="emailDrop">Drop emails or files here, or click to choose <span class="muted">· .msg, .eml, PDF</span></div>
+        </div>
       </div>
-      ${files.length ? `<div class="file-list">` + files.map(f => `
-        <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
-          <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
-          <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
-          <button class="btn sm ghost" title="Rename" onclick="renameEmailDoc('${c.id}','${f.id}')">✎</button>
-          <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
-        </div>`).join('') + `</div>` : ''}
-    </div>
-
-    <div class="track-sec">
-      <h4>Action items ${acCountLabel(checklist)}</h4>
-      <div class="add-row">
-        <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')acAdd('cat','${c.id}','checkInput')">
-        <button class="btn sm" onclick="acAdd('cat','${c.id}','checkInput')">Add</button>
+      <div class="track-col">
+        <div class="track-sec">
+          <h4>Action items ${acCountLabel(checklist)}</h4>
+          <div class="add-row">
+            <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')acAdd('cat','${c.id}','checkInput')">
+            <button class="btn sm" onclick="acAdd('cat','${c.id}','checkInput')">Add</button>
+          </div>
+          ${checklist.length ? checklistHtml('cat', c.id, checklist) + `<div class="muted" style="margin-top:6px">Click an item to add details.</div>` : `<div class="muted" style="font-size:13px">No action items.</div>`}
+        </div>
+        <div class="track-sec">
+          <h4>Notes</h4>
+          <div class="add-row">
+            <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}')">
+            <button class="btn sm" onclick="addNote('${c.id}')">Add</button>
+          </div>
+          ${notes.map(n => `
+            <div class="note-item">
+              <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
+              <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
+                <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
+            </div>`).join('') || '<div class="muted" style="font-size:13px">No notes yet.</div>'}
+        </div>
       </div>
-      ${checklistHtml('cat', c.id, checklist)}
-      <div class="muted" style="margin-top:6px">Click an item to add details.</div>
-    </div>
-
-    <div class="track-sec">
-      <h4>Notes</h4>
-      <div class="add-row">
-        <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}')">
-        <button class="btn sm" onclick="addNote('${c.id}')">Add</button>
-      </div>
-      ${notes.map(n => `
-        <div class="note-item">
-          <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
-          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
-            <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
-        </div>`).join('') || '<div class="muted">No notes yet.</div>'}
     </div>`;
 
   const drop = $('emailDrop');
@@ -3786,12 +3794,17 @@ function setContractAmount(v) {
 function renderCos() {
   if (!job) return;
   const tally = {}; CO_STATUSES.forEach(s => tally[s.id] = 0);
-  let paidN = 0, total = 0, paidAmt = 0;
+  let paidN = 0, pendingTotal = 0, approvedTotal = 0, paidAmt = 0;
   cos.forEach(c => {
-    tally[c.status || 'pending']++;
+    const st = c.status || 'pending';
+    tally[st]++;
     if (c.paid) paidN++;
-    const n = parseFloat(String(c.amount).replace(/[^0-9.-]/g, ''));
-    if (isFinite(n)) { total += n; if (c.paid) paidAmt += n; }
+    const n = parseFloat(String(c.amount).replace(/[^0-9.-]/g, ''));   // deducts (negatives) subtract
+    if (isFinite(n)) {
+      if (st === 'approved') approvedTotal += n;
+      else if (st === 'pending' || st === 'submitted') pendingTotal += n;
+      if (c.paid) paidAmt += n;
+    }
   });
   $('coChips').innerHTML = CO_STATUSES.map(s =>
     `<button class="chip ${coStatusFilter === s.id ? 'on' : ''}" style="${coStatusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
@@ -3804,7 +3817,11 @@ function renderCos() {
   const cc = $('coContract');
   if (cc && document.activeElement !== cc) cc.value = (job.contractAmount || job.contractAmount === 0) ? fmtAmountInput(String(job.contractAmount)) : '';
   const list = visibleCos();
-  const totLabel = total ? ` · ${fmtMoney(total)} total, ${fmtMoney(paidAmt)} paid` : '';
+  const tp = [];
+  if (pendingTotal) tp.push('Pending ' + fmtMoney(pendingTotal));
+  if (approvedTotal) tp.push('Approved ' + fmtMoney(approvedTotal));
+  if (paidAmt) tp.push('Paid ' + fmtMoney(paidAmt));
+  const totLabel = tp.length ? ' · ' + tp.join('  ·  ') : '';
   $('coCount').textContent = (list.length === cos.length ? `${cos.length} change order${cos.length === 1 ? '' : 's'}` : `${list.length} of ${cos.length}`) + totLabel;
   $('coBody').innerHTML = list.map(coRowHtml).join('');
   $('coEmpty').innerHTML = cos.length ? (list.length ? '' :
