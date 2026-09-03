@@ -164,7 +164,10 @@ bookkeeping loose at the folder root — are renamed and tidied into
 
 Point the website at this **job folder** (the one that contains `files` and
 `link to this folder`) — the marker inside `link to this folder` is what ties it to
-the job.
+the job. **Don't select the `link to this folder` subfolder itself:** a browser
+can't step up to a parent folder, so from inside it the app can't reach the `files`
+folder. If you do pick it by mistake the app now says so and sends you back up one
+level.
 
 The app can't set ShareFile permissions from the browser, so it can't *stop*
 deletions outright — to truly lock the files, set the folder (or those files) to

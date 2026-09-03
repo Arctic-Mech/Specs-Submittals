@@ -955,7 +955,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.7';
+const APP_VERSION = 'v6.8';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6858,6 +6858,9 @@ async function recallHandle(jobId) {
     return v && v.handle ? v.handle : null; }
   catch (e) { return null; }
 }
+async function forgetHandle(jobId) {
+  try { const db = await handleDb(); db.transaction('h', 'readwrite').objectStore('h').delete('job:' + jobId); } catch (e) {}
+}
 
 async function ensureRW(handle) {
   const opts = { mode: 'readwrite' };
@@ -6988,6 +6991,7 @@ async function migrateOldFolderFiles(handle) {
   await moveToLink(handle, ld, REGISTER_CSV_OLD, REGISTER_CSV);
   await moveToLink(handle, ld, REGISTER_CSV, REGISTER_CSV);
   await moveToLink(handle, ld, FOLDER_README, FOLDER_README);
+  try { await ld.removeEntry(LINK_DIR, { recursive: true }); } catch (e) {}   // clear a stray nested link folder from a mis-pick
 }
 /* Keep the folder self-explanatory and self-healing: reorganise the bookkeeping
    into "link to this folder/", (re)create the marker + READ ME there, and keep the
@@ -7004,6 +7008,11 @@ async function ensureFolderDocs(handle) {
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function markFolderLoaded(handle) {
+  if ((handle && handle.name || '').trim().toLowerCase() === LINK_DIR.toLowerCase()) {   // wrong folder was remembered — the link subfolder, not the job root
+    if (job) await forgetHandle(job.id);
+    jobFolder = null; folderRemembered = null; updateFolderBar();
+    return;
+  }
   jobFolder = handle; folderRemembered = null;
   await ensureFolderDocs(handle);   // self-explanatory marker + READ ME; retire old names
   await refreshFolderCount();
@@ -7072,6 +7081,15 @@ async function loadJobFolder(forcePick) {
     const marker = await readJobMarker(handle);
     if (marker && marker.id && marker.id !== job.id &&
         !confirm(`That folder is marked for a different job (“${marker.name || marker.id}”).\n\nUse it for “${job.name}” anyway?`)) return false;
+  }
+  // The "link to this folder" subfolder only holds the tool's bookkeeping — the
+  // PDFs live in its sibling "files" folder, and a browser can't step up to the
+  // parent from here. So if that's what got picked (or was remembered), send the
+  // user back up one level rather than pairing an empty folder.
+  if ((handle.name || '').trim().toLowerCase() === LINK_DIR.toLowerCase()) {
+    await forgetHandle(job.id);
+    alert('You picked the “' + LINK_DIR + '” folder.\n\nBrowsers can’t open the folder above it from here, so please pick the job folder just ABOVE it — the one that contains the “files” folder and “' + LINK_DIR + '” (for example “The Dingus”).');
+    return false;
   }
   await writeJobMarker(handle, job);
   await rememberHandle(job.id, handle);
@@ -7475,7 +7493,7 @@ function relTime(ts) {
 function fmtClock(ts) {
   if (!ts) return '';
   const d = new Date(ts);
-  return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 function renderSaveStatus() {
   const el = $('folderSaveStatus'); if (!el) return;
