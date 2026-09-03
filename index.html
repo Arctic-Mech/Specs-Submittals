@@ -933,7 +933,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.3';
+const APP_VERSION = 'v6.4';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5967,7 +5967,7 @@ function coLogClip(doc, s, maxW) { s = String(s || ''); if (doc.getTextWidth(s) 
 function drawCoLog(doc, m) {
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 22;
   const tableW = pageW - 2 * M;
-  const cw = [0.068, 0.057, 0.295, 0.295, 0.11, 0.063, 0.112].map(f => Math.round(f * tableW));
+  const cw = [0.064, 0.05, 0.26, 0.26, 0.105, 0.058, 0.11, 0.093].map(f => Math.round(f * tableW));
   cw[3] += tableW - cw.reduce((a, b) => a + b, 0);            // absorb rounding into Description
   const cx = [M]; cw.forEach(w => cx.push(cx[cx.length - 1] + w));
   const rowH = 15.4, numberedP1 = 24, numberedRest = 25;
@@ -5994,7 +5994,7 @@ function drawCoLog(doc, m) {
     const hT = y + jbH + 2, tierH = 15, labH = 17, hB = hT + tierH + labH;
     doc.setFillColor(237, 238, 240); doc.rect(M, hT, tableW, tierH + labH, 'F');   // subtle header shading
     doc.setDrawColor(0); doc.rect(M, hT, tableW, tierH + labH);
-    for (let i = 1; i < 7; i++) line(cx[i], hT, cx[i], hB);
+    for (let i = 1; i < 8; i++) line(cx[i], hT, cx[i], hB);
     line(cx[4], hT + tierH, cx[7], hT + tierH);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
     txt('Pending', (cx[4] + cx[5]) / 2, hT + 11, { align: 'center' });
@@ -6008,13 +6008,14 @@ function drawCoLog(doc, m) {
     txt('Cost', (cx[4] + cx[5]) / 2, midBot, { align: 'center' });
     txt('Date', (cx[5] + cx[6]) / 2, midBot, { align: 'center' });
     txt('Cost', (cx[6] + cx[7]) / 2, midBot, { align: 'center' });
+    txt('Paid', (cx[7] + cx[8]) / 2, midFull, { align: 'center' });
     const gT = hB, rowsThis = 25;
     doc.setLineWidth(0.5);
     let pendPage = 0, apprPage = 0;
     for (let r = 0; r < rowsThis; r++) {
       const ry = gT + r * rowH;
       doc.rect(M, ry, tableW, rowH);
-      for (let i = 1; i < 7; i++) line(cx[i], ry, cx[i], ry + rowH);
+      for (let i = 1; i < 8; i++) line(cx[i], ry, cx[i], ry + rowH);
       const baseY = ry + rowH - 4.5;
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
       if (p === 0 && r === 0) {
@@ -6035,13 +6036,14 @@ function drawCoLog(doc, m) {
           if (co.pending) { money(co.pending, cx[4], cx[5], baseY, false); pendPage += co.pending; }
           if (co.approvedDate) txt(co.approvedDate, (cx[5] + cx[6]) / 2, baseY, { align: 'center' });
           if (co.approved) { money(co.approved, cx[6], cx[7], baseY, false); apprPage += co.approved; }
+          if (co.paid) { doc.setFont('helvetica', 'bold'); doc.setFontSize(8); txt(coLogClip(doc, 'PAID' + (co.paidDate ? ' ' + co.paidDate : ''), cw[7] - 4), (cx[7] + cx[8]) / 2, baseY, { align: 'center' }); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); }
         }
       }
     }
     const gB = gT + rowsThis * rowH;
     doc.setLineWidth(0.8);
     const f1 = gB, fH = 18;
-    doc.rect(cx[3], f1, cw[3], fH); doc.rect(cx[4], f1, cw[4], fH); doc.rect(cx[5], f1, cw[5], fH); doc.rect(cx[6], f1, cw[6], fH);
+    doc.rect(cx[3], f1, cw[3], fH); doc.rect(cx[4], f1, cw[4], fH); doc.rect(cx[5], f1, cw[5], fH); doc.rect(cx[6], f1, cw[6], fH); doc.rect(cx[7], f1, cw[7], fH);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
     txt('Page ' + (p + 1) + ' - Total Pending', (cx[3] + cx[4]) / 2, f1 + 12, { align: 'center' });
     money(pendPage, cx[4], cx[5], f1 + 12, true);
@@ -6050,19 +6052,19 @@ function drawCoLog(doc, m) {
     const f2 = f1 + fH; cumP += pendPage; cumA += apprPage;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
     if (pages === 1 || p === 0) {
-      doc.rect(cx[3], f2, cw[3], fH + 6); doc.rect(cx[6], f2, cw[6], fH + 6);
+      doc.rect(cx[3], f2, cw[3], fH + 6); doc.rect(cx[6], f2, cw[6], fH + 6); doc.rect(cx[7], f2, cw[7], fH + 6);
       txt('Page ' + (p + 1) + ' -  TOTAL', (cx[3] + cx[4]) / 2, f2 + 11, { align: 'center' });
       doc.setFontSize(9); txt('(Pending & Approved ):', (cx[3] + cx[4]) / 2, f2 + 21, { align: 'center' });
       doc.setFontSize(10); money(pendPage + apprPage, cx[6], cx[7], f2 + 15, true);
     } else {
       const lbl = (p + 1 === 2) ? 'Pages 1 & 2 Totals:' : 'Pages 1 thru ' + (p + 1) + ' Totals:';
-      doc.rect(cx[3], f2, cw[3], fH); doc.rect(cx[4], f2, cw[4], fH); doc.rect(cx[5], f2, cw[5], fH); doc.rect(cx[6], f2, cw[6], fH);
+      doc.rect(cx[3], f2, cw[3], fH); doc.rect(cx[4], f2, cw[4], fH); doc.rect(cx[5], f2, cw[5], fH); doc.rect(cx[6], f2, cw[6], fH); doc.rect(cx[7], f2, cw[7], fH);
       txt(lbl, (cx[3] + cx[4]) / 2, f2 + 12, { align: 'center' });
       money(cumP, cx[4], cx[5], f2 + 12, true); money(cumA, cx[6], cx[7], f2 + 12, true);
     }
     if (pages > 1 && p === pages - 1) {
       const f3 = f2 + fH;
-      doc.rect(cx[3], f3, cw[3], fH + 6); doc.rect(cx[6], f3, cw[6], fH + 6);
+      doc.rect(cx[3], f3, cw[3], fH + 6); doc.rect(cx[6], f3, cw[6], fH + 6); doc.rect(cx[7], f3, cw[7], fH + 6);
       doc.setFontSize(10); txt('Grand Total', (cx[3] + cx[4]) / 2, f3 + 11, { align: 'center' });
       doc.setFontSize(9); txt('(Pending & Approved):', (cx[3] + cx[4]) / 2, f3 + 21, { align: 'center' });
       doc.setFontSize(10); money(grandP + grandA, cx[6], cx[7], f3 + 15, true);
@@ -6086,7 +6088,8 @@ function exportCoLog() {
         note: (c.rfiCcdAsi || '').replace(/\s+/g, ' '), desc,
         pending: (!approved && st !== 'rejected') ? amt : 0,
         approved: approved ? amt : 0,
-        approvedDate: approved ? coLogDate(c.dateApproved) : ''
+        approvedDate: approved ? coLogDate(c.dateApproved) : '',
+        paid: !!c.paid, paidDate: c.paidDate ? coLogDate(c.paidDate) : ''
       };
     });
     drawCoLog(doc, { jobName: job.name || '', date: coLogDate(today()), contract: coLogNum(job.contractAmount), rows });

@@ -226,7 +226,8 @@ contract $** box on the tab to fill the Main Contract row and the totals (amount
 comma-group as you type them). Each CO lands in a numbered row: its **MOD** and
 **RFI, CCD, ASI** fields (both on the CO drawer) go in those columns, its
 description in Description, and its amount in **Pending Cost** or (once approved)
-in **Approved Cost** with the approved date. The log carries the Arctic logo.
+in **Approved Cost** with the approved date. A **Paid** column shows **PAID** (with
+the paid date) for any CO you've ticked as paid. The log carries the Arctic logo.
 
 ## Job Tracking
 
