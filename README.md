@@ -56,7 +56,7 @@ Two places, split by what the data is:
 ### Loading a job's ShareFile folder
 
 Open a job, then **Load ShareFile folder** and pick that job's folder. The app
-keeps its PDFs under `files/` there and drops a `Dingus data (do not delete)` folder (a
+keeps its PDFs under `Dingus Documents/` there and drops a `Dingus data (do not delete)` folder (a
 clearly-named marker + a `READ ME - do not delete.txt`) plus an
 `Open The Dingus.html` shortcut at the root. This
 needs **Chrome or Edge** and the folder available locally (ShareFile Drive, or
@@ -92,7 +92,7 @@ loads, the app notices anything the register doesn't reference and the bar shows
   and its **status**; *Assign & file* moves it into the matching status subfolder
   and records it on that section.
 - An **email** (`.msg`/`.eml`) → pick a **Job Tracking category** (or make a new
-  one); *File in category* moves it under `files/Emails/<category>/` and records it
+  one); *File in category* moves it under `Dingus Documents/Emails/<category>/` and records it
   there.
 
 **Skip** leaves one for later; **Ignore** marks a file as "not mine" so it stops
@@ -147,7 +147,7 @@ register itself is always saved live to the cloud regardless.
 
 ### Named so nobody deletes them
 
-Opening a job folder, you'll see just three things: the **`files`** folder (all
+Opening a job folder, you'll see just three things: the **`Dingus Documents`** folder (all
 the PDFs), a **`Dingus data (do not delete)`** folder, and the **`Open The Dingus.html`**
 shortcut (double-click it to open the tool at this job). The `Dingus data (do not delete)`
 folder holds the tool's bookkeeping, given obvious, self-explanatory names so a
@@ -162,12 +162,19 @@ layout — cryptic names (`job.json`, `register.json`, `register.csv`) or the
 bookkeeping loose at the folder root — are renamed and tidied into
 `Dingus data (do not delete)` automatically on the next load.
 
-Point the website at this **job folder** (the one that contains `files` and
-`Dingus data (do not delete)`) — the marker inside `Dingus data (do not delete)` is what ties it to
-the job. **Don't select the `Dingus data (do not delete)` subfolder itself:** a browser
-can't step up to a parent folder, so from inside it the app can't reach the `files`
-folder. If you do pick it by mistake the app now says so and sends you back up one
-level.
+Point the website at the job's **`The Dingus` folder** (the one that contains
+`Dingus Documents` and `Dingus data (do not delete)`) — the marker inside
+`Dingus data (do not delete)` is what ties it to the job. **Pairing only accepts a
+folder named `The Dingus`.** A browser can't step up to a parent folder, so if you
+picked a subfolder (or the wrong folder), the app couldn't reach the documents and
+could drop its data in the wrong spot — so it now refuses anything that isn't a
+`The Dingus` folder and tells you to pick that folder instead. The folder can live
+anywhere in ShareFile; it just has to be named `The Dingus`.
+
+Folders set up under the old names migrate themselves on the next load: an old
+`files` folder is moved into `Dingus Documents`, and an old `link to this folder`
+into `Dingus data (do not delete)`. Load each job once on `v7.0`+ so the rename
+runs.
 
 The app can't set ShareFile permissions from the browser, so it can't *stop*
 deletions outright — to truly lock the files, set the folder (or those files) to
@@ -189,9 +196,9 @@ and the **response** (the stamped answer that came back). Uploading a question
 PDF moves an open RFI to **Submitted**; uploading a response moves it to
 **Answered** and stamps the answered date. You can drag a PDF straight onto the
 question or response drop zone, or use the **Upload PDF** button. The PDFs are
-filed into the job's ShareFile folder under `files/RFI Questions/` and
-`files/RFI Answers/`. Search and the status chips work the same as on the
-submittal tab.
+filed into the job's ShareFile folder under a per-RFI folder,
+`Dingus Documents/RFIs/<RFI# - subject>/`, with a **Question** and an **Answered**
+subfolder. Search and the status chips work the same as on the submittal tab.
 
 **No PDF?** Each of the question and response sections also has a text box — type
 the RFI question or the response straight in when there's no PDF to attach. The
@@ -206,7 +213,7 @@ chasing down. The RFI row shows how many are still open.
 The **Change Orders** tab logs each CO with an **amount**, a **description**, a
 status (**Pending → Submitted → Approved / Rejected**), the submitted / approved
 dates, the CO PDF, any **emails** attached to the CO (`.msg`/`.eml`), notes, and
-action items. Each change order gets **its own folder** under `files/Change
+action items. Each change order gets **its own folder** under `Dingus Documents/Change
 Orders/` named `CO <number> - <description>`, holding its PDFs with an **Emails**
 subfolder for its emails. Existing jobs are reorganised into this layout
 automatically on the next load, and renaming a CO moves its
@@ -246,7 +253,7 @@ contract PDFs and emails, and its own **change-order history**: a list of
 **adds/deducts** (number, description, ± amount, date, status) that builds a running
 **revised contract total** — approved changes roll into Revised (adds in green,
 deducts in red), pending ones are shown separately. Each contract lives in
-`files/Contracts/<GC|Sub - party - #>/`, with an **Emails** subfolder and a **Change
+`Dingus Documents/Contracts/<GC|Sub - party - #>/`, with an **Emails** subfolder and a **Change
 Orders** subfolder for any change PDFs.
 
 ## Vendor Quotes & PO's
@@ -255,7 +262,7 @@ The **Vendor Quotes** and **PO's** tabs are lightweight registers built the same
 way as Change Orders: each entry has a number, vendor, amount, status, date,
 scope/description, notes, and attached PDFs + emails, with search, status chips and
 a running total. Each lives in its own ShareFile folder —
-`files/Vendor Quotes/<# - vendor>/` and `files/Purchase Orders/<# - vendor>/`, each
+`Dingus Documents/Vendor Quotes/<# - vendor>/` and `Dingus Documents/Purchase Orders/<# - vendor>/`, each
 with an **Emails** subfolder. Renaming an item moves its files into the new folder
 and tidies the empty old one; phone uploads stage to Firebase like submittals.
 
@@ -271,7 +278,7 @@ things:
   Outlook inbox, so first drag the message to your desktop (Outlook saves it as a
   `.msg`) or use **Save As**, then drop that file in. `.msg`/`.eml` emails, their
   attachments and PDFs all work. Files land under
-  `files/Emails/<category>/` in the ShareFile folder — a PDF opens in the viewer,
+  `Dingus Documents/Emails/<category>/` in the ShareFile folder — a PDF opens in the viewer,
   an email downloads so Outlook can open it.
 - **Action items** — a checklist you can tick off; the category shows how many are
   still open. **Click an item to open it** and add a due date and a details note
@@ -477,23 +484,23 @@ the status, not the whole record.
 <job folder>/Dingus data (do not delete)/Submittal Register - data (do not delete).json  register data backup
 <job folder>/Dingus data (do not delete)/Submittal Register.csv   the register as a spreadsheet
 <job folder>/Dingus data (do not delete)/READ ME - do not delete.txt  what all of this is
-<job folder>/files/Submittals/Specs/<name>.pdf           the imported spec PDFs
-<job folder>/files/Submittals/All Submittals/<section>/            the section's current PDF, named by status
-<job folder>/files/Submittals/All Submittals/<section>/Archive/   that section's past PDFs, named by status
-<job folder>/files/Submittals/Archive/<name>.pdf         superseded PDFs ("OLD - …"), old revisions
-<job folder>/files/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
-<job folder>/files/Submittals/Approved/<name>.pdf        approved responses
-<job folder>/files/Submittals/Revise and Resubmit/<name>.pdf
-<job folder>/files/Submittals/Partial Approval/<name>.pdf
-<job folder>/files/Submittals/Waiting on Vendor/<name>.pdf
-<job folder>/files/RFIs/<RFI# - subject>/Question/<name>.pdf   the RFI as sent out
-<job folder>/files/RFIs/<RFI# - subject>/Answered/<name>.pdf   its response (empty until one arrives)
-<job folder>/files/Change Orders/<CO# - desc>/<name>.pdf        one folder per change order — its PDFs
-<job folder>/files/Change Orders/<CO# - desc>/Emails/<name>    emails attached to that change order
-<job folder>/files/Emails/<category>/<name>              tracking emails and files, by category
+<job folder>/Dingus Documents/Submittals/Specs/<name>.pdf           the imported spec PDFs
+<job folder>/Dingus Documents/Submittals/All Submittals/<section>/            the section's current PDF, named by status
+<job folder>/Dingus Documents/Submittals/All Submittals/<section>/Archive/   that section's past PDFs, named by status
+<job folder>/Dingus Documents/Submittals/Archive/<name>.pdf         superseded PDFs ("OLD - …"), old revisions
+<job folder>/Dingus Documents/Submittals/Submitted to GC/<name>.pdf submittals sent to the GC
+<job folder>/Dingus Documents/Submittals/Approved/<name>.pdf        approved responses
+<job folder>/Dingus Documents/Submittals/Revise and Resubmit/<name>.pdf
+<job folder>/Dingus Documents/Submittals/Partial Approval/<name>.pdf
+<job folder>/Dingus Documents/Submittals/Waiting on Vendor/<name>.pdf
+<job folder>/Dingus Documents/RFIs/<RFI# - subject>/Question/<name>.pdf   the RFI as sent out
+<job folder>/Dingus Documents/RFIs/<RFI# - subject>/Answered/<name>.pdf   its response (empty until one arrives)
+<job folder>/Dingus Documents/Change Orders/<CO# - desc>/<name>.pdf        one folder per change order — its PDFs
+<job folder>/Dingus Documents/Change Orders/<CO# - desc>/Emails/<name>    emails attached to that change order
+<job folder>/Dingus Documents/Emails/<category>/<name>              tracking emails and files, by category
 ```
 
-Opening `files/` shows four parent folders — **Submittals**, **RFIs**,
+Opening `Dingus Documents/` shows four parent folders — **Submittals**, **RFIs**,
 **Change Orders** and **Emails** — with the submittal statuses nested under
 Submittals; under RFIs, **one folder per RFI named "<RFI# - subject>"** (as shown
 on the website), each holding a **Question** and an **Answered** subfolder
@@ -527,7 +534,7 @@ npx firebase emulators:start --project specs-submittals
 `index.html` calls `window.__fbConnect(...)` if something has defined it, which is
 where a test harness points the app at the Firestore emulator. Nothing defines it
 in production. The test suite also injects a mock `showDirectoryPicker`
-(`jstest/mockfs.js`) so the per-job ShareFile folder — `job.json`, `files/<id>.pdf`
+(`jstest/mockfs.js`) so the per-job ShareFile folder — `job.json`, `Dingus Documents/<id>.pdf`
 — can be driven without a real folder dialog. `jstest/flow.js` is the end-to-end
 test: import stores the spec in the folder, uploads/views go through it, PDFs
 never reach Firestore, and a second browser sees the register live but is prompted

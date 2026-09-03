@@ -955,7 +955,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.9';
+const APP_VERSION = 'v7.0';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1911,8 +1911,8 @@ async function migrateSpecData(jobId, sections) {
    live, but the PDFs are never uploaded there — each job keeps them in a
    ShareFile folder you load:
 
-     <job folder>/job.json        marks which job the folder belongs to
-     <job folder>/files/<id>.pdf  one file per submittal / response / spec
+     <job folder>/job.json                 marks which job the folder belongs to
+     <job folder>/Dingus Documents/<id>.pdf  one file per submittal / response / spec
 
    The folder handle is remembered per machine; the first time on a machine you
    pick it once, then it opens with a single permission click. To view or add a
@@ -1932,6 +1932,8 @@ let jobUnassigned = [];            // PDFs found in the folder that no section r
 /* Files are organised under feature parent folders inside files/:
      Submittals/<status> (+ Submittals/Specs)   RFIs/Questions · RFIs/Answers
      Change Orders/                              Emails/<category>              */
+const DOCS_DIR = 'Dingus Documents';   // the root folder (inside "The Dingus") that holds every PDF, sorted into subfolders
+const DOCS_DIR_OLDS = ['files'];       // earlier name — migrated into DOCS_DIR on load
 const SUBMITTALS_DIR = 'Submittals';
 const STATUS_DIR = {
   submitted_gc:     'Submittals/Submitted to GC',
@@ -2007,7 +2009,7 @@ async function uniqueFileName(dirHandle, name) {
    relDir may be nested (e.g. "Emails/RFI Answers"); each level is created. */
 async function putFileInDir(file, relDir, cleanName) {
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
-  let dirHandle = await jobFolder.getDirectoryHandle('files', { create: true });
+  let dirHandle = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
   for (const part of relDir.split('/').filter(Boolean)) {
     dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
   }
@@ -2046,7 +2048,7 @@ async function readDocBlob(doc) {
   if (doc.staged && doc.stagedId) return readStagedBlob(doc.stagedId).catch(() => null);   // phone upload held in Firebase
   if (!jobFolder) return null;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
     if (doc.dir && doc.file) {
       const dirHandle = await walkDir(filesRoot, doc.dir);
       return await (await dirHandle.getFileHandle(doc.file)).getFile();
@@ -2091,8 +2093,8 @@ async function docUrl(doc) {
 async function docReadError(doc) {
   if (!jobFolder) return 'Load this job’s ShareFile folder first.';
   let filesRoot;
-  try { filesRoot = await jobFolder.getDirectoryHandle('files'); }
-  catch (e) { return 'The loaded folder has no “files” folder in it — it’s probably the wrong folder, or the PDFs haven’t downloaded from ShareFile yet. Try “Change folder…” and pick the exact job folder.'; }
+  try { filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR); }
+  catch (e) { return 'The loaded folder has no “' + DOCS_DIR + '” folder in it — it’s probably the wrong folder, or the PDFs haven’t downloaded from ShareFile yet. Try “Change folder…” and pick the exact job folder.'; }
   const dir = doc.dir, file = doc.file || (doc.fileId ? doc.fileId + '.pdf' : null);
   if (!file) return 'This document has no stored file (it may have been added on an old version that kept PDFs in the cloud).';
   try {
@@ -2109,7 +2111,7 @@ async function refreshFolderCount() {
   jobFolderCount = null;
   if (!jobFolder) return;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
     let n = 0;
     const walk = async dh => {                 // PDFs now live under parent folders — count at any depth
       for await (const e of dh.values()) {
@@ -2134,8 +2136,8 @@ function trackedPaths() {
   const set = new Set();
   const add = d => {
     if (!d || isLink(d)) return;
-    if (d.dir && d.file) set.add('files/' + d.dir + '/' + d.file);
-    else if (d.fileId) set.add('files/' + d.fileId + '.pdf');
+    if (d.dir && d.file) set.add(DOCS_DIR + '/' + d.dir + '/' + d.file);
+    else if (d.fileId) set.add(DOCS_DIR + '/' + d.fileId + '.pdf');
   };
   for (const s of sectionsOf(job)) { (s.submittals || []).forEach(add); (s.responses || []).forEach(add); }
   (job.specs || []).forEach(add);
@@ -2169,10 +2171,10 @@ async function scanUnassignedFiles() {
     }
   } catch (e) {}
   try {                                   // anything under files/, at any depth
-    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
     const walk = async (dh, rel) => {
       for await (const e of dh.values()) {
-        if (e.kind === 'file') consider('files/' + (rel ? rel + '/' : '') + e.name, e.name, { at: 'files', dir: rel, file: e.name });
+        if (e.kind === 'file') consider(DOCS_DIR + '/' + (rel ? rel + '/' : '') + e.name, e.name, { at: 'files', dir: rel, file: e.name });
         else if (e.kind === 'directory') {
           const child = rel ? rel + '/' + e.name : e.name;
           if (child === ALL_SUBMITTALS_DIR) continue;   // mirror copies aren't loose files
@@ -2188,7 +2190,7 @@ async function scanUnassignedFiles() {
    files/, '' for directly inside files/). */
 async function looseHandleFor(item) {
   if (item.at === 'root') return jobFolder;
-  const filesRoot = await jobFolder.getDirectoryHandle('files');
+  const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
   return item.dir ? await walkDir(filesRoot, item.dir) : filesRoot;
 }
 async function readLooseBlob(item) {
@@ -2226,7 +2228,7 @@ function assignModal(i) {
       <button class="icon-btn" onclick="closePdf()">✕</button></div>
     <div class="modal-body">
       <div class="file-row" style="margin-bottom:14px"><span class="fi">📄</span>
-        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : 'files/' + esc(item.dir || '')}</small></span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : DOCS_DIR + '/' + esc(item.dir || '')}</small></span>
         <button class="btn sm" onclick="viewLoose(${i})">View</button></div>
       <div class="field"><label class="fl">Assign to</label>
         <select class="input" id="asgDest">
@@ -2327,7 +2329,7 @@ function assignEmailModal(i, item, total) {
       <button class="icon-btn" onclick="closePdf()">✕</button></div>
     <div class="modal-body">
       <div class="file-row" style="margin-bottom:14px"><span class="fi">✉️</span>
-        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : 'files/' + esc(item.dir || '')}</small></span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : DOCS_DIR + '/' + esc(item.dir || '')}</small></span>
         <button class="btn sm" onclick="viewLoose(${i})">Open</button></div>
       <div class="muted" style="margin-bottom:10px">This looks like an email.</div>
       <div class="field"><label class="fl">Assign to</label>
@@ -2490,7 +2492,7 @@ async function deleteStoredDoc(doc) {
   if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
   if (!jobFolder) return;               // not loaded → the file stays in ShareFile
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
     if (doc.dir && doc.file) {
       const dirHandle = await walkDir(filesRoot, doc.dir);
       await dirHandle.removeEntry(doc.file);
@@ -4415,7 +4417,7 @@ let _syncingContracts = false;
 async function syncContractFolders() {
   if (!jobFolder || _syncingContracts) return; _syncingContracts = true;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     const root = await walkDirCreate(filesRoot, 'Contracts');
     const want = new Set();
     for (const c of contracts) { if (!((c.party || '').trim() || (c.number || '').trim())) continue; const name = contractFolderName(c); want.add(name); try { await root.getDirectoryHandle(name, { create: true }); } catch (e) {} }
@@ -4426,7 +4428,7 @@ async function syncContractFolders() {
 async function reconcileContracts() {
   if (!jobFolder) return;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     const moves = [], dirty = new Set();
     for (const c of contracts) {
       for (const d of (c.docs || [])) if (!isLink(d) && !d.staged) { const m = await planRefile(filesRoot, d, contractDocDir(c)); if (m) { moves.push(m); dirty.add(c); } }
@@ -4642,7 +4644,7 @@ async function syncLedgerFolders(lk) {
   if (!jobFolder || _syncingLedger[lk]) return;
   _syncingLedger[lk] = true;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     const root = await walkDirCreate(filesRoot, lcfg(lk).dir);
     const want = new Set();
     for (const it of litems(lk)) {
@@ -4665,7 +4667,7 @@ async function reconcileLedgers() {
   if (!jobFolder || _reconcilingLedgers) return;
   _reconcilingLedgers = true;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     const moves = [], dirty = new Map();
     for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) {
       for (const d of (it.docs || [])) if (!isLink(d) && !d.staged) { const m = await planRefile(filesRoot, d, ledgerDocDir(lk, it)); if (m) { moves.push(m); dirty.set(lk + '|' + it.id, { lk, it }); } }
@@ -5086,7 +5088,7 @@ async function copyRenamed(doc, rawName) {
   const raw = (rawName || '').trim(); if (!raw) return null;
   const keepPdf = /\.pdf$/i.test(doc.file || doc.name || '');
   const cleanName = keepPdf ? sanitizeFileName(raw) : sanitizeAnyName(raw, doc.file);
-  const filesRoot = await jobFolder.getDirectoryHandle('files');
+  const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
   const dh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
   const blob = await (await dh.getFileHandle(doc.file)).getFile();
   const newFile = await uniqueFileName(dh, cleanName);
@@ -5095,7 +5097,7 @@ async function copyRenamed(doc, rawName) {
   return { newFile, cleanName };
 }
 async function looseParentHandle(dir) {
-  const filesRoot = await jobFolder.getDirectoryHandle('files');
+  const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
   return dir ? walkDir(filesRoot, dir) : filesRoot;
 }
 /* Shared rename: `persist` writes the owning record (must throw on failure);
@@ -5575,7 +5577,7 @@ async function prefixOld(doc) {
   const newName = already ? (doc.name || doc.file) : 'OLD - ' + (doc.name || doc.file || 'document.pdf');
   if (!doc.file || !jobFolder) { doc.name = newName; doc.dir = ARCHIVE_DIR; return; }   // no readable file → flag the record only
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files');
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
     const srcDh = doc.dir ? await walkDir(filesRoot, doc.dir) : filesRoot;
     const blob = await (await srcDh.getFileHandle(doc.file)).getFile();
     const destDh = await walkDirCreate(filesRoot, ARCHIVE_DIR);
@@ -6809,8 +6811,8 @@ document.addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA' &&
    The register is in the cloud, but a job's PDFs live in a ShareFile folder you
    load. Each job keeps its own folder:
 
-     <job folder>/job.json        marks which job the folder belongs to
-     <job folder>/files/<id>.pdf  each submittal / response / spec PDF
+     <job folder>/job.json                 marks which job the folder belongs to
+     <job folder>/Dingus Documents/<id>.pdf  each submittal / response / spec PDF
 
    The folder handle is remembered per machine (IndexedDB). Loading it needs a
    user gesture and a single permission click; after that the job's PDFs open
@@ -6883,12 +6885,10 @@ const FOLDER_README     = 'READ ME - do not delete.txt';
 const LAUNCHER_FILE     = 'Open The Dingus.html';   // double-click in ShareFile to open the tool at this job (stays at the folder root)
 const LINK_DIR          = 'Dingus data (do not delete)';   // the marker + register backup + READ ME live here, out of the way
 const LINK_DIR_OLDS     = ['link to this folder'];         // earlier names — migrated into LINK_DIR on load
-/* The internal subfolders a user should NOT pick when pairing (the browser can't
-   step up to the parent, so pairing one of these can never reach the job's files). */
-function isInternalFolderPick(name) {
-  const n = String(name || '').trim().toLowerCase();
-  return n === 'files' || n === LINK_DIR.toLowerCase() || LINK_DIR_OLDS.some(o => o.toLowerCase() === n);
-}
+const JOB_FOLDER_NAME   = 'The Dingus';                    // a job's folder MUST be named this to pair (path can differ)
+/* A folder can only be paired if it's the job's "The Dingus" folder — so picking a
+   subfolder (or the wrong folder) can never drop the tool's data in the wrong spot. */
+function isJobFolderName(name) { return String(name || '').trim().toLowerCase() === JOB_FOLDER_NAME.toLowerCase(); }
 async function linkDirHandle(handle) { return (handle || jobFolder).getDirectoryHandle(LINK_DIR, { create: true }); }
 /* Move a bookkeeping file from `srcHandle` into the link folder (used to migrate
    existing folders). No-op if it isn't there. */
@@ -6966,17 +6966,17 @@ function folderReadmeText() {
     '        "' + REGISTER_JSON + '"  a backup copy of the register data.',
     '        "' + REGISTER_CSV + '"  the register as a spreadsheet you can open or send.',
     '        "' + FOLDER_README + '"  this file.',
-    '  • the "files" folder — every PDF, sorted into subfolders:',
-    '        files/Submittals/<status>/        current submittals & responses, by status',
-    '        files/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
-    '        files/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
-    '        files/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
-    '        files/Change Orders/<CO# - desc>/  one folder per change order — its PDFs + an "Emails" subfolder',
-    '        files/Emails/<category>/          saved emails & attachments',
+    '  • the "' + DOCS_DIR + '" folder — every PDF, sorted into subfolders:',
+    '        ' + DOCS_DIR + '/Submittals/<status>/        current submittals & responses, by status',
+    '        ' + DOCS_DIR + '/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
+    '        ' + DOCS_DIR + '/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
+    '        ' + DOCS_DIR + '/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
+    '        ' + DOCS_DIR + '/Change Orders/<CO# - desc>/  one folder per change order — its PDFs + an "Emails" subfolder',
+    '        ' + DOCS_DIR + '/Emails/<category>/          saved emails & attachments',
     '',
     'When a PDF is replaced by a newer revision, the old one is renamed with an',
-    '"OLD - " prefix and moved into files/Submittals/Archive/ — so the live status',
-    'folders only ever hold the current PDFs.',
+    '"OLD - " prefix and moved into ' + DOCS_DIR + '/Submittals/Archive/ — so the live',
+    'status folders only ever hold the current PDFs.',
     '',
     'Deleting or moving these files breaks the link to the tool or loses documents.',
     'To view or edit this job, open The Dingus (or double-click "' + LAUNCHER_FILE + '")',
@@ -7009,6 +7009,32 @@ async function migrateOldFolderFiles(handle) {
   await moveToLink(handle, ld, FOLDER_README, FOLDER_README);
   for (const nested of [LINK_DIR, ...LINK_DIR_OLDS]) { try { await ld.removeEntry(nested, { recursive: true }); } catch (e) {} }   // clear a stray nested link folder from a mis-pick
 }
+/* Copy everything under `src` into `dst` (recursively), preserving subfolders. */
+async function copyDirInto(src, dst) {
+  for await (const e of src.values()) {
+    if (e.kind === 'file') {
+      const blob = await e.getFile();
+      const fh = await dst.getFileHandle(e.name, { create: true });
+      const w = await fh.createWritable(); await w.write(blob); await w.close();
+    } else if (e.kind === 'directory') {
+      await copyDirInto(e, await dst.getDirectoryHandle(e.name, { create: true }));
+    }
+  }
+}
+/* Migrate the PDF tree from any earlier-named docs folder ("files") into the
+   current "Dingus Documents" folder, then remove the old one. Copy-before-delete,
+   so nothing is lost if it's interrupted. Runs before anything reads the tree. */
+async function migrateDocsFolder(handle) {
+  for (const oldName of DOCS_DIR_OLDS) {
+    let src; try { src = await handle.getDirectoryHandle(oldName); } catch (e) { continue; }   // no old folder → nothing to do
+    let hasAny = false; try { for await (const _ of src.values()) { hasAny = true; break; } } catch (e) {}
+    if (hasAny) {
+      const dst = await handle.getDirectoryHandle(DOCS_DIR, { create: true });
+      try { await copyDirInto(src, dst); } catch (e) { continue; }   // copy failed — leave the old folder intact, retry next load
+    }
+    try { await handle.removeEntry(oldName, { recursive: true }); } catch (e) {}
+  }
+}
 /* Keep the folder self-explanatory and self-healing: reorganise the bookkeeping
    into "link to this folder/", (re)create the marker + READ ME there, and keep the
    launcher shortcut at the root. Runs on every folder load. */
@@ -7024,12 +7050,13 @@ async function ensureFolderDocs(handle) {
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function markFolderLoaded(handle) {
-  if (isInternalFolderPick(handle && handle.name)) {   // wrong folder was remembered — an internal subfolder, not the job root
+  if (!isJobFolderName(handle && handle.name)) {   // wrong folder was remembered — not a "The Dingus" job folder
     if (job) await forgetHandle(job.id);
     jobFolder = null; folderRemembered = null; updateFolderBar();
     return;
   }
   jobFolder = handle; folderRemembered = null;
+  await migrateDocsFolder(handle);  // move an old "files" tree into "Dingus Documents" before anything reads it
   await ensureFolderDocs(handle);   // self-explanatory marker + READ ME; retire old names
   await refreshFolderCount();
   jobUnassigned = await scanUnassignedFiles();
@@ -7098,13 +7125,13 @@ async function loadJobFolder(forcePick) {
     if (marker && marker.id && marker.id !== job.id &&
         !confirm(`That folder is marked for a different job (“${marker.name || marker.id}”).\n\nUse it for “${job.name}” anyway?`)) return false;
   }
-  // The "link to this folder" subfolder only holds the tool's bookkeeping — the
-  // PDFs live in its sibling "files" folder, and a browser can't step up to the
-  // parent from here. So if that's what got picked (or was remembered), send the
-  // user back up one level rather than pairing an empty folder.
-  if (isInternalFolderPick(handle.name)) {
+  // A folder can only be paired if it's the job's "The Dingus" folder. A browser
+  // can't step up to a parent from here, so if the wrong folder (or an inside
+  // subfolder) got picked, refuse rather than dropping the tool's data in the
+  // wrong spot — send the user back to pick the "The Dingus" folder itself.
+  if (!isJobFolderName(handle.name)) {
     await forgetHandle(job.id);
-    alert('You picked the “' + (handle.name || '') + '” folder, which is inside the job folder.\n\nA browser can’t open the folder above it from here, so please pick the job folder itself — the one that contains “files” and “' + LINK_DIR + '” (for example “The Dingus”).');
+    alert('“' + (handle.name || 'That folder') + '” isn’t a “' + JOB_FOLDER_NAME + '” folder, so it can’t be paired.\n\nEach job is paired with its “' + JOB_FOLDER_NAME + '” folder — the one that holds the job’s documents. Please pick that folder itself (it can live anywhere, but it has to be named “' + JOB_FOLDER_NAME + '”).');
     return false;
   }
   await writeJobMarker(handle, job);
@@ -7329,7 +7356,7 @@ async function syncAllSubmittals() {
   try {
     do {
       _syncAgain = false;
-      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
       const allDh = await walkDirCreate(filesRoot, ALL_SUBMITTALS_DIR);
       const wanted = new Map();                  // folderName -> { cur, curName, arch: Map(name->doc) }
       for (const s of sectionsOf(job)) {
@@ -7391,7 +7418,7 @@ async function syncRfiFolders() {
   try {
     do {
       _syncRfiAgain = false;
-      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
       const rfiRoot = await walkDirCreate(filesRoot, RFI_DIR);
       const wantNames = new Set();
       for (const r of rfis) {
@@ -7428,7 +7455,7 @@ async function syncCoFolders() {
   try {
     do {
       _syncCoAgain = false;
-      const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
       const coRoot = await walkDirCreate(filesRoot, CO_DOC_DIR);
       const wantNames = new Set();
       for (const c of cos) {
@@ -7467,7 +7494,7 @@ async function maybeAutoOrganize() {
   if (!jobFolder || _organizing) return;
   _organizing = true;
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     let n = 0;
     if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
@@ -7540,7 +7567,7 @@ async function saveToFolder(auto) {
   folderSaveState = 'saving'; renderSaveStatus();
   if (!auto) stickyToast('Saving to the ShareFile folder…');
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
 
     // Re-file everything into its parent folder (safe copy → persist → delete),
     // then tidy away the empty old flat folders.
