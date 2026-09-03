@@ -1,6 +1,6 @@
 # The Dingus
 
-A job workspace for mechanical projects (Arctic Mechanical). Each job has five
+A job workspace for mechanical projects (Arctic Mechanical). Each job has these
 tabs:
 
 - **Submittals** — import a project spec PDF, it is split into its individual
@@ -16,6 +16,11 @@ tabs:
 - **Change Orders** — a log of change orders with an amount and status
   (Pending → Submitted → Approved / Rejected), the CO PDF, and a **Paid** tick you
   check off — on the row or in the drawer — when it's actually paid.
+- **Contracts** — the GC (prime) contract and subcontracts, each with an amount,
+  status, PDFs/emails, and a change-order history of adds/deducts that rolls up to
+  a running revised contract total.
+- **Vendor Quotes** and **PO's** — lightweight registers for vendor quotes and
+  purchase orders (number, vendor, amount, status, PDFs/emails).
 - **Job Tracking** — categories you create (scheduling, owner correspondence,
   whatever the job needs), each holding emails and files you drop in, action-item
   checklists, and notes.
@@ -228,6 +233,28 @@ comma-group as you type them). Each CO lands in a numbered row: its **MOD** and
 description in Description, and its amount in **Pending Cost** or (once approved)
 in **Approved Cost** with the approved date. A **Paid** column shows **PAID** (with
 the paid date) for any CO you've ticked as paid. The log carries the Arctic logo.
+
+## Contracts
+
+The **Contracts** tab holds the job's contracts in two sections — the **GC
+contract** (the prime, up top) and **Subcontracts** below. Each contract carries a
+party, contract number, original amount, status (Draft → Executed → Closed), the
+contract PDFs and emails, and its own **change-order history**: a list of
+**adds/deducts** (number, description, ± amount, date, status) that builds a running
+**revised contract total** — approved changes roll into Revised (adds in green,
+deducts in red), pending ones are shown separately. Each contract lives in
+`files/Contracts/<GC|Sub - party - #>/`, with an **Emails** subfolder and a **Change
+Orders** subfolder for any change PDFs.
+
+## Vendor Quotes & PO's
+
+The **Vendor Quotes** and **PO's** tabs are lightweight registers built the same
+way as Change Orders: each entry has a number, vendor, amount, status, date,
+scope/description, notes, and attached PDFs + emails, with search, status chips and
+a running total. Each lives in its own ShareFile folder —
+`files/Vendor Quotes/<# - vendor>/` and `files/Purchase Orders/<# - vendor>/`, each
+with an **Emails** subfolder. Renaming an item moves its files into the new folder
+and tidies the empty old one; phone uploads stage to Firebase like submittals.
 
 ## Job Tracking
 

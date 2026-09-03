@@ -165,6 +165,20 @@ header {
 .job-actions[hidden] { display: none; }
 .co-contract { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .co-contract input { width: 120px; }
+.ct-section { margin-bottom: 22px; }
+.ct-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ct-section-head h3 { font-size: 15px; margin: 0; }
+.ct-section-head .spacer { flex: 1; }
+.ct-pos { color: var(--green); font-weight: 600; }
+.ct-neg { color: var(--red); font-weight: 600; }
+.ct-revised { font-size: 13px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px 11px; margin-bottom: 10px; }
+.ct-change { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; background: var(--surface); }
+.ct-change-top, .ct-change-bot { display: flex; gap: 6px; align-items: center; }
+.ct-change-bot { margin-top: 6px; }
+.ct-change .ct-cnum { width: 74px; flex: none; }
+.ct-change .ct-camt { width: 110px; flex: none; text-align: right; }
+.ct-change-bot .input[type=date] { width: 140px; flex: none; }
+.ct-change-bot select { flex: none; width: 110px; }
 .save-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3);
   padding: 4px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; user-select: none; }
 .save-status:hover { background: var(--surface-2); color: var(--text-2); }
@@ -941,7 +955,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v6.6';
+const APP_VERSION = 'v6.7';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3170,6 +3184,7 @@ function renderJobTabs() {
     { id: 'submittals',   label: 'Submittals',    n: sectionsOf(job).length },
     { id: 'rfis',         label: 'RFIs',          n: rfis.length },
     { id: 'changeorders', label: 'Change Orders', n: cos.length },
+    { id: 'contracts',    label: 'Contracts',     n: (contracts || []).length },
     { id: 'quotes',       label: 'Vendor Quotes', n: litems('quotes').length },
     { id: 'pos',          label: "PO's",          n: litems('pos').length },
     { id: 'tracking',     label: 'Job Tracking',  n: tracking.length },
@@ -3204,7 +3219,7 @@ function applyTabVisibility() {
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer();
+  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer();
   renderJob();
   window.scrollTo(0, 0);
 }
@@ -4182,7 +4197,250 @@ function watchContracts(jobId) {
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
-function renderContracts() { const h = $('tab-contracts'); if (h) h.innerHTML = '<div class="empty"><b>Contracts — coming up next.</b></div>'; }
+/* ── Contracts: GC contract(s) + subcontracts, each with a change-order history
+   (adds/deducts) and a running revised total. Full attachments + per-contract
+   ShareFile folder (Contracts/<GC|Sub - party - #>/, with Emails + Change Orders
+   subfolders). ── */
+const CONTRACT_STATUSES = [
+  { id: 'draft',    label: 'Draft',    color: 'grey' },
+  { id: 'executed', label: 'Executed', color: 'green' },
+  { id: 'closed',   label: 'Closed',   color: 'teal' }
+];
+const CH_STATUSES = [
+  { id: 'pending',  label: 'Pending',  color: 'amber' },
+  { id: 'approved', label: 'Approved', color: 'green' },
+  { id: 'rejected', label: 'Rejected', color: 'red' }
+];
+const numOf = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : 0; };
+const contractRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'contracts', String(id));
+const contractById = id => (contracts || []).find(c => c.id === id);
+const cStatus = id => CONTRACT_STATUSES.find(s => s.id === id) || CONTRACT_STATUSES[0];
+const chStatus = id => CH_STATUSES.find(s => s.id === id) || CH_STATUSES[0];
+function contractFolderName(c) {
+  const label = c.kind === 'gc' ? 'GC' : 'Sub';
+  const base = [label, (c.party || '').trim(), (c.number || '').trim()].filter(Boolean).join(' - ') || (label + ' contract ' + (c.id || ''));
+  return sanitizeAnyName(base.slice(0, 90), 'Contract');
+}
+function contractDocDir(c) { return 'Contracts/' + contractFolderName(c); }
+function contractEmailDir(c) { return contractDocDir(c) + '/Emails'; }
+function contractChangeDir(c) { return contractDocDir(c) + '/Change Orders'; }
+function contractRevised(c) { return numOf(c.amount) + (c.changes || []).filter(ch => ch.status === 'approved').reduce((a, ch) => a + numOf(ch.amount), 0); }
+function contractPending(c) { return (c.changes || []).filter(ch => ch.status === 'pending').reduce((a, ch) => a + numOf(ch.amount), 0); }
+async function saveContract(c) { c.updated = Date.now(); try { await FB.setDoc(contractRef(job.id, c.id), clean(c)); } catch (e) { toast(writeError(e), true); } }
+function newContract(kind) {
+  if (!job) return;
+  const c = { id: uid('ctr'), kind: kind || 'sub', party: '', number: '', amount: '', status: 'draft', dateSigned: '', docs: [], emails: [], changes: [], notes: '', created: Date.now(), updated: Date.now() };
+  contracts = [c].concat(contracts);
+  renderContracts(); openContractDrawer(c.id);
+  saveContract(c);
+}
+function renderContracts() {
+  const host = $('tab-contracts'); if (!host) return;
+  const gc = contracts.filter(c => c.kind === 'gc'), sub = contracts.filter(c => c.kind !== 'gc');
+  const section = (title, list, kind, note) => `
+    <div class="ct-section">
+      <div class="ct-section-head"><h3>${title}</h3><div class="spacer"></div><button class="btn sm" onclick="newContract('${kind}')">+ Add</button></div>
+      ${list.length ? `<div class="table-card"><table>
+        <thead><tr><th>Party</th><th style="width:120px">Contract #</th><th style="width:130px">Original</th><th style="width:170px">Revised</th><th style="width:120px">Status</th></tr></thead>
+        <tbody>${list.map(contractRowHtml).join('')}</tbody></table></div>`
+      : `<div class="muted" style="padding:8px 2px">${esc(note)}</div>`}
+    </div>`;
+  host.innerHTML = section('GC contract', gc, 'gc', 'No prime contract logged yet.') + section('Subcontracts', sub, 'sub', 'No subcontracts yet.');
+}
+function contractRowHtml(c) {
+  const st = cStatus(c.status), orig = numOf(c.amount), rev = contractRevised(c), delta = rev - orig;
+  return `<tr onclick="openContractDrawer('${c.id}')">
+    <td data-label="Party"><b>${esc(c.party || '—')}</b></td>
+    <td data-label="Contract #">${esc(c.number || '—')}</td>
+    <td data-label="Original">${orig ? esc(fmtMoney(orig)) : '—'}</td>
+    <td data-label="Revised">${(rev || orig) ? esc(fmtMoney(rev)) : '—'}${delta ? ` <small class="${delta < 0 ? 'ct-neg' : 'ct-pos'}">${delta < 0 ? '−' : '+'}${esc(fmtMoney(Math.abs(delta)))}</small>` : ''}</td>
+    <td data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
+  </tr>`;
+}
+function closeContractDrawer() { openContract = null; $('drawerHost').innerHTML = ''; }
+function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; renderContractDrawer(); }
+function patchContract(id, fields) {
+  const c = contractById(id); if (!c) return;
+  Object.assign(c, fields);
+  renderContracts(); saveContract(c);
+  if (jobFolder && ('party' in fields || 'number' in fields || 'kind' in fields)) maybeAutoOrganize();
+}
+function setContractStatus(id, status) { patchContract(id, { status }); if (openContract === id) renderContractDrawer(); }
+async function deleteContract(id) {
+  const c = contractById(id); if (!c) return;
+  if (!confirm('Delete this contract? The record is removed for everyone. Any files stay in ShareFile.')) return;
+  contracts = contracts.filter(x => x.id !== id);
+  if (openContract === id) closeContractDrawer();
+  renderContracts();
+  try { await FB.deleteDoc(contractRef(job.id, id)); } catch (e) { toast(writeError(e), true); }
+  if (jobFolder) syncContractFolders().catch(() => {});
+}
+function addContractChange(id) { const c = contractById(id); if (!c) return; c.changes = c.changes || []; c.changes.push({ id: uid('chg'), number: '', desc: '', amount: '', date: '', status: 'pending' }); renderContractDrawer(); saveContract(c); }
+function patchChange(id, chId, fields) { const c = contractById(id); if (!c) return; const ch = (c.changes || []).find(x => x.id === chId); if (!ch) return; Object.assign(ch, fields); renderContracts(); renderContractDrawer(); saveContract(c); }
+async function removeChange(id, chId) {
+  const c = contractById(id); if (!c) return; const ch = (c.changes || []).find(x => x.id === chId); if (!ch) return;
+  if (!confirm('Remove this change?')) return;
+  if (ch.doc && ch.doc.dir) { try { await deleteStoredDoc(ch.doc); } catch (e) {} } else if (ch.doc && ch.doc.stagedId) { try { await deleteStaged(ch.doc.stagedId); } catch (e) {} }
+  c.changes = c.changes.filter(x => x.id !== chId);
+  renderContracts(); renderContractDrawer(); saveContract(c);
+}
+async function pickChangeFile(id, chId) { if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.onchange = () => addChangeFile(id, chId, inp.files[0]); inp.click(); }
+async function addChangeFile(id, chId, f) {
+  if (!f) return; const c = contractById(id); const ch = c && (c.changes || []).find(x => x.id === chId); if (!ch) return;
+  if (!jobFolder && !fsSupported()) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); return; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); ch.doc = { id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid }; } catch (e) { toast('Upload failed', true); return; } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractChangeDir(c), sanitizeFileName(f.name)); ch.doc = { id: uid('doc'), name: f.name, size: f.size, dir, file }; } catch (e) { toast(storageError(e), true); return; }
+  renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
+}
+function viewChangeDoc(id, chId) { const c = contractById(id); const ch = c && (c.changes || []).find(x => x.id === chId); if (ch && ch.doc) openStoredDoc(ch.doc); }
+async function pickContractFiles(id) { if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true; inp.onchange = () => addContractFiles(id, Array.from(inp.files)); inp.click(); }
+async function addContractFiles(id, all) {
+  const c = contractById(id); if (!c || !all.length) return;
+  const pdfs = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (!pdfs.length) { toast('Non-PDF files were skipped', true); return; }
+  c.docs = c.docs || [];
+  if (!jobFolder && !fsSupported()) { for (const f of pdfs) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); continue; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid, added: Date.now() }); } catch (e) { toast('Upload failed', true); } } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractDocDir(c), sanitizeFileName(f.name)); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
+}
+async function pickContractEmails(id) { if (!jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true; inp.onchange = () => addContractEmails(id, Array.from(inp.files)); inp.click(); }
+async function addContractEmails(id, all) {
+  const c = contractById(id); if (!c || !all.length) return;
+  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name)); if (!emails.length) { toast('Only .msg / .eml emails were kept', true); return; }
+  c.emails = c.emails || [];
+  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractEmailDir(c), sanitizeAnyName(f.name, 'email')); c.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
+}
+function viewContractDoc(id, kind, docId) { const c = contractById(id); const d = c && (c[kind] || []).find(x => x.id === docId); if (d) openStoredDoc(d); }
+async function removeContractDoc(id, kind, docId) {
+  const c = contractById(id); if (!c) return; const d = (c[kind] || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm(`Remove "${d.name}" for everyone?`)) return;
+  if (d.staged && d.stagedId) await deleteStaged(d.stagedId); else await deleteStoredDoc(d);
+  c[kind] = c[kind].filter(x => x.id !== docId);
+  renderContractDrawer(); renderContracts(); await saveContract(c); noteFolderChanged();
+}
+function contractDocRows(c, kind) {
+  const docs = c[kind] || []; if (!docs.length) return '';
+  const email = kind === 'emails';
+  return `<div class="file-list">` + docs.map(d => `
+    <div class="file-row"><span class="fi">${email ? '✉️' : '📄'}</span>
+      <span class="fn"><b>${esc(d.name)}</b><small>${d.size ? fmtBytes(d.size) : ''}${d.staged ? ' · <b style="color:var(--amber)">on phone</b>' : ''}</small></span>
+      <button class="btn sm" onclick="viewContractDoc('${c.id}','${kind}','${d.id}')">Open</button>
+      <button class="icon-btn" title="Remove" onclick="removeContractDoc('${c.id}','${kind}','${d.id}')">🗑</button>
+    </div>`).join('') + `</div>`;
+}
+function changeRowHtml(c, ch) {
+  const st = chStatus(ch.status);
+  return `<div class="ct-change">
+    <div class="ct-change-top">
+      <input class="input ct-cnum" value="${esc(ch.number || '')}" placeholder="CO #" onchange="patchChange('${c.id}','${ch.id}',{number:this.value.trim()})">
+      <input class="input" style="flex:1;min-width:0" value="${esc(ch.desc || '')}" placeholder="Description" onchange="patchChange('${c.id}','${ch.id}',{desc:this.value.trim()})">
+      <input class="input ct-camt" inputmode="decimal" value="${esc(fmtAmountInput(ch.amount || ''))}" placeholder="± amount" title="Use a minus for a deduct" onchange="this.value=fmtAmountInput(this.value); patchChange('${c.id}','${ch.id}',{amount:this.value})">
+    </div>
+    <div class="ct-change-bot">
+      <input class="input" type="date" value="${esc(ch.date || '')}" onchange="patchChange('${c.id}','${ch.id}',{date:this.value})">
+      <select class="input" onchange="patchChange('${c.id}','${ch.id}',{status:this.value})">${CH_STATUSES.map(s => `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>
+      ${ch.doc ? `<button class="btn sm" onclick="viewChangeDoc('${c.id}','${ch.id}')">PDF</button>` : `<button class="btn sm ghost" onclick="pickChangeFile('${c.id}','${ch.id}')">+ PDF</button>`}
+      <button class="icon-btn" title="Remove" onclick="removeChange('${c.id}','${ch.id}')">🗑</button>
+    </div>
+  </div>`;
+}
+function renderContractDrawer() {
+  const c = contractById(openContract);
+  if (!c) { closeContractDrawer(); return; }
+  const st = cStatus(c.status), orig = numOf(c.amount), rev = contractRevised(c), delta = rev - orig, pend = contractPending(c);
+  const statusButtons = CONTRACT_STATUSES.map(o => `
+    <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
+      onclick="setContractStatus('${c.id}','${o.id}')"><i style="background:${cvar(o.color)}"></i><span>${esc(o.label)}</span></button>`).join('');
+  $('drawerHost').innerHTML = `
+  <div class="scrim" onclick="closeContractDrawer()"></div>
+  <aside class="drawer" role="dialog" aria-label="Contract">
+    <div class="drawer-head">
+      <div style="flex:1;min-width:0"><div class="num">${c.kind === 'gc' ? 'GC contract' : 'Subcontract'}</div>
+        <h2>${esc(c.party || 'New contract')}</h2></div>
+      <button class="icon-btn" onclick="deleteContract('${c.id}')" title="Delete">🗑</button>
+      <button class="icon-btn" onclick="closeContractDrawer()" title="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="sec">
+        <div class="grid2">
+          <div class="field"><label class="fl">Type</label>
+            <select class="input" onchange="patchContract('${c.id}',{kind:this.value})">
+              <option value="gc" ${c.kind === 'gc' ? 'selected' : ''}>GC contract (prime)</option>
+              <option value="sub" ${c.kind !== 'gc' ? 'selected' : ''}>Subcontract</option></select></div>
+          <div class="field"><label class="fl">Party (${c.kind === 'gc' ? 'GC' : 'subcontractor'})</label>
+            <input class="input" value="${esc(c.party || '')}" onchange="patchContract('${c.id}',{party:this.value.trim()})"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Contract #</label>
+            <input class="input" value="${esc(c.number || '')}" onchange="patchContract('${c.id}',{number:this.value.trim()})"></div>
+          <div class="field"><label class="fl">Original amount</label>
+            <input class="input" inputmode="decimal" value="${esc(fmtAmountInput(c.amount || ''))}" placeholder="e.g. 250,000" onchange="this.value=fmtAmountInput(this.value); patchContract('${c.id}',{amount:this.value})"></div>
+        </div>
+        <div class="field"><label class="fl">Date signed</label>
+          <input class="input" type="date" value="${esc(c.dateSigned || '')}" onchange="patchContract('${c.id}',{dateSigned:this.value})"></div>
+      </div>
+      <div class="sec">
+        <h4>Status <span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></h4>
+        <div class="status-grid">${statusButtons}</div>
+      </div>
+      <div class="sec">
+        <h4>Change orders / revisions <span class="spacer"></span><button class="btn sm" onclick="addContractChange('${c.id}')">+ Add change</button></h4>
+        <div class="ct-revised">Original <b>${fmtMoney(orig) || '$0.00'}</b> ${delta ? `· ${delta < 0 ? '−' : '+'}${fmtMoney(Math.abs(delta))} approved ` : ''}· Revised <b>${fmtMoney(rev) || '$0.00'}</b>${pend ? ` <span class="muted">(${fmtMoney(pend)} pending)</span>` : ''}</div>
+        ${(c.changes || []).map(ch => changeRowHtml(c, ch)).join('') || '<div class="muted" style="font-size:13px">No changes yet — add adds/deducts to build the history.</div>'}
+      </div>
+      <div class="sec">
+        <h4>Contract PDFs <button class="btn sm" onclick="pickContractFiles('${c.id}')">+ Upload PDF</button></h4>
+        ${contractDocRows(c, 'docs')}
+        <div class="drop" id="contractDrop" onclick="pickContractFiles('${c.id}')">Drop the contract PDF here<br><span class="muted">Saved to this job's ShareFile folder</span></div>
+      </div>
+      <div class="sec">
+        <h4>Emails <button class="btn sm" onclick="pickContractEmails('${c.id}')">+ Add email</button></h4>
+        ${contractDocRows(c, 'emails')}
+        <div class="drop" id="contractEmailDrop" onclick="pickContractEmails('${c.id}')">Drop emails (.msg / .eml) here</div>
+      </div>
+      <div class="sec">
+        <h4>Notes</h4>
+        <textarea class="input autosize" rows="4" onchange="patchContract('${c.id}',{notes:this.value})">${esc(c.notes || '')}</textarea>
+      </div>
+    </div>
+  </aside>`;
+  wireDropZone($('contractDrop'), files => addContractFiles(c.id, files));
+  wireDropZone($('contractEmailDrop'), files => addContractEmails(c.id, files));
+  autosizeAll($('drawerHost'));
+}
+let _syncingContracts = false;
+async function syncContractFolders() {
+  if (!jobFolder || _syncingContracts) return; _syncingContracts = true;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const root = await walkDirCreate(filesRoot, 'Contracts');
+    const want = new Set();
+    for (const c of contracts) { if (!((c.party || '').trim() || (c.number || '').trim())) continue; const name = contractFolderName(c); want.add(name); try { await root.getDirectoryHandle(name, { create: true }); } catch (e) {} }
+    for await (const e of root.values()) { if (e.kind !== 'directory' || want.has(e.name)) continue; if (await isDirEmptyDeep(e)) { try { await root.removeEntry(e.name, { recursive: true }); } catch (e2) {} } }
+  } catch (e) { console.error(e); }
+  finally { _syncingContracts = false; }
+}
+async function reconcileContracts() {
+  if (!jobFolder) return;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle('files', { create: true });
+    const moves = [], dirty = new Set();
+    for (const c of contracts) {
+      for (const d of (c.docs || [])) if (!isLink(d) && !d.staged) { const m = await planRefile(filesRoot, d, contractDocDir(c)); if (m) { moves.push(m); dirty.add(c); } }
+      for (const d of (c.emails || [])) if (!isLink(d)) { const m = await planRefile(filesRoot, d, contractEmailDir(c)); if (m) { moves.push(m); dirty.add(c); } }
+      for (const ch of (c.changes || [])) if (ch.doc && ch.doc.dir && !ch.doc.staged) { const m = await planRefile(filesRoot, ch.doc, contractChangeDir(c)); if (m) { moves.push(m); dirty.add(c); } }
+    }
+    if (moves.length) {
+      for (const m of moves) { m.doc.dir = m.newDir; m.doc.file = m.newFile; }
+      for (const c of dirty) { try { await saveContract(c); } catch (e) {} }
+      for (const m of moves) { try { const od = m.oldDir ? await walkDir(filesRoot, m.oldDir) : filesRoot; await od.removeEntry(m.oldFile); } catch (e) {} if (blobUrlCache.has(m.doc.id)) { URL.revokeObjectURL(blobUrlCache.get(m.doc.id)); blobUrlCache.delete(m.doc.id); } }
+    }
+    await syncContractFolders();
+  } catch (e) { console.error(e); }
+}
 const lcfg = lk => LEDGERS[lk];
 const litems = lk => ledgerData[lk] || [];
 const lStatus = (lk, id) => lcfg(lk).statuses.find(s => s.id === id) || lcfg(lk).statuses[0];
@@ -7182,6 +7440,7 @@ async function maybeAutoOrganize() {
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     await syncCoFolders();                                // per-CO folders after any moves
     await reconcileLedgers();                             // vendor-quote / PO folders
+    await reconcileContracts();                           // contract folders
     if (n) toast(`Organised ${n} file${n === 1 ? '' : 's'} into folders`);
     if (n || stray) {
       if (openKey) renderDrawer();
@@ -7256,6 +7515,7 @@ async function saveToFolder(auto) {
     await syncRfiFolders();                         // per-RFI folders (+ Question/Answered), tidy renamed/empty ones
     await syncCoFolders();                          // per-CO folders, tidy renamed/empty ones
     await reconcileLedgers();                       // vendor-quote / PO folders
+    await reconcileContracts();                     // contract folders
     await syncAllSubmittals();                     // refresh the All Submittals mirror
 
     // Write the snapshot + CSV (obvious names), and keep the marker + READ ME
