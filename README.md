@@ -244,6 +244,38 @@ description in Description, and its amount in **Pending Cost** or (once approved
 in **Approved Cost** with the approved date. A **Paid** column shows **PAID** (with
 the paid date) for any CO you've ticked as paid. The log carries the Arctic logo.
 
+### Change-order estimator (Change Proposal)
+
+Each change order can hold a **full estimate** — a faithful rebuild of Arctic's
+"Change Proposal Backup" spreadsheet. Open a CO and click **Build estimate** to get
+a change-proposal builder with:
+
+- **Material** — a from-takeoff/inventory figure plus additional material lines, with a markup %.
+- **Equipment & vendor pricing** — line items (enter **deducts as negative** amounts), with a markup %.
+- **Labor** — hours by class for every trade (**Plumbing, Piping, Sheet Metal Field, Sheet Metal Shop** × General Foreman / Foreman / Journeyman / Apprentice) plus **Project Manager, Project Engineer, BIM/Coordination** and three custom classes, in **straight / overtime / double** time. Rates come from the job's labor-rate table (below). Per diem/day and a labor markup % round it out.
+- **Subcontractors** — line items with a markup %.
+- **Tools, consumables & site indirects** — small tools, consumables, site indirects and safety as a **% of field labor**, plus deliveries (cost × qty), rentals and permits, with a markup %.
+- **Totals** — a total markup %, **bond**, **OCIP deduct**, **contingency**, a state gross-receipts **tax** (Oregon CAT 0.55%, Washington B&O 0.59%, or none), and **round to nearest $**.
+
+A live **bid summary** on the right totals every section as you type, and the
+**total bid fills the CO's amount automatically**, so the Change Order Log and the
+register always match the estimate. **⭳ Change Proposal PDF** exports a branded,
+one-page proposal (labor breakdown + bid summary + total) and files it into the CO's
+ShareFile folder. The whole calculation is unit-tested against the source spreadsheet
+(it reproduces its totals to the cent).
+
+### Labor rates (upload your rate PDF)
+
+The **Labor rates** button (on any CO, or in the estimator) opens the job's
+**labor-rate table** — the fully-burdened ST / OT / DT hourly rate for every class.
+**Upload your rate PDF** and the app reads Arctic's rate-sheet format and fills the
+table for you (review, then Save); the PDF itself is filed under
+`Dingus Documents/Labor Rates/` as the source of record. You can also type or adjust
+any rate by hand. Shop rates seed from field rates plus a $17.75/hr fab-shop burden,
+and the sheet's **default markups** (labor / material / equipment / subs) seed new
+estimates. Rates are per job, so each job can carry its own prevailing-wage
+determination.
+
 ## Contracts
 
 The **Contracts** tab holds the job's contracts in two sections — the **GC
