@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.13';
+const APP_VERSION = 'v7.14';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4197,6 +4197,7 @@ function renderCoDrawer() {
         ${coEstSummaryHtml(c)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
           <button class="btn primary sm" onclick="openCoEstimator('${c.id}')">${c.est ? '✎ Edit estimate' : '+ Build estimate'}</button>
+          <button class="btn sm" onclick="openCoWorkbook('${c.id}')" title="Open, view and edit all 12 sheets of the change-order workbook, with live totals">⊞ Workbook</button>
           ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>` : ''}
           ${c.est ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>` : ''}
           ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
@@ -6153,6 +6154,48 @@ function injectCoSheet(xml, c, rates, r, ctx) {
   return xml;
 }
 /* build the injected .xlsm bytes from the user's real template */
+/* map "Sheet Name" -> "xl/worksheets/sheetN.xml" for a loaded JSZip workbook */
+async function zipSheetFileMap(zip) {
+  const wbx = await zip.file('xl/workbook.xml').async('string');
+  const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const relMap = {}; const re = /<Relationship[^>]*Id="(rId\d+)"[^>]*Target="(worksheets\/sheet\d+\.xml)"|<Relationship[^>]*Target="(worksheets\/sheet\d+\.xml)"[^>]*Id="(rId\d+)"/g; let m;
+  while ((m = re.exec(rels))) { const id = m[1] || m[4]; const tgt = m[2] || m[3]; if (id && tgt) relMap[id] = 'xl/' + tgt; }
+  const map = {}; const sre = /<sheet [^>]*name="([^"]*)"[^>]*r:id="(rId\d+)"|<sheet [^>]*r:id="(rId\d+)"[^>]*name="([^"]*)"/g;
+  while ((m = sre.exec(wbx))) { const nm = m[1] || m[4]; const id = m[2] || m[3]; if (nm && relMap[id]) map[nm.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')] = relMap[id]; }
+  return map;
+}
+/* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
+   value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
+   recomputes, drop the calc chain, and stamp the Dingus marker. */
+async function buildCoWorkbookXlsm(c) {
+  const JZ = await ensureJSZip();
+  const zip = await JZ.loadAsync(await coTemplateBytes());
+  const fmap = await zipSheetFileMap(zip);
+  const bySheet = {};
+  for (const k in (c.wbInputs || {})) { const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue; (bySheet[mm[1]] = bySheet[mm[1]] || []).push([mm[2], c.wbInputs[k]]); }
+  for (const sh in bySheet) {
+    const f = fmap[sh]; if (!f || !zip.file(f)) continue;
+    let xml = await zip.file(f).async('string');
+    bySheet[sh].forEach(pair => { const addr = pair[0], val = pair[1]; xml = (typeof val === 'number') ? xlSetCell(xml, addr, { num: val }) : xlSetCell(xml, addr, { str: String(val == null ? '' : val) }); });
+    zip.file(f, xml);
+  }
+  const cpFile = fmap['CP Backup'];
+  if (cpFile && zip.file(cpFile)) {
+    let cp = await zip.file(cpFile).async('string');
+    cp = xlSetCell(cp, 'T1', { str: CO_TPL_MARKER }); cp = xlSetCell(cp, 'T2', { str: c.id || '' });
+    cp = xlSetCell(cp, 'T4', { str: c.mod || '' }); cp = xlSetCell(cp, 'T5', { str: c.rfiCcdAsi || '' });
+    zip.file(cpFile, cp);
+  }
+  let wbx = await zip.file('xl/workbook.xml').async('string');
+  wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
+  zip.file('xl/workbook.xml', wbx);
+  if (zip.file('xl/calcChain.xml')) {
+    zip.remove('xl/calcChain.xml');
+    try { let ct = await zip.file('[Content_Types].xml').async('string'); ct = ct.replace(/<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/, ''); zip.file('[Content_Types].xml', ct); } catch (x) {}
+    try { let rels = await zip.file('xl/_rels/workbook.xml.rels').async('string'); rels = rels.replace(/<Relationship[^>]*calcChain\.xml"[^>]*\/>/, ''); zip.file('xl/_rels/workbook.xml.rels', rels); } catch (x) {}
+  }
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
+}
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
   const r = computeEstimate(c.est, rates);
@@ -6329,8 +6372,162 @@ function makeWbEngine(wb) {
     getOverride(sheet, addr) { const k = okey(sheet, addr); return k in overrides ? overrides[k] : undefined; },
     overrides,
     range(s) { const ws = wb.Sheets[s]; return (ws && ws['!ref']) ? XL.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }; },
+    mergesOf(s) { const ws = wb.Sheets[s]; return (ws && ws['!merges']) || []; },
     recalc() { cache = {}; },
   };
+}
+
+/* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
+let _wbCo = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null;
+const WB_ROW_CAP = 200, WB_ROW_STEP = 200;   // initial rows rendered per sheet + "show more" step
+function wbFmtNum(v) {
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+  if (typeof v !== 'number' || !isFinite(v)) return String(v == null ? '' : v);
+  if (v === 0) return '';                                     // zero-suppress like the workbook does
+  if (Number.isInteger(v)) return v.toLocaleString('en-US');
+  const r = Math.round(v * 10000) / 10000;
+  return r.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+function wbInputRaw(v) { if (v == null || v === '' || v === 0) return ''; return String(v); }
+function coWbTotal() { try { return _wbEng ? _wbEng.get('CP Backup', 'D125') : 0; } catch (e) { return 0; } }
+async function openCoWorkbook(id) {
+  const c = coById(id); if (!c) return;
+  _wbCo = id; _wbEng = null; _wbSheet = null; _wbRows = {};
+  renderWbModal();                                  // loading state
+  try {
+    const XL = await loadSheetJS();
+    const wb = XL.read(new Uint8Array(await coTemplateBytes()), { type: 'array', cellFormula: true });
+    const eng = makeWbEngine(wb);
+    const ov = c.wbInputs || {};
+    for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
+    _wbEng = eng;
+    _wbSheet = eng.visibleSheets.indexOf('CP Backup') >= 0 ? 'CP Backup' : eng.visibleSheets[0];
+    renderWbModal();
+  } catch (e) { console.error(e); closeWb(); toast('Could not open the workbook: ' + (e.message || e), true); }
+}
+function closeWb() { _wbCo = null; _wbEng = null; _wbSheet = null; _wbRows = {}; $('modalHost').innerHTML = ''; }
+function wbSetSheet(name) { _wbSheet = name; renderWbModal(); }
+function wbMoreRows() { _wbRows[_wbSheet] = (_wbRows[_wbSheet] != null ? _wbRows[_wbSheet] : WB_ROW_CAP) + WB_ROW_STEP; renderWbGridOnly(); }
+function wbEdit(sheet, addr, val) {
+  if (!_wbEng) return;
+  const s = String(val).trim();
+  const numish = s !== '' && /^[-+]?[$,\s]*\d[\d,]*(\.\d+)?\s*%?$/.test(s);
+  let stored;
+  if (s === '') stored = '';
+  else if (numish) { let n = parseFloat(s.replace(/[$,\s]/g, '').replace('%', '')); if (/%\s*$/.test(s)) n = n / 100; stored = n; }
+  else stored = val;
+  _wbEng.setInput(sheet, addr, stored);
+  const c = coById(_wbCo); if (c) { c.wbInputs = c.wbInputs || {}; c.wbInputs[sheet + '!' + addr] = stored; c.wbMode = true; }
+  renderWbGridOnly();
+  scheduleWbSave();
+}
+function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistCoWbInputs().catch(() => {}); }, 1200); }
+async function persistCoWbInputs() {
+  const c = coById(_wbCo); if (!c || !job) return;
+  c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now();
+  try { await FB.setDoc(coRef(job.id, c.id), clean(c)); } catch (e) { console.error(e); }
+  if (view === 'job' && jobTab === 'changeorders') renderCos();
+}
+async function saveCoWorkbook(closeAfter) {
+  clearTimeout(_wbSaveT);
+  const c = coById(_wbCo); if (!c) { if (closeAfter) closeWb(); return; }
+  try {
+    c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now(); c.coFileSig = '';   // force mirror rewrite
+    await FB.setDoc(coRef(job.id, c.id), clean(c));
+    if (jobFolder) await writeCoFile(c, { force: true, toast: !closeAfter });
+    if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
+  } catch (e) { console.error(e); toast('Could not save the workbook: ' + (e.message || e), true); }
+  if (closeAfter) closeWb();
+}
+function wbGridHtml() {
+  const eng = _wbEng, sheet = _wbSheet; if (!eng) return '';
+  const rg = eng.range(sheet);
+  const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;   // hard initial cap so huge sheets stay fast
+  const endR = Math.min(rg.e.r, shown);
+  const endC = rg.e.c;
+  // merges: map "r,c" of covered (non-anchor) cells to skip; anchors get span
+  const merges = {}; const covered = {};
+  eng.mergesOf(sheet).forEach(mg => {
+    merges[mg.s.r + ',' + mg.s.c] = { rs: mg.e.r - mg.s.r + 1, cs: mg.e.c - mg.s.c + 1 };
+    for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
+  });
+  let html = '<table class="wbgrid"><thead><tr><th class="wbh wbcorner"></th>';
+  for (let c = rg.s.c; c <= endC; c++) html += `<th class="wbh">${XLSX.utils.encode_col(c)}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let r = rg.s.r; r <= endR; r++) {
+    html += `<tr><th class="wbh wbrow">${r + 1}</th>`;
+    for (let c = rg.s.c; c <= endC; c++) {
+      if (covered[r + ',' + c]) continue;
+      const a = XLSX.utils.encode_cell({ r, c });
+      const mg = merges[r + ',' + c];
+      const span = mg ? ` colspan="${mg.cs}" rowspan="${mg.rs}"` : '';
+      const raw = eng.raw(sheet, a);
+      const isF = !!(raw && raw.f != null);
+      const val = eng.get(sheet, a);
+      const isStr = typeof val === 'string';
+      if (isF) { html += `<td${span} class="wbc wbcalc" title="=${esc(raw.f)}">${esc(wbFmtNum(val))}</td>`; }
+      else if (isStr && val !== '') { html += `<td${span} class="wbc wblbl">${esc(val)}</td>`; }
+      else {
+        const ov = eng.getOverride(sheet, a);
+        html += `<td${span} class="wbc"><input class="wbin${ov != null ? ' wbedited' : ''}" value="${esc(wbInputRaw(val))}" onchange="wbEdit('${esc(sheet).replace(/'/g, "\\'")}','${a}',this.value)"></td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  if (endR < rg.e.r) html += `<div style="padding:8px"><button class="btn sm ghost" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, rg.e.r - endR)} more rows (of ${rg.e.r + 1})</button></div>`;
+  return html;
+}
+function renderWbGridOnly() {
+  const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = wbGridHtml();
+  const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(coWbTotal()) || '$0';
+}
+function renderWbModal() {
+  const c = coById(_wbCo); if (!c) { $('modalHost').innerHTML = ''; return; }
+  const loading = !_wbEng;
+  const tabs = loading ? '' : _wbEng.visibleSheets.map(s => `<button class="wbtab${s === _wbSheet ? ' on' : ''}" onclick="wbSetSheet('${esc(s).replace(/'/g, "\\'")}')">${esc(s)}</button>`).join('');
+  $('modalHost').innerHTML = `<div class="modal-scrim wbscrim" onclick="if(event.target===this)closeWb()"><div class="wbmodal">
+    <div class="wbhead">
+      <div class="wbtitle">Change Order ${esc(c.number || '')} — Workbook${loading ? '' : ` &nbsp;·&nbsp; <span class="wbtotwrap">Total bid <b id="wbTotal">${esc(fmtMoney(coWbTotal()) || '$0')}</b></span>`}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${loading ? '' : `<button class="btn sm ghost" onclick="wbResetSheet()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
+        <button class="btn sm primary" onclick="saveCoWorkbook(true)">Save &amp; close</button>
+        <button class="icon-btn" onclick="closeWb()">✕</button>
+      </div>
+    </div>
+    ${loading ? '<div class="wbloading">Loading the workbook…</div>' : `
+      <div class="wbtabs">${tabs}</div>
+      <div class="wbgridwrap" id="wbGridWrap">${wbGridHtml()}</div>
+      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the Change&nbsp;Proposal.xlsm. Editing here drives all 12 sheets — no Excel needed.</div>`}
+  </div></div>
+  <style>
+    .wbscrim{align-items:stretch;justify-content:center}
+    .wbmodal{background:var(--card,#fff);width:100%;max-width:1200px;margin:16px;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+    .wbhead{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line,#e3e6ea);flex-wrap:wrap}
+    .wbtitle{font-weight:600;font-size:14px} .wbtotwrap b{color:var(--accent,#2563eb)}
+    .wbloading{padding:60px;text-align:center;color:var(--muted,#889)}
+    .wbtabs{display:flex;gap:2px;overflow-x:auto;padding:6px 8px 0;border-bottom:1px solid var(--line,#e3e6ea);flex-wrap:nowrap}
+    .wbtab{border:1px solid var(--line,#e3e6ea);border-bottom:none;background:var(--bg,#f4f6f8);padding:5px 10px;border-radius:6px 6px 0 0;font-size:12px;white-space:nowrap;cursor:pointer;color:var(--muted,#667)}
+    .wbtab.on{background:var(--card,#fff);color:var(--fg,#111);font-weight:600}
+    .wbgridwrap{overflow:auto;flex:1;background:var(--card,#fff)}
+    table.wbgrid{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+    .wbgrid th.wbh{position:sticky;top:0;background:var(--bg,#eef1f4);border:1px solid var(--line,#d7dbe0);color:var(--muted,#889);font-weight:600;padding:2px 6px;z-index:1;text-align:center;min-width:28px}
+    .wbgrid th.wbrow{position:sticky;left:0;top:auto;z-index:0}
+    .wbgrid td.wbc{border:1px solid var(--line,#e7eaee);padding:0;max-width:220px}
+    .wbgrid td.wblbl{padding:2px 6px;color:var(--fg,#222);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .wbgrid td.wbcalc{padding:2px 6px;text-align:right;color:var(--muted,#556);background:var(--bg,#f7f8fa)}
+    .wbin{width:100%;min-width:56px;border:none;background:transparent;padding:2px 6px;font:inherit;text-align:right;color:var(--fg,#111)}
+    .wbin:focus{outline:2px solid var(--accent,#2563eb);background:#fff}
+    .wbin.wbedited{background:rgba(37,99,235,.10);font-weight:600}
+    .wbnote{padding:8px 14px;font-size:11px;color:var(--muted,#889);border-top:1px solid var(--line,#e3e6ea)}
+  </style>`;
+}
+function wbResetSheet() {
+  const c = coById(_wbCo); if (!c) return;
+  if (!confirm('Clear all your workbook edits for this change order and return to the original workbook?')) return;
+  c.wbInputs = {}; c.wbMode = false;
+  openCoWorkbook(_wbCo);
+  scheduleWbSave();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -6510,18 +6707,19 @@ let _coFlushT = {};
 function scheduleCoFileFlush(c) { if (!jobFolder || !c || !c.est) return; clearTimeout(_coFlushT[c.id]); _coFlushT[c.id] = setTimeout(() => { writeCoFile(c).catch(() => {}); }, 2500); }
 async function writeCoFile(c, opts) {
   opts = opts || {};
-  if (!jobFolder || !c || !c.est) return;
-  if (coProposalDoc(c) && coInputSig(c) === c.coFileSig && !opts.force) return;
+  if (!jobFolder || !c || (!c.est && !c.wbMode)) return;
+  if (!c.wbMode && coProposalDoc(c) && coInputSig(c) === c.coFileSig && !opts.force) return;
   try {
     const rates = jobLaborRates();
     const ctx = { jobName: job.name || '', jobNumber: job.number || job.jobNumber || '', customer: job.customer || job.owner || '', date: csvDate(today()) };
     let out, fname, mime;
     try {
-      // preferred: inject this CO's numbers into the user's REAL workbook (every sheet identical)
-      out = await buildCoXlsm(c, rates, ctx);
+      // workbook mode: mirror the CO's live-workbook edits; otherwise inject the estimate form
+      out = c.wbMode ? await buildCoWorkbookXlsm(c) : await buildCoXlsm(c, rates, ctx);
       fname = CO_PROPOSAL_NAME;   // Change Proposal.xlsm
       mime = 'application/vnd.ms-excel.sheet.macroEnabled.12';
     } catch (tplErr) {
+      if (c.wbMode) throw tplErr;   // no legacy fallback for workbook mode
       // fallback (template asset unreachable): the older generated-from-scratch .xlsx
       console.warn('CO template unavailable, using legacy workbook:', tplErr && tplErr.message || tplErr);
       const XL = await loadSheetJS();
