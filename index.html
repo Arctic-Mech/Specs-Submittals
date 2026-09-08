@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.8';
+const APP_VERSION = 'v7.9';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5134,7 +5134,7 @@ function renderEstimateEditor() {
       <button class="icon-btn" onclick="closeEstimateEditor()">✕</button>
     </div>
     <div class="modal-body flush">
-    <div class="lr-note" style="margin:12px 16px 0">This estimate is mirrored to <b>Dingus Documents/Estimates/</b> as a live Excel file. Edit it here or in Excel — whichever you save last wins. ${ro ? 'It is <b>locked</b>: a fixed snapshot that changes can’t override — <button class="btn sm" onclick="duplicateEstimate(\'' + e.id + '\')">Duplicate to edit</button> or unlock it.' : 'Excel edits are picked up when the folder is loaded here (Chrome/Edge desktop).'}</div>
+    <div class="lr-note" style="margin:12px 16px 0">This estimate is mirrored to <b>Dingus Documents/Estimates/</b> as a copy of your real MCAA workbook (<b>.xlsm</b>) — every sheet, the Proposal page and the macros are identical to the original, with this estimate’s numbers filled in. Edit it here or in Excel — whichever you save last wins. ${ro ? 'It is <b>locked</b>: a fixed snapshot that changes can’t override — <button class="btn sm" onclick="duplicateEstimate(\'' + e.id + '\')">Duplicate to edit</button> or unlock it.' : 'Excel edits to the input cells are picked up when the folder is loaded here (Chrome/Edge desktop).'}</div>
     <div class="est-wrap">
       <div class="est-main">
         <div class="est-sec">
@@ -5428,6 +5428,139 @@ function estEvalWb(ws, names) {
   return { name: nm => cellVal(nameMap[nm]), cell: cellVal };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TEMPLATE-BASED ESTIMATE — inject the app's numbers into the user's REAL
+   ENFRA/MCAA workbook so every sheet is identical. The MCAA RECAP sheet's leaf
+   inputs and (feeder-sheet-dependent) summary cells are value-stamped from the
+   proven engine; the full estimate model rides in a JSON marker cell for a
+   lossless round-trip of the free-form lists; the Proposal sheet's headline
+   dollar figure (and its spelled-out amount) are stamped too.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const EST_TEMPLATE_URL = 'templates/estimate-template.xlsm';
+let _estTemplateBuf = null;
+async function estTemplateBytes() {
+  if (_estTemplateBuf) return _estTemplateBuf.slice(0);
+  const res = await fetch(EST_TEMPLATE_URL, { cache: 'force-cache' });
+  if (!res.ok) throw new Error('template ' + res.status);
+  _estTemplateBuf = await res.arrayBuffer();
+  return _estTemplateBuf.slice(0);
+}
+const EST_TPL_MARKER = 'DINGUS-EST';
+const EST_ADDER_ROW = { detailing: 12, testing: 13, safety: 14, qc: 15, matlhand: 16 };  // MCAA RECAP adder rows
+const EST_N_TPL_SUBS = 9, EST_N_TPL_EQUIP = 16;   // fixed template rows (subs B36:J44, equipment 114:129)
+function estTaxLabelRecap(t) { return t === 'washington_bo' ? 'Washington B&O Tax' : t === 'none' ? 'No Tax' : 'Oregon CAT Tax'; }
+/* spell a dollar amount the way the workbook's SpellNumber macro does (for Proposal A45) */
+function estSpellDollars(amount) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  function threeToWords(n) { let s = ''; if (n >= 100) { s += ones[Math.floor(n / 100)] + ' Hundred'; n %= 100; if (n) s += ' '; } if (n >= 20) { s += tens[Math.floor(n / 10)]; n %= 10; if (n) s += ' ' + ones[n]; } else if (n) s += ones[n]; return s; }
+  let dollars = Math.floor(Math.abs(estNum(amount)));
+  const cents = Math.round((Math.abs(estNum(amount)) - dollars) * 100);
+  const groups = ['', ' Thousand', ' Million', ' Billion']; let words = '', g = 0;
+  if (dollars === 0) words = 'Zero';
+  const chunks = []; while (dollars > 0) { chunks.push(dollars % 1000); dollars = Math.floor(dollars / 1000); }
+  for (let i = chunks.length - 1; i >= 0; i--) { if (chunks[i]) words += (words ? ' ' : '') + threeToWords(chunks[i]) + groups[i]; }
+  const centStr = cents > 0 ? threeToWords(cents) + ' Cents' : 'No Cents';
+  return (words || 'Zero') + ' Dollars and ' + centStr;
+}
+/* inject the estimate into the MCAA RECAP worksheet XML */
+function injectEstRecap(xml, e, r, ctx) {
+  ctx = ctx || {};
+  const S_ = (ref, v) => { xml = xlSetCell(xml, ref, { str: v == null ? '' : String(v) }); };
+  const N_ = (ref, v) => { xml = xlSetCell(xml, ref, { num: estNum(v) }); };
+  const CLR = ref => { xml = xlClearCell(xml, ref); };
+  const sup = e.supervision || {}, mat = e.material || {}, trades = e.trades || {};
+  // header
+  if (ctx.jobName) S_('H6', ctx.jobName); if ((e.info || {}).bidNo) S_('B7', e.info.bidNo); if ((e.info || {}).projectType) S_('N5', e.info.projectType);
+  // trade base hours (adders + LOP recompute from these + the schedule/adder cells)
+  N_('E11', (trades.plumb || {}).hours); N_('F11', (trades.pipe || {}).hours); N_('G11', (trades.smField || {}).hours); N_('H11', (trades.smShop || {}).hours);
+  S_('C17', e.scheduleType || "5 8's");
+  // adder percentages (B=plumb, C=pipe, D=SM field, I=SM shop)
+  (e.adders || EST_ADDERS).forEach(a => { const row = EST_ADDER_ROW[a.key]; if (!row) return; N_('B' + row, a.plumb); N_('C' + row, a.pipe); N_('D' + row, a.smField); N_('I' + row, a.smShop || 0); });
+  // blended labor rates (drop the Crew Mix formula so the app's rates win)
+  N_('E21', r.rate.plumb); N_('F22', r.rate.pipe); N_('G23', r.rate.smField); N_('H24', r.rate.smShop);
+  N_('C27', r.ocipDeduct);                                       // OCIP deduct
+  N_('I25', r.subtotalLabor); N_('J27', r.totalLabor);
+  // material
+  N_('D29', mat.plumb); N_('G29', mat.pipe); N_('J29', mat.sm); N_('J31', r.totalMaterial);
+  // subcontractors (desc col B, value col J, rows 36-44)
+  for (let i = 0; i < EST_N_TPL_SUBS; i++) { const row = 36 + i; const s = (e.subs || [])[i]; if (s && (s.value !== '' && s.value != null || s.desc)) { S_('B' + row, s.desc || ''); N_('J' + row, s.value); } else { CLR('J' + row); } }
+  N_('J45', r.totalSubs); N_('G60', e.subMarkupPct); N_('H60', r.subMarkup);
+  // supervision (E=% of trade, G=rate, H=cost)
+  N_('E48', sup.pmPct); N_('G48', sup.pmRate); N_('H48', r.pmCost);
+  N_('E49', sup.plumbSupPct); N_('G49', sup.plumbSupRate); N_('H49', r.plumbSupCost);
+  N_('E50', sup.pipeSupPct); N_('G50', sup.pipeSupRate); N_('H50', r.pipeSupCost);
+  N_('E52', sup.smFieldSupPct); N_('G52', sup.smFieldSupRate); N_('H52', r.smFieldSupCost);
+  N_('H53', r.equipRental); N_('H54', r.otherGC); N_('H107', r.otherGC); N_('J55', r.totalOther);
+  N_('G79', e.smallToolsPct); N_('H79', r.smallTools);
+  // equipment rentals (G=qty, H=duration, I=rate, rows 114-129)
+  for (let i = 0; i < EST_N_TPL_EQUIP; i++) { const row = 114 + i; const q = (e.equipment || [])[i]; if (q && (q.qty || q.duration || q.rate || q.desc)) { S_('B' + row, q.desc || ''); N_('G' + row, q.qty); N_('H' + row, q.duration); N_('I' + row, q.rate); } }
+  // markups, recovery, misc, bond, permits, tax, leveler, totals (value-stamped, drop feeder formulas)
+  N_('H59', r.directCosts); N_('G62', e.oANDpPct); N_('H61', r.equipMarkup); N_('H62', r.oANDp); N_('H63', r.projectSubtotal);
+  N_('H64', r.marketRecovery); N_('H65', r.misc);
+  S_('A66', (e.bond && e.bond.required) ? 'Yes' : 'No'); N_('H66', r.bond);
+  const perm = e.permits || {}; N_('J77', perm.plumbing); N_('J78', perm.hvac); N_('J79', perm.medGas); N_('J80', perm.boiler); N_('J81', perm.specialInsp);
+  N_('H67', r.permits);
+  S_('E68', estTaxLabelRecap(e.taxType)); N_('I68', r.taxRate); N_('H68', r.tax);
+  N_('H69', r.leveler); N_('H70', r.totalBid);
+  // marker + lossless model
+  S_('AB1', EST_TPL_MARKER); S_('AB2', e.id || ''); S_('AB3', estModelJson(e));
+  return xml;
+}
+function estModelJson(e) {
+  const pick = ['name', 'info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocip', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'gcs', 'equipment', 'equipMarkup', 'emoReduce', 'workRecovery', 'oANDpPct', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'marketRecovery', 'subs'];
+  const o = {}; pick.forEach(k => { if (e[k] !== undefined) o[k] = e[k]; }); return JSON.stringify(o);
+}
+async function buildEstXlsm(e, ctx) {
+  const JZ = await ensureJSZip();
+  const r = computeProjectEstimate(e);
+  const zip = await JZ.loadAsync(await estTemplateBytes());
+  let recap = await zip.file('xl/worksheets/sheet17.xml').async('string');    // MCAA RECAP
+  recap = injectEstRecap(recap, e, r, ctx); zip.file('xl/worksheets/sheet17.xml', recap);
+  // Proposal (sheet18): headline dollar figure + spelled-out amount
+  try {
+    let prop = await zip.file('xl/worksheets/sheet18.xml').async('string');
+    prop = xlSetCell(prop, 'P45', { num: r.totalBid }); prop = xlSetCell(prop, 'V45', { num: r.totalBid });
+    prop = xlSetCell(prop, 'A45', { str: estSpellDollars(r.totalBid) });
+    zip.file('xl/worksheets/sheet18.xml', prop);
+  } catch (x) {}
+  let wbx = await zip.file('xl/workbook.xml').async('string');
+  wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
+  zip.file('xl/workbook.xml', wbx);
+  if (zip.file('xl/calcChain.xml')) {
+    zip.remove('xl/calcChain.xml');
+    try { let ct = await zip.file('[Content_Types].xml').async('string'); ct = ct.replace(/<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/, ''); zip.file('[Content_Types].xml', ct); } catch (x) {}
+    try { let rels = await zip.file('xl/_rels/workbook.xml.rels').async('string'); rels = rels.replace(/<Relationship[^>]*calcChain\.xml"[^>]*\/>/, ''); zip.file('xl/_rels/workbook.xml.rels', rels); } catch (x) {}
+  }
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
+}
+function estTemplateLooksLikeOurs(wb) { const ws = wb && wb.Sheets && wb.Sheets['MCAA RECAP']; return !!(ws && ws['AB1'] && String(ws['AB1'].v) === EST_TPL_MARKER); }
+/* parse the injected template: JSON model is authoritative; overlay scalar cells
+   the user may have edited in Excel so those edits flow back to the website */
+function parseEstTemplate(wb) {
+  const ws = wb.Sheets['MCAA RECAP']; if (!ws) return null;
+  const g = a => { const c = ws[a]; return c ? c.v : undefined; };
+  let base = {}; try { base = JSON.parse(String((ws['AB3'] || {}).v || '{}')); } catch (x) { base = {}; }
+  const e = Object.assign(defaultEstimate(), base); e.id = String((ws['AB2'] || {}).v || base.id || e.id);
+  const near = (a, b) => Math.abs(estNum(a) - estNum(b)) < 0.005;
+  const ovN = (cell, get, set) => { const v = g(cell); if (v != null && v !== '' && !near(v, get())) set(estNum(v)); };
+  const ovS = (cell, get, set) => { const v = g(cell); if (v != null && String(v) !== String(get())) set(String(v)); };
+  e.trades = e.trades || {}; ['plumb', 'pipe', 'smField', 'smShop'].forEach((t, i) => { e.trades[t] = e.trades[t] || {}; ovN(['E11', 'F11', 'G11', 'H11'][i], () => (e.trades[t] || {}).hours, val => e.trades[t].hours = val); });
+  ovS('C17', () => e.scheduleType, val => e.scheduleType = val);
+  e.material = e.material || {}; ovN('D29', () => e.material.plumb, v => e.material.plumb = v); ovN('G29', () => e.material.pipe, v => e.material.pipe = v); ovN('J29', () => e.material.sm, v => e.material.sm = v);
+  ovN('G60', () => e.subMarkupPct, v => e.subMarkupPct = v); ovN('G62', () => e.oANDpPct, v => e.oANDpPct = v); ovN('G79', () => e.smallToolsPct, v => e.smallToolsPct = v);
+  e.supervision = e.supervision || {};
+  ovN('E48', () => e.supervision.pmPct, v => e.supervision.pmPct = v); ovN('G48', () => e.supervision.pmRate, v => e.supervision.pmRate = v);
+  ovN('E49', () => e.supervision.plumbSupPct, v => e.supervision.plumbSupPct = v); ovN('G49', () => e.supervision.plumbSupRate, v => e.supervision.plumbSupRate = v);
+  ovN('E50', () => e.supervision.pipeSupPct, v => e.supervision.pipeSupPct = v); ovN('G50', () => e.supervision.pipeSupRate, v => e.supervision.pipeSupRate = v);
+  ovN('E52', () => e.supervision.smFieldSupPct, v => e.supervision.smFieldSupPct = v); ovN('G52', () => e.supervision.smFieldSupRate, v => e.supervision.smFieldSupRate = v);
+  e.permits = e.permits || {}; ovN('J77', () => e.permits.plumbing, v => e.permits.plumbing = v); ovN('J78', () => e.permits.hvac, v => e.permits.hvac = v); ovN('J79', () => e.permits.medGas, v => e.permits.medGas = v); ovN('J80', () => e.permits.boiler, v => e.permits.boiler = v); ovN('J81', () => e.permits.specialInsp, v => e.permits.specialInsp = v);
+  ovN('H65', () => e.misc, v => e.misc = v);
+  { const v = g('A66'); if (v != null && v !== '') e.bond = { required: String(v).trim().toLowerCase() === 'yes' }; }
+  { const v = g('E68'); if (v != null && v !== '') { const t = String(v).toLowerCase(); e.taxType = (t.indexOf('washington') >= 0 || t.indexOf('b&o') >= 0) ? 'washington_bo' : t.indexOf('no tax') >= 0 ? 'none' : 'oregon_cat'; } }
+  return e;
+}
+
 function buildEstimateWorkbook(e, ctx) {
   ctx = ctx || {};
   const ws = {}; const names = []; let R = 0;
@@ -5565,6 +5698,10 @@ function buildEstimateWorkbook(e, ctx) {
 }
 
 function parseEstimateWorkbook(wb) {
+  if (estTemplateLooksLikeOurs(wb)) return parseEstTemplate(wb);   // real-workbook mirror
+  return parseEstimateWorkbookLegacy(wb);                          // older named-cell .xlsx
+}
+function parseEstimateWorkbookLegacy(wb) {
   const wsName = (wb.SheetNames || []).indexOf('Estimate') >= 0 ? 'Estimate' : wb.SheetNames[0];
   const ws = wb.Sheets[wsName];
   const nameMap = {};
@@ -5626,7 +5763,9 @@ function estInputs(e) {
     bond: !!(e.bond && e.bond.required), tax: e.taxType || 'oregon_cat', lr: n(e.levelerRound) || 5, lad: n(e.levelerAddDeduct) };
 }
 function estInputSig(e) { try { return JSON.stringify(estInputs(e)); } catch (x) { return ''; } }
-function estFileDesiredName(e) { return sanitizeAnyName(String(e.name || 'Estimate').slice(0, 70), 'Estimate') + '.xlsx'; }
+function estFileBase(e) { return sanitizeAnyName(String(e.name || 'Estimate').slice(0, 70), 'Estimate'); }
+function estFileDesiredName(e) { return estFileBase(e) + '.xlsm'; }
+function estFileOldName(e) { return estFileBase(e) + '.xlsx'; }
 async function estDirHandle(create) { const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: !!create }); return filesRoot.getDirectoryHandle(ESTIMATE_DIR, { create: !!create }); }
 async function estFileMtime(e) { try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(e.file.file); return (await fh.getFile()).lastModified; } catch (x) { return 0; } }
 
@@ -5641,19 +5780,29 @@ async function writeEstimateFile(e, opts) {
   if (!jobFolder || !e) return;
   if (e.file && e.file.file && estInputSig(e) === e.fileSig && !opts.force) return;   // nothing changed
   try {
-    const XL = await loadSheetJS();
-    const wb = buildEstimateWorkbook(e, { jobName: job.name, date: csvDate(today()) });
-    const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
-    const desired = estFileDesiredName(e);
-    const f = new File([out], desired, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const ctx = { jobName: job.name || '', date: csvDate(today()) };
+    let out, desired, mime;
+    try {
+      // preferred: inject the estimate into the user's REAL ENFRA workbook (every sheet identical)
+      out = await buildEstXlsm(e, ctx);
+      desired = estFileDesiredName(e);   // .xlsm
+      mime = 'application/vnd.ms-excel.sheet.macroEnabled.12';
+    } catch (tplErr) {
+      console.warn('estimate template unavailable, using legacy workbook:', tplErr && tplErr.message || tplErr);
+      const XL = await loadSheetJS();
+      out = XL.write(buildEstimateWorkbook(e, ctx), { bookType: 'xlsx', type: 'array' });
+      desired = estFileOldName(e); mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    const f = new File([out], desired, { type: mime });
     const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
-    removeNumberedSiblings(ESTIMATE_DIR, desired, estFileKeepSet()).catch(() => {});   // sweep "<name> (2).xlsx" duplicates (never another estimate's file)
-    // remove a stale file left by a rename
+    removeNumberedSiblings(ESTIMATE_DIR, desired, estFileKeepSet()).catch(() => {});   // sweep "<name> (2)" duplicates (never another estimate's file)
+    // remove a stale file left by a rename, and the other-format sibling for this estimate
     if (e.file && e.file.file && e.file.file !== file) { try { const d = await estDirHandle(false); await d.removeEntry(e.file.file); } catch (x) {} }
+    { const other = desired === estFileDesiredName(e) ? estFileOldName(e) : estFileDesiredName(e); if (other !== file) removeNamedSibling(ESTIMATE_DIR, other).catch(() => {}); }
     e.file = { dir, file };
     e.fileSyncedAt = await estFileMtime(e);
     e.fileSig = estInputSig(e);
-    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xlsx$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, xlsx: true, added: Date.now() }]); }
+    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xls[xm]$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, xlsx: true, added: Date.now() }]); }
     await FB.setDoc(estimateRef(job.id, e.id), clean(e));
     noteFolderChanged();
     if (view === 'job' && jobTab === 'estimates') { if (openEstimate === e.id) renderEstimateEditor(); else renderEstimates(); }
@@ -5777,6 +5926,7 @@ function importCoFilePick(id) {
 /* ── importing a LOOSE estimate spreadsheet (dropped straight into ShareFile) ──
    Loose .xlsx files show up in the same "Assign" flow as loose PDFs and emails. */
 function estWorkbookLooksLikeOurs(wb) {
+  if (estTemplateLooksLikeOurs(wb)) return true;
   const names = (wb && wb.Workbook && wb.Workbook.Names) || [];
   return names.some(n => n.Name === 'EST_o_totalBid' || n.Name === 'EST_SCHEMA' || n.Name === 'EST_hours_smField');
 }
@@ -5803,7 +5953,7 @@ async function importLooseAsEstimate(item, targetId, newName) {
     ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(k => { if (parsed[k] !== undefined) e[k] = parsed[k]; });
     e.updated = Date.now();
   } else {
-    e = makeEstimateFromParsed(parsed, (newName || '').trim() || item.name.replace(/\.xlsx$/i, ''));
+    e = makeEstimateFromParsed(parsed, (newName || '').trim() || item.name.replace(/\.xls[xm]$/i, ''));
     estimates = estimates.concat([e]);
   }
   e.file = null; e.fileSig = ''; e.fileSyncedAt = 0;    // force a fresh canonical write
@@ -5816,7 +5966,7 @@ async function importLooseAsEstimate(item, targetId, newName) {
 /* the Assign-flow modal for a loose .xlsx — an estimate OR a change proposal */
 async function assignEstimateModal(i, item, total) {
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal"><div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div><div class="modal-body"><div class="muted">Reading “${esc(item.name)}”…</div></div></div></div>`;
-  let kind = 'none', bid = 0, nm = item.name.replace(/\.xlsx$/i, ''), coNumber = '';
+  let kind = 'none', bid = 0, nm = item.name.replace(/\.xls[xm]$/i, ''), coNumber = '';
   try {
     const wb = await readLooseWorkbook(item);
     if (typeof coWorkbookLooksLikeOurs === 'function' && coWorkbookLooksLikeOurs(wb)) {
