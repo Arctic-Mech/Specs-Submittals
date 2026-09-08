@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.14';
+const APP_VERSION = 'v7.15';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6422,8 +6422,9 @@ function wbEdit(sheet, addr, val) {
   scheduleWbSave();
 }
 function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistCoWbInputs().catch(() => {}); }, 1200); }
+function wbHasEdits(c) { return !!(c && c.wbInputs && Object.keys(c.wbInputs).length); }
 async function persistCoWbInputs() {
-  const c = coById(_wbCo); if (!c || !job) return;
+  const c = coById(_wbCo); if (!c || !job || !wbHasEdits(c)) return;   // only engage workbook mode once something is actually edited
   c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now();
   try { await FB.setDoc(coRef(job.id, c.id), clean(c)); } catch (e) { console.error(e); }
   if (view === 'job' && jobTab === 'changeorders') renderCos();
@@ -6431,6 +6432,7 @@ async function persistCoWbInputs() {
 async function saveCoWorkbook(closeAfter) {
   clearTimeout(_wbSaveT);
   const c = coById(_wbCo); if (!c) { if (closeAfter) closeWb(); return; }
+  if (!wbHasEdits(c) && !c.wbMode) { if (closeAfter) closeWb(); else toast('No edits to save'); return; }   // viewing only — don't switch the CO to workbook mode
   try {
     c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now(); c.coFileSig = '';   // force mirror rewrite
     await FB.setDoc(coRef(job.id, c.id), clean(c));
@@ -6498,7 +6500,7 @@ function renderWbModal() {
     ${loading ? '<div class="wbloading">Loading the workbook…</div>' : `
       <div class="wbtabs">${tabs}</div>
       <div class="wbgridwrap" id="wbGridWrap">${wbGridHtml()}</div>
-      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the Change&nbsp;Proposal.xlsm. Editing here drives all 12 sheets — no Excel needed.</div>`}
+      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the Change&nbsp;Proposal.xlsm — no Excel needed.${(c.est && !wbHasEdits(c)) ? ' <b>This opens the standard change-order workbook</b> (a separate way to build this CO from the actual sheets); it doesn’t import your form estimate, and it only takes over once you edit a cell here.' : ''}</div>`}
   </div></div>
   <style>
     .wbscrim{align-items:stretch;justify-content:center}
