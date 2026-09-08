@@ -276,6 +276,38 @@ and the sheet's **default markups** (labor / material / equipment / subs) seed n
 estimates. Rates are per job, so each job can carry its own prevailing-wage
 determination.
 
+## Estimates
+
+The **Estimates** tab holds full-project **bid estimates**, modeled on the MCAA
+"RECAP" master estimate sheet. Each estimate rolls up, in order:
+
+- **Labor** — base hours per trade (**Plumbing, Piping, Sheet Metal Field, Sheet
+  Metal Shop**) with **labor modifiers** (detailing, testing, safety, QC, material
+  handling — a % added to hours per trade) and a **schedule** (`5 8's`, `5 10's`,
+  `6 10's`, `60/60/50`) that both adds a loss-of-productivity factor and blends
+  overtime into the crew rate. Rates are the fully-burdened ST/OT blend per trade.
+- **Material** by trade.
+- **Subcontractors** with a markup.
+- **Supervision & other costs** — project manager and per-trade field supervision
+  as a % of hours × rate, plus **small tools** as a % of straight field labor.
+- **General conditions** (qty × rate line items) and **equipment rentals**
+  (qty × duration × rate).
+- **Overhead & profit** (on direct costs *excluding* subs), **bond** (a bracket
+  rate schedule on the sell price), **permits**, a state gross-receipts **tax**
+  (Oregon CAT / Washington B&O / none), and a **cost leveler** that rounds the bid
+  up to the nearest $5.
+
+A live **bid summary** on the right totals every section as you type. The engine is
+unit-tested against the source workbook and reproduces its **$2,055,185** total to
+the cent.
+
+**Multiple estimates, compare, and lock.** A job can hold as many estimates as you
+like — **Duplicate** one to spin up a value-engineered option. Tick two or more and
+**Compare** lays them side by side with the dollar deltas on every line. **Lock** an
+estimate to freeze it as a snapshot: locked estimates are read-only, so later edits
+can't override them (duplicate or unlock to change one). Each estimate's summary PDF
+files into `Dingus Documents/Estimates/<name>/`.
+
 ## Contracts
 
 The **Contracts** tab holds the job's contracts in two sections — the **GC

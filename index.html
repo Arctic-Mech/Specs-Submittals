@@ -816,6 +816,30 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 .est-inrow { display: grid; grid-template-columns: 1fr 90px; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 12.5px; }
 .est-inrow input, .est-inrow select { padding: 5px 7px; text-align: right; }
 .lr-note { font-size: 12px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+/* ── Estimates tab ── */
+.est-tab-bar { display: flex; align-items: center; gap: 10px; padding: 4px 2px 14px; }
+.est-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.est-card { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface); align-items: start; }
+.est-card.locked { border-color: var(--brand, #020e93); background: color-mix(in srgb, var(--brand, #020e93) 4%, var(--surface)); }
+.est-card-pick { grid-row: 1 / span 2; padding-top: 3px; }
+.est-card-main { cursor: pointer; min-width: 0; }
+.est-card-name { font-weight: 650; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.est-card-total { font-size: 22px; font-weight: 800; color: var(--brand, #020e93); margin: 2px 0; font-variant-numeric: tabular-nums; }
+.est-card-meta { font-size: 11.5px; color: var(--text-2); }
+.est-card-actions { grid-column: 2; display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.lock-badge { font-size: 11px; font-weight: 600; color: var(--brand, #020e93); background: color-mix(in srgb, var(--brand, #020e93) 12%, transparent); border-radius: 20px; padding: 1px 8px; white-space: nowrap; }
+.est-title { font-size: 15px; font-weight: 650; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; background: transparent; color: var(--text); flex: 1; min-width: 0; }
+.est-title:hover:not(:disabled), .est-title:focus { border-color: var(--border); background: var(--surface); }
+.est-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cmp-table th, .cmp-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.cmp-table th.cmp-l, .cmp-table td.cmp-l { text-align: left; font-weight: 600; color: var(--text); }
+.cmp-table thead th { background: var(--surface-2); font-weight: 650; }
+.cmp-table tr.cmp-total td { border-top: 2px solid var(--brand, #020e93); font-weight: 800; font-size: 15px; color: var(--brand, #020e93); }
+.cmp-v { font-variant-numeric: tabular-nums; }
+.cmp-delta { display: block; font-size: 10.5px; font-weight: 600; }
+.cmp-delta.up { color: var(--red, #c0392b); }
+.cmp-delta.down { color: var(--green, #1e8e3e); }
 </style>
 </head>
 <body>
@@ -963,10 +987,11 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
       <div id="coEmpty"></div>
     </div>
 
-    <!-- CONTRACTS / VENDOR QUOTES / PO's TABS (rendered by JS) -->
+    <!-- CONTRACTS / VENDOR QUOTES / PO's / ESTIMATES TABS (rendered by JS) -->
     <div id="tab-contracts" hidden></div>
     <div id="tab-quotes" hidden></div>
     <div id="tab-pos" hidden></div>
+    <div id="tab-estimates" hidden></div>
 
     <!-- BILLING TAB -->
     <div id="tab-billing" hidden>
@@ -988,7 +1013,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.1';
+const APP_VERSION = 'v7.2';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2180,6 +2205,7 @@ function trackedPaths() {
   for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) { (it.docs || []).forEach(add); (it.emails || []).forEach(add); }
   for (const ct of (contracts || [])) { (ct.docs || []).forEach(add); (ct.emails || []).forEach(add); (ct.changes || []).forEach(ch => (ch.docs || []).forEach(add)); }
   if (job && job.laborRates && job.laborRates.sourceDoc) add(job.laborRates.sourceDoc);   // the uploaded labor-rate PDF
+  for (const es of (estimates || [])) { (es.docs || []).forEach(add); }                    // exported estimate PDFs
   return set;
 }
 /* Files sitting in the ShareFile folder that the register doesn't reference —
@@ -2863,9 +2889,10 @@ function go(where, id) {
     if (window._unsub_quotes) { window._unsub_quotes(); window._unsub_quotes = null; }
     if (window._unsub_pos) { window._unsub_pos(); window._unsub_pos = null; }
     if (_unsubContracts) { _unsubContracts(); _unsubContracts = null; }
+    if (_unsubEstimates) { _unsubEstimates(); _unsubEstimates = null; }
     clearTimeout(_folderSaveTimer); clearInterval(_saveTicker); folderSaveState = 'idle';
     job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = [];
-    ledgerData = { quotes: [], pos: [] }; contracts = []; openLedger = { key: null, id: null };
+    ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null };
     $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
@@ -2880,8 +2907,8 @@ async function openJob(id) {
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
-  ledgerData = { quotes: [], pos: [] }; contracts = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
-  openRfi = null; trackCat = null; openCo = null;
+  ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
+  openRfi = null; trackCat = null; openCo = null; estCompare = [];
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
   $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
@@ -2891,6 +2918,7 @@ async function openJob(id) {
   watchTracking(job.id);          // job-tracking categories
   watchCos(job.id);               // change orders
   watchLedger('quotes'); watchLedger('pos'); watchContracts(job.id);   // vendor quotes, POs, contracts
+  watchEstimates(job.id);         // project estimates
   tryAutoLoadFolder(job.id);      // load this job's PDF folder if the grant stands
 }
 
@@ -3155,6 +3183,7 @@ function renderJob() {
   else if (jobTab === 'quotes') bits.push(`${litems('quotes').length} vendor quote${litems('quotes').length === 1 ? '' : 's'}`);
   else if (jobTab === 'pos') bits.push(`${litems('pos').length} PO${litems('pos').length === 1 ? '' : 's'}`);
   else if (jobTab === 'contracts') bits.push(`${(contracts || []).length} contract${(contracts || []).length === 1 ? '' : 's'}`);
+  else if (jobTab === 'estimates') bits.push(`${(estimates || []).length} estimate${(estimates || []).length === 1 ? '' : 's'}`);
   else if (jobTab === 'tracking') bits.push(`${tracking.length} categor${tracking.length === 1 ? 'y' : 'ies'}`);
   else if (jobTab === 'billing') bits.push('Billing');
   $('jobMeta').textContent = bits.join(' · ');
@@ -3166,6 +3195,7 @@ function renderJob() {
   if (jobTab === 'quotes') { renderLedger('quotes'); return; }
   if (jobTab === 'pos') { renderLedger('pos'); return; }
   if (jobTab === 'contracts') { renderContracts(); return; }
+  if (jobTab === 'estimates') { renderEstimates(); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
   if (jobTab === 'billing') { renderBilling(); return; }
 
@@ -3223,6 +3253,7 @@ function renderJobTabs() {
     { id: 'contracts',    label: 'Contracts',     n: (contracts || []).length },
     { id: 'quotes',       label: 'Vendor Quotes', n: litems('quotes').length },
     { id: 'pos',          label: "PO's",          n: litems('pos').length },
+    { id: 'estimates',    label: 'Estimates',     n: (estimates || []).length },
     { id: 'tracking',     label: 'Job Tracking',  n: tracking.length },
     { id: 'billing',      label: 'Billing',       n: null }
   ];
@@ -3236,6 +3267,7 @@ const TAB_ACTIONS = {
   changeorders: '+ New change order',
   quotes:       '+ New quote',
   pos:          '+ New PO',
+  estimates:    '+ New estimate',
   tracking:     '+ New category'
 };
 function applyTabVisibility() {
@@ -3245,6 +3277,7 @@ function applyTabVisibility() {
   $('tab-quotes').hidden       = jobTab !== 'quotes';
   $('tab-pos').hidden          = jobTab !== 'pos';
   $('tab-contracts').hidden    = jobTab !== 'contracts';
+  $('tab-estimates').hidden    = jobTab !== 'estimates';
   $('tab-tracking').hidden     = jobTab !== 'tracking';
   $('tab-billing').hidden      = jobTab !== 'billing';
   const act = $('tabAction');
@@ -3255,7 +3288,7 @@ function applyTabVisibility() {
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer();
+  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer(); closeEstimateEditor();
   renderJob();
   window.scrollTo(0, 0);
 }
@@ -3265,6 +3298,7 @@ function tabAction() {
   else if (jobTab === 'changeorders') newChangeOrder();
   else if (jobTab === 'quotes') newLedger('quotes');
   else if (jobTab === 'pos') newLedger('pos');
+  else if (jobTab === 'estimates') newEstimate();
   else if (jobTab === 'tracking') newTrackCategory();
 }
 
@@ -4713,6 +4747,529 @@ function exportChangeProposal(id) {
       if (openCo === c.id) renderCoDrawer();
     })();
   }).catch(e => { console.error(e); toast('Could not build the PDF: ' + (e.message || e), true); });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6d1c. PROJECT ESTIMATES  —  full MCAA-style bid estimates, faithful to the
+   "MCAA RECAP" master sheet. Multiple named estimates per job; each can be
+   LOCKED (read-only snapshot so edits can't override it); COMPARE lays them
+   side by side. The engine computeProjectEstimate() reproduces the recap total.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let estimates = [];
+let openEstimate = null;    // id being edited
+let _unsubEstimates = null;
+let estCompare = [];        // ids ticked for comparison
+let _estSaveT2 = null;
+
+function estShortDate(ms) { try { return new Date(ms).toLocaleDateString([], { month: 'numeric', day: 'numeric', year: '2-digit' }); } catch (e) { return ''; } }
+const estimateRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'estimates', String(id));
+const estById = id => (estimates || []).find(e => e.id === id);
+const ESTIMATE_DIR = 'Estimates';
+
+const EST_SCHEDULES = [
+  { id: "5 8's",    lop: 0,    blend: (st, ot) => st },
+  { id: "5 10's",   lop: 0.15, blend: (st, ot) => (4 * st + ot) / 5 },
+  { id: "6 10's",   lop: 0.25, blend: (st, ot) => (4 * st + 2 * ot) / 6 },
+  { id: "60/60/50", lop: 0.25, blend: (st, ot) => (12 * st + 5 * ot) / 17 },
+];
+const estSched = id => EST_SCHEDULES.find(s => s.id === id) || EST_SCHEDULES[0];
+const PROJ_TAXES = [
+  { id: 'oregon_cat',    label: 'Oregon CAT (0.55%)',      rate: 0.004 + 0.0015 },
+  { id: 'washington_bo', label: 'Washington B&O (0.634%)', rate: 0.00484 + 0.0015 },
+  { id: 'none',          label: 'None',                    rate: 0 },
+];
+const projTaxRate = id => { const t = PROJ_TAXES.find(x => x.id === id); return t ? t.rate : 0; };
+// field trades feed field-labor-based indirects; smShop is separate
+const EST_FIELD_TRADES = ['plumb', 'pipe', 'smField'];
+const EST_TRADE_META = [
+  { key: 'plumb',   label: 'Plumbing' },
+  { key: 'pipe',    label: 'Piping' },
+  { key: 'smField', label: 'Sheet Metal — Field' },
+  { key: 'smShop',  label: 'Sheet Metal — Shop' },
+];
+const EST_ADDERS = [
+  { key: 'detailing', label: 'Detailing', plumb: 0.16, pipe: 0.16, smField: 0.16, smShop: 0 },
+  { key: 'testing',   label: 'Testing',   plumb: 0.04, pipe: 0.09, smField: 0.01, smShop: 0 },
+  { key: 'safety',    label: 'Safety',    plumb: 0.02, pipe: 0.02, smField: 0.02, smShop: 0 },
+  { key: 'qc',        label: 'QC',        plumb: 0.05, pipe: 0.05, smField: 0,    smShop: 0 },
+  { key: 'matlhand',  label: 'Material Handling', plumb: 0.10, pipe: 0.10, smField: 0.10, smShop: 0 },
+];
+
+function estRoundUp(x, d) { const m = Math.pow(10, d || 0); const s = x < 0 ? -1 : 1; return s * Math.ceil(Math.abs(x) * m - 1e-9) / m; }
+function estRound(x, d) { const m = Math.pow(10, d || 0); return Math.round(x * m + (x >= 0 ? 1e-9 : -1e-9)) / m; }
+function estBondAmount(sell) {
+  const B = [[500000, 14.4], [2000000, 8.7], [2500000, 6.9], [2500000, 6.3], [Infinity, 5.76]];
+  let rem = sell, amt = 0;
+  for (const [w, rate] of B) { if (rem <= 0) break; const chunk = Math.min(rem, w); amt += estRoundUp(chunk / 1000 * rate, 0); rem -= chunk; }
+  return amt;
+}
+/* Pure engine — unit-tested against the ENFRA workbook ($2,055,185). */
+function computeProjectEstimate(e) {
+  e = e || {};
+  const sch = estSched(e.scheduleType);
+  const trades = e.trades || {}, mat = e.material || {}, sup = e.supervision || {};
+  const adders = e.adders || EST_ADDERS;
+  // 1. adder hours per field trade (each adder + LOP row rounded to 2, per RECAP)
+  const hrs = {};
+  EST_FIELD_TRADES.forEach(t => {
+    const base = estNum((trades[t] || {}).hours);
+    let add = 0; adders.forEach(a => { add += estRound(base * estNum(a[t]), 2); });
+    hrs[t] = base + add + estRound(base * sch.lop, 2);
+  });
+  const shopBase = estNum((trades.smShop || {}).hours);
+  let shopAdd = 0; adders.forEach(a => { shopAdd += estRound(shopBase * estNum(a.smShop), 2); });
+  hrs.smShop = shopBase + shopAdd;
+  // 2. blended rate per trade
+  const rates = e.rates || {}, rate = {};
+  ['plumb', 'pipe', 'smField'].forEach(t => { const rr = rates[t] || {}; rate[t] = sch.blend(estNum(rr.st), estNum(rr.ot)); });
+  rate.smShop = estNum((rates.smShop || {}).st);
+  // 3. labor value
+  const laborVal = { plumb: rate.plumb * hrs.plumb, pipe: rate.pipe * hrs.pipe, smField: rate.smField * hrs.smField, smShop: rate.smShop * hrs.smShop };
+  const subtotalLabor = laborVal.plumb + laborVal.pipe + laborVal.smField + laborVal.smShop;
+  const ocip = e.ocip || {};
+  const ocipDeduct = (ocip.mode && ocip.mode !== 'none') ? -Math.abs(estNum(ocip.deduct)) : 0;
+  const totalLabor = subtotalLabor + ocipDeduct;
+  // 4. material
+  const totalMaterial = estNum(mat.plumb) + estNum(mat.pipe) + estNum(mat.sm);
+  // 5. subs
+  const totalSubs = (e.subs || []).reduce((a, s) => a + estNum(s.value), 0);
+  // 6. other costs / supervision
+  const allHrs = hrs.plumb + hrs.pipe + hrs.smField + hrs.smShop;
+  const pmCost = estRoundUp(estRound(allHrs * estNum(sup.pmPct), 2) * estNum(sup.pmRate), 2);
+  const smFieldSupCost = estRound(estNum(sup.smFieldSupPct) * hrs.smField, 2) * estNum(sup.smFieldSupRate);
+  const plumbSupCost = estRound(estNum(sup.plumbSupPct) * hrs.plumb, 2) * estNum(sup.plumbSupRate);
+  const pipeSupCost = estRound(estNum(sup.pipeSupPct) * hrs.pipe, 2) * estNum(sup.pipeSupRate);
+  const smallTools = estRound(estNum(e.smallToolsPct) * subtotalLabor, 2);
+  const gcLines = (e.gcs || []).reduce((a, g) => a + estRound(estNum(g.qty) * estNum(g.rate), 2), 0);
+  const otherGC = smallTools + gcLines;
+  const equipRental = (e.equipment || []).reduce((a, q) => a + estRound(estNum(q.qty) * estNum(q.duration) * estNum(q.rate), 2), 0);
+  const totalOther = pmCost + plumbSupCost + pipeSupCost + smFieldSupCost + equipRental + otherGC;
+  // 7. total direct costs
+  const directCosts = totalOther + totalSubs + totalLabor + totalMaterial;
+  // 8. markups
+  const subMarkup = estRoundUp(estNum(e.subMarkupPct) * totalSubs, 0);
+  const equipMarkup = estNum(e.equipMarkup);
+  const oANDp = estRoundUp(estNum(e.oANDpPct) * (directCosts - totalSubs) - estNum(e.emoReduce), 0);
+  const projectSubtotal = directCosts + subMarkup + equipMarkup + oANDp;
+  // 9. recovery, misc, bond, permits
+  const marketRecovery = -(e.workRecovery || []).reduce((a, w) => { const b = estNum(w.hours), mx = estNum(w.maxHours); return a + estRound(estNum(w.ratePerHr) * (mx > 0 && mx < b ? mx : b), 0); }, 0);
+  const misc = estNum(e.misc);
+  const permits = e.permits ? ['plumbing', 'hvac', 'medGas', 'boiler', 'specialInsp'].reduce((a, k) => a + estNum(e.permits[k]), 0) : 0;
+  const sellBeforeBond = projectSubtotal + marketRecovery + misc + permits;
+  const bond = (e.bond && e.bond.required) ? estBondAmount(sellBeforeBond) : 0;
+  // 10. tax
+  const taxRate = projTaxRate(e.taxType);
+  const taxBase = projectSubtotal + marketRecovery + misc + bond + permits;
+  const tax = taxBase * taxRate;
+  // 11. cost leveler (round UP to next $5) + add/deduct
+  const preLevel = projectSubtotal + marketRecovery + misc + bond + permits + tax;
+  const roundTo = estNum(e.levelerRound) || 5;
+  const leveler = (estRoundUp(preLevel / roundTo, 0) * roundTo) - preLevel + estNum(e.levelerAddDeduct);
+  const totalBid = estRound(preLevel + leveler, 2);
+  return { hrs, rate, laborVal, subtotalLabor, ocipDeduct, totalLabor, totalMaterial, totalSubs,
+    pmCost, smFieldSupCost, plumbSupCost, pipeSupCost, smallTools, otherGC, equipRental, totalOther,
+    directCosts, subMarkup, equipMarkup, oANDp, projectSubtotal, marketRecovery, misc, bond, permits,
+    taxRate, tax, preLevel, leveler, totalBid, totalFieldHours: hrs.plumb + hrs.pipe + hrs.smField, allHrs };
+}
+function defaultEstimate() {
+  return {
+    id: uid('est'), name: 'Estimate ' + ((estimates || []).length + 1), locked: false, lockedAt: 0,
+    created: Date.now(), updated: Date.now(),
+    info: { bidNo: '', projectType: 'Commercial', sqft: '', notes: '' },
+    scheduleType: "5 8's",
+    trades: { plumb: { hours: '' }, pipe: { hours: '' }, smField: { hours: '' }, smShop: { hours: '' } },
+    material: { plumb: '', pipe: '', sm: '' },
+    adders: JSON.parse(JSON.stringify(EST_ADDERS)),
+    rates: { plumb: { st: 129.55, ot: 194.32 }, pipe: { st: 129.55, ot: 194.32 }, smField: { st: 97.32, ot: 130.06 }, smShop: { st: 106.5, ot: 130.06 } },
+    ocip: { mode: 'none', deduct: '' },
+    subs: [],
+    subMarkupPct: 0.10,
+    supervision: { pmPct: 0.10, pmRate: 112.52, smFieldSupPct: 0.15, smFieldSupRate: 109.28, plumbSupPct: 0.15, plumbSupRate: 134.26, pipeSupPct: 0.15, pipeSupRate: 134.26 },
+    smallToolsPct: 0.03,
+    gcs: [],
+    equipment: [],
+    equipMarkup: '', emoReduce: '',
+    workRecovery: [],
+    oANDpPct: 0.325,
+    misc: '',
+    permits: { plumbing: '', hvac: '', medGas: '', boiler: '', specialInsp: '' },
+    bond: { required: false },
+    taxType: 'oregon_cat', levelerRound: 5, levelerAddDeduct: '',
+    docs: [],
+  };
+}
+
+function watchEstimates(jobId) {
+  if (_unsubEstimates) { _unsubEstimates(); _unsubEstimates = null; }
+  _unsubEstimates = FB.onSnapshot(FB.collection(FB.db, 'jobs', jobId, 'estimates'),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      estimates = snap.docs.map(d => d.data()).sort((a, b) => (a.created || 0) - (b.created || 0));
+      if (view === 'job' && jobTab === 'estimates') {
+        const ae = document.activeElement;
+        if (openEstimate && !(ae && ae.closest && ae.closest('#modalHost'))) renderEstimateEditor();
+        else if (!openEstimate) renderEstimates();
+      }
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+async function saveEstimate(e) {
+  e.updated = Date.now();
+  try { await FB.setDoc(estimateRef(job.id, e.id), clean(e)); }
+  catch (err) { toast(writeError(err), true); }
+}
+function newEstimate() {
+  if (!job) return;
+  const e = defaultEstimate();
+  estimates = estimates.concat([e]);
+  renderEstimates();
+  saveEstimate(e);
+  openEstimateEditor(e.id);
+}
+function duplicateEstimate(id) {
+  const src = estById(id); if (!src) return;
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = uid('est'); copy.name = (src.name || 'Estimate') + ' (copy)';
+  copy.locked = false; copy.lockedAt = 0; copy.created = Date.now(); copy.updated = Date.now(); copy.docs = [];
+  estimates = estimates.concat([copy]);
+  renderEstimates();
+  saveEstimate(copy);
+  toast('Estimate duplicated');
+  openEstimateEditor(copy.id);
+}
+function toggleLockEstimate(id) {
+  const e = estById(id); if (!e) return;
+  e.locked = !e.locked; e.lockedAt = e.locked ? Date.now() : 0;
+  renderEstimates(); if (openEstimate === id) renderEstimateEditor();
+  saveEstimate(e);
+  toast(e.locked ? 'Estimate locked — it can’t be changed until unlocked' : 'Estimate unlocked');
+}
+async function deleteEstimate(id) {
+  const e = estById(id); if (!e) return;
+  if (e.locked) { toast('Unlock the estimate first', true); return; }
+  if (!confirm(`Delete “${e.name || 'this estimate'}”? This removes it for everyone.`)) return;
+  estimates = estimates.filter(x => x.id !== id);
+  estCompare = estCompare.filter(x => x !== id);
+  if (openEstimate === id) closeEstimateEditor();
+  renderEstimates();
+  try { await FB.deleteDoc(estimateRef(job.id, id)); } catch (err) { toast(writeError(err), true); }
+}
+function renameEstimate(id, name) { const e = estById(id); if (!e || e.locked) return; e.name = name.trim() || e.name; saveEstimate(e); renderEstimates(); }
+
+/* ── the Estimates tab: cards + compare toggle ── */
+function toggleEstCompare(id) {
+  if (estCompare.includes(id)) estCompare = estCompare.filter(x => x !== id);
+  else estCompare = estCompare.concat([id]);
+  renderEstimates();
+}
+function renderEstimates() {
+  const host = $('tab-estimates'); if (!host) return;
+  if (!estimates.length) {
+    host.innerHTML = `<div class="empty" style="padding:40px 20px">
+      <b>No estimates yet.</b><br><span class="muted">Build a full MCAA-style bid estimate — labor with adders &amp; schedule-blended rates, material, subs, general conditions, equipment, markups, bond, permits and tax. Create several and compare them; lock one so it can’t be changed.</span><br><br>
+      <button class="btn primary" onclick="newEstimate()">+ New estimate</button></div>`;
+    return;
+  }
+  const cards = estimates.map(e => {
+    const r = computeProjectEstimate(e);
+    const on = estCompare.includes(e.id);
+    return `<div class="est-card ${e.locked ? 'locked' : ''}">
+      <label class="est-card-pick" title="Tick to compare"><input type="checkbox" ${on ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleEstCompare('${e.id}')"></label>
+      <div class="est-card-main" onclick="openEstimateEditor('${e.id}')">
+        <div class="est-card-name">${esc(e.name || 'Untitled estimate')} ${e.locked ? '<span class="lock-badge">🔒 Locked</span>' : ''}</div>
+        <div class="est-card-total">${esc(fmtMoney(r.totalBid) || '$0')}</div>
+        <div class="est-card-meta">${esc(fmtMoney(r.directCosts) || '$0')} direct · ${esc(fmtMoney(round2(r.totalBid - r.directCosts)) || '$0')} markup/tax · ${r.totalFieldHours ? Math.round(r.totalFieldHours) + ' fld hrs' : 'no hours'}${e.updated ? ' · ' + esc(estShortDate(e.updated)) : ''}</div>
+      </div>
+      <div class="est-card-actions">
+        <button class="btn sm" onclick="openEstimateEditor('${e.id}')">${e.locked ? 'View' : 'Open'}</button>
+        <button class="btn sm ghost" onclick="duplicateEstimate('${e.id}')" title="Duplicate">⿻</button>
+        <button class="btn sm ghost" onclick="toggleLockEstimate('${e.id}')" title="${e.locked ? 'Unlock' : 'Lock so it can’t change'}">${e.locked ? '🔓' : '🔒'}</button>
+        <button class="icon-btn" onclick="deleteEstimate('${e.id}')" title="Delete" ${e.locked ? 'disabled' : ''}>🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+  const cmp = estCompare.length >= 2
+    ? `<button class="btn primary" onclick="renderEstimateCompare()">Compare ${estCompare.length} estimates →</button>`
+    : `<span class="muted">Tick 2+ estimates to compare them.</span>`;
+  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}</div>
+    <div class="est-cards">${cards}</div>`;
+}
+
+/* ── compare view ── */
+function renderEstimateCompare() {
+  const list = estCompare.map(estById).filter(Boolean);
+  if (list.length < 2) { toast('Pick at least two estimates', true); return; }
+  const results = list.map(e => ({ e, r: computeProjectEstimate(e) }));
+  const rows = [
+    ['Total field hours', r => Math.round(r.totalFieldHours), false],
+    ['Labor', r => r.subtotalLabor, true],
+    ['Material', r => r.totalMaterial, true],
+    ['Subcontractors', r => r.totalSubs, true],
+    ['Other / supervision / GCs', r => r.totalOther, true],
+    ['Total direct costs', r => r.directCosts, true],
+    ['O&P + markups', r => r.subMarkup + r.equipMarkup + r.oANDp, true],
+    ['Project subtotal', r => r.projectSubtotal, true],
+    ['Bond', r => r.bond, true],
+    ['Permits', r => r.permits, true],
+    ['Tax', r => r.tax, true],
+    ['TOTAL BID', r => r.totalBid, true],
+  ];
+  const base = results[0].r;
+  const body = rows.map(([label, fn, money]) => {
+    const cells = results.map((x, i) => {
+      const v = fn(x.r);
+      const disp = money ? (fmtMoney(round2(v)) || '$0') : v;
+      let delta = '';
+      if (i > 0) { const d = v - fn(base); if (Math.abs(d) > 0.5) delta = `<span class="cmp-delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : ''}${money ? (fmtMoney(round2(d)) || '$0') : Math.round(d)}</span>`; }
+      return `<td class="cmp-v ${label === 'TOTAL BID' ? 'tot' : ''}">${disp}${delta}</td>`;
+    }).join('');
+    return `<tr class="${label === 'TOTAL BID' ? 'cmp-total' : ''}"><td class="cmp-l">${esc(label)}</td>${cells}</tr>`;
+  }).join('');
+  const heads = results.map(x => `<th>${esc(x.e.name || 'Estimate')}${x.e.locked ? ' 🔒' : ''}</th>`).join('');
+  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closeModalHost()"><div class="modal wide">
+    <div class="modal-head"><h3>Compare estimates <span class="muted" style="font-weight:400">— deltas vs. “${esc(results[0].e.name || '')}”</span></h3><button class="icon-btn" onclick="closeModalHost()">✕</button></div>
+    <div class="modal-body">
+      <div style="overflow-x:auto"><table class="cmp-table">
+        <thead><tr><th class="cmp-l"></th>${heads}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModalHost()">Close</button></div>
+  </div></div>`;
+}
+
+/* ── the estimate editor (full-screen; read-only when locked) ── */
+function closeEstimateEditor() { if (openEstimate) { openEstimate = null; closeModalHost(); saveEstEditNow(); renderEstimates(); } }
+function estE() { return estById(openEstimate); }
+function openEstimateEditor(id) { const e = estById(id); if (!e) return; openEstimate = id; renderEstimateEditor(); }
+function estMoneyIn(v) { return v === '' || v == null ? '' : fmtAmountInput(String(v)); }
+function estPct(v) { return v === '' || v == null ? '' : String(round2(estNum(v) * 100)); }
+function renderEstimateEditor() {
+  const e = estE(); if (!e) { closeEstimateEditor(); return; }
+  const ro = !!e.locked;
+  const d = ro ? 'disabled' : '';
+  const r = computeProjectEstimate(e);
+  const money = (path, val) => `<input class="input" ${d} inputmode="decimal" value="${esc(estMoneyIn(val))}" placeholder="0.00" oninput="estSet('${path}',this.value)" onchange="this.value=estMoneyIn(estGetP('${path}'));estSaveSoon2()">`;
+  const numf = (path, val, ph) => `<input class="input" ${d} inputmode="decimal" value="${esc(val === '' || val == null ? '' : String(val))}" placeholder="${ph || '0'}" oninput="estSet('${path}',this.value)" onchange="estSaveSoon2()">`;
+  const pctf = (path, val) => `<input class="input" ${d} inputmode="decimal" value="${esc(estPct(val))}" placeholder="0" oninput="estSetPct('${path}',this.value)" onchange="estSaveSoon2()">`;
+  // labor: per-trade hours + rates
+  const tradeRows = EST_TRADE_META.map(t => `<tr>
+      <td class="l">${esc(t.label)}</td>
+      <td>${numf('trades.' + t.key + '.hours', (e.trades[t.key] || {}).hours, 'hrs')}</td>
+      <td>${money('rates.' + t.key + '.st', (e.rates[t.key] || {}).st)}</td>
+      <td>${t.key === 'smShop' ? '<span class="muted">—</span>' : money('rates.' + t.key + '.ot', (e.rates[t.key] || {}).ot)}</td>
+      <td class="cost" id="esthrs_${t.key}">${Math.round(r.hrs[t.key] || 0)}</td>
+      <td class="cost" id="estlab_${t.key}">${esc(fmtMoney(r.laborVal[t.key]) || '$0')}</td>
+    </tr>`).join('');
+  const adderRows = (e.adders || []).map((a, i) => `<tr>
+      <td class="l">${esc(a.label)}</td>
+      <td>${pctf('adders.' + i + '.plumb', a.plumb)}</td>
+      <td>${pctf('adders.' + i + '.pipe', a.pipe)}</td>
+      <td>${pctf('adders.' + i + '.smField', a.smField)}</td>
+    </tr>`).join('');
+  const lineRows = (grp, arr, cols) => (arr || []).map((l, i) => `<div class="est-line" style="grid-template-columns:1fr ${cols};">
+      <input class="input" ${d} value="${esc(l.desc || '')}" placeholder="Description" oninput="estLineSet2('${grp}',${i},'desc',this.value)" onchange="estSaveSoon2()">
+      ${grp === 'equipment'
+        ? `<input class="input" ${d} inputmode="decimal" value="${esc(l.qty == null ? '' : String(l.qty))}" placeholder="qty" oninput="estLineSet2('${grp}',${i},'qty',this.value)" onchange="estSaveSoon2()">
+           <input class="input" ${d} inputmode="decimal" value="${esc(l.duration == null ? '' : String(l.duration))}" placeholder="dur" oninput="estLineSet2('${grp}',${i},'duration',this.value)" onchange="estSaveSoon2()">
+           <input class="input" ${d} inputmode="decimal" value="${esc(estMoneyIn(l.rate))}" placeholder="rate" oninput="estLineSet2('${grp}',${i},'rate',this.value)" onchange="estSaveSoon2()">`
+        : grp === 'gcs'
+        ? `<input class="input" ${d} inputmode="decimal" value="${esc(l.qty == null ? '' : String(l.qty))}" placeholder="qty" oninput="estLineSet2('${grp}',${i},'qty',this.value)" onchange="estSaveSoon2()">
+           <input class="input" ${d} inputmode="decimal" value="${esc(estMoneyIn(l.rate))}" placeholder="rate" oninput="estLineSet2('${grp}',${i},'rate',this.value)" onchange="estSaveSoon2()">`
+        : `<input class="input amt" ${d} inputmode="decimal" value="${esc(estMoneyIn(l.value))}" placeholder="0.00" oninput="estLineSet2('${grp}',${i},'value',this.value)" onchange="estSaveSoon2()">`}
+      ${ro ? '' : `<button class="icon-btn" onclick="estLineDel2('${grp}',${i})">🗑</button>`}
+    </div>`).join('');
+
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal wide" style="width:min(1200px,100%)">
+    <div class="modal-head">
+      <input class="est-title" ${d} value="${esc(e.name || '')}" placeholder="Estimate name" onchange="renameEstimate('${e.id}',this.value)">
+      ${ro ? '<span class="lock-badge">🔒 Locked</span>' : ''}
+      <button class="btn sm" onclick="exportEstimatePdf('${e.id}')">⭳ PDF</button>
+      <button class="btn sm ghost" onclick="duplicateEstimate('${e.id}')">Duplicate</button>
+      <button class="btn sm ghost" onclick="toggleLockEstimate('${e.id}')">${ro ? '🔓 Unlock' : '🔒 Lock'}</button>
+      <button class="icon-btn" onclick="closeEstimateEditor()">✕</button>
+    </div>
+    <div class="modal-body flush">
+    ${ro ? '<div class="lr-note" style="margin:12px 16px 0">This estimate is <b>locked</b> — a fixed snapshot that changes can’t override. <button class="btn sm" onclick="duplicateEstimate(\'' + e.id + '\')">Duplicate to edit</button> or unlock it.</div>' : ''}
+    <div class="est-wrap">
+      <div class="est-main">
+        <div class="est-sec">
+          <h4>Project</h4>
+          <div class="est-inrow"><span>Bid #</span><input class="input" ${d} value="${esc((e.info || {}).bidNo || '')}" oninput="estSet('info.bidNo',this.value)" onchange="estSaveSoon2()"></div>
+          <div class="est-inrow"><span>Schedule</span><select class="input" ${d} onchange="estSet('scheduleType',this.value);estSaveSoon2();renderEstimateEditor()">${EST_SCHEDULES.map(s => `<option ${e.scheduleType === s.id ? 'selected' : ''}>${esc(s.id)}</option>`).join('')}</select></div>
+          <div class="est-mini">Schedule blends overtime into the labor rate and adds a loss-of-productivity factor.</div>
+        </div>
+
+        <div class="est-sec">
+          <h4>Labor <span class="sub">base hours &amp; blended ST/OT rates per trade</span></h4>
+          <table class="est-grid">
+            <thead><tr><th class="l">Trade</th><th>Base hrs</th><th>ST rate</th><th>OT rate</th><th>Hrs+adders</th><th>Cost</th></tr></thead>
+            <tbody>${tradeRows}</tbody>
+          </table>
+        </div>
+
+        <div class="est-sec">
+          <h4>Labor modifiers <span class="sub">% added to base hours, per trade</span></h4>
+          <table class="est-grid">
+            <thead><tr><th class="l">Adder</th><th>Plumb %</th><th>Pipe %</th><th>SM %</th></tr></thead>
+            <tbody>${adderRows}</tbody>
+          </table>
+        </div>
+
+        <div class="est-sec">
+          <h4>Material <span class="sub">by trade</span></h4>
+          <div class="est-inrow"><span>Plumbing</span>${money('material.plumb', e.material.plumb)}</div>
+          <div class="est-inrow"><span>Piping</span>${money('material.pipe', e.material.pipe)}</div>
+          <div class="est-inrow"><span>Sheet metal</span>${money('material.sm', e.material.sm)}</div>
+        </div>
+
+        <div class="est-sec">
+          <h4>Subcontractors</h4>
+          <div id="estSubs2">${lineRows('subs', e.subs, '150px 30px')}</div>
+          ${ro ? '' : `<button class="btn sm ghost" onclick="estLineAdd2('subs')">+ Add sub</button>`}
+          <div class="est-inrow" style="margin-top:8px"><span>Sub markup %</span>${pctf('subMarkupPct', e.subMarkupPct)}</div>
+        </div>
+
+        <div class="est-sec">
+          <h4>Supervision &amp; other costs <span class="sub">% of hours × rate</span></h4>
+          <div class="est-inrow"><span>Project manager (% of all hrs)</span><span style="display:flex;gap:6px">${pctf('supervision.pmPct', e.supervision.pmPct)}${money('supervision.pmRate', e.supervision.pmRate)}</span></div>
+          <div class="est-inrow"><span>SM field supervision (% SM field)</span><span style="display:flex;gap:6px">${pctf('supervision.smFieldSupPct', e.supervision.smFieldSupPct)}${money('supervision.smFieldSupRate', e.supervision.smFieldSupRate)}</span></div>
+          <div class="est-inrow"><span>Plumb supervision (% plumb)</span><span style="display:flex;gap:6px">${pctf('supervision.plumbSupPct', e.supervision.plumbSupPct)}${money('supervision.plumbSupRate', e.supervision.plumbSupRate)}</span></div>
+          <div class="est-inrow"><span>Pipe supervision (% pipe)</span><span style="display:flex;gap:6px">${pctf('supervision.pipeSupPct', e.supervision.pipeSupPct)}${money('supervision.pipeSupRate', e.supervision.pipeSupRate)}</span></div>
+          <div class="est-inrow"><span>Small tools (% straight field labor)</span>${pctf('smallToolsPct', e.smallToolsPct)}</div>
+        </div>
+
+        <div class="est-sec">
+          <h4>General conditions <span class="sub">qty × rate line items</span></h4>
+          <div id="estGcs2">${lineRows('gcs', e.gcs, '80px 110px 30px')}</div>
+          ${ro ? '' : `<button class="btn sm ghost" onclick="estLineAdd2('gcs')">+ Add GC line</button>`}
+        </div>
+
+        <div class="est-sec">
+          <h4>Equipment rentals <span class="sub">qty × duration × rate</span></h4>
+          <div id="estEquip2">${lineRows('equipment', e.equipment, '70px 70px 90px 30px')}</div>
+          ${ro ? '' : `<button class="btn sm ghost" onclick="estLineAdd2('equipment')">+ Add equipment</button>`}
+          <div class="est-inrow" style="margin-top:8px"><span>Equipment markup $</span>${money('equipMarkup', e.equipMarkup)}</div>
+        </div>
+
+        <div class="est-sec">
+          <h4>Markups, bond, permits &amp; tax</h4>
+          <div class="est-inrow"><span>Overhead &amp; profit %</span>${pctf('oANDpPct', e.oANDpPct)}</div>
+          <div class="est-inrow"><span>Miscellaneous / contingency $</span>${money('misc', e.misc)}</div>
+          <div class="est-inrow"><span>Bond required</span><label class="est-check"><input type="checkbox" ${d} ${e.bond && e.bond.required ? 'checked' : ''} onchange="estSet('bond.required',this.checked);estSaveSoon2()"> yes (bracket schedule)</label></div>
+          <div class="est-inrow"><span>Permits — Plumbing</span>${money('permits.plumbing', e.permits.plumbing)}</div>
+          <div class="est-inrow"><span>Permits — HVAC</span>${money('permits.hvac', e.permits.hvac)}</div>
+          <div class="est-inrow"><span>Permits — Med Gas / Boiler / Insp</span><span style="display:flex;gap:6px">${money('permits.medGas', e.permits.medGas)}${money('permits.boiler', e.permits.boiler)}${money('permits.specialInsp', e.permits.specialInsp)}</span></div>
+          <div class="est-inrow"><span>Tax</span><select class="input" ${d} onchange="estSet('taxType',this.value);estSaveSoon2()">${PROJ_TAXES.map(t => `<option value="${t.id}" ${e.taxType === t.id ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select></div>
+          <div class="est-inrow"><span>Cost leveler — round to $</span>${numf('levelerRound', e.levelerRound, '5')}</div>
+          <div class="est-inrow"><span>Add / deduct $</span>${money('levelerAddDeduct', e.levelerAddDeduct)}</div>
+        </div>
+      </div>
+      <div class="est-side">
+        <div class="est-mini" style="margin-bottom:6px">Total bid</div>
+        <div id="estGrand2" style="font-size:26px;font-weight:800;color:var(--brand,#020e93);margin-bottom:14px">${esc(fmtMoney(r.totalBid) || '$0')}</div>
+        <div class="est-sum" id="estSummary2">${estProjSummary(r)}</div>
+      </div>
+    </div>
+    </div>
+  </div></div>`;
+}
+function estProjSummary(r) {
+  const row = (l, v, cls) => `<tr class="${cls || ''}"><td>${esc(l)}</td><td class="v">${esc(fmtMoney(round2(v)) || '$0')}</td></tr>`;
+  return `<table>
+    ${row('Labor', r.subtotalLabor)}${r.ocipDeduct ? row('OCIP deduct', r.ocipDeduct, 'mut') : ''}
+    ${row('Material', r.totalMaterial)}
+    ${r.totalSubs ? row('Subcontractors', r.totalSubs) : ''}
+    ${row('Other / supervision / GCs', r.totalOther)}
+    ${row('Total direct costs', r.directCosts, 'sub')}
+    ${r.subMarkup ? row('Sub markup', r.subMarkup, 'mut') : ''}${r.equipMarkup ? row('Equipment markup', r.equipMarkup, 'mut') : ''}
+    ${row('Overhead & profit', r.oANDp, 'mut')}
+    ${row('Project subtotal', r.projectSubtotal, 'sub')}
+    ${r.marketRecovery ? row('Market recovery', r.marketRecovery, 'mut') : ''}${r.misc ? row('Misc / contingency', r.misc, 'mut') : ''}
+    ${r.bond ? row('Bond', r.bond, 'mut') : ''}${r.permits ? row('Permits', r.permits, 'mut') : ''}
+    ${r.tax ? row('Tax', r.tax, 'mut') : ''}${r.leveler ? row('Cost leveler', r.leveler, 'mut') : ''}
+    ${row('Total bid', r.totalBid, 'tot')}
+  </table><div class="est-mini" style="margin-top:8px">${Math.round(r.totalFieldHours)} field hrs · ${Math.round(r.allHrs)} total hrs</div>`;
+}
+// setters (no-op when locked)
+function estGetP(path) { const e = estE(); return e ? path.split('.').reduce((o, k) => (o == null ? o : o[k]), e) : ''; }
+function estSet(path, val) { const e = estE(); if (!e || e.locked) return; setPath(e, path, val); estRecalc2(); }
+function estSetPct(path, val) { const e = estE(); if (!e || e.locked) return; setPath(e, path, val === '' ? '' : estNum(val) / 100); estRecalc2(); }
+function estLineAdd2(grp) { const e = estE(); if (!e || e.locked) return; if (!e[grp]) e[grp] = []; e[grp].push(grp === 'equipment' ? { desc: '', qty: '', duration: '', rate: '' } : grp === 'gcs' ? { desc: '', qty: '', rate: '' } : { desc: '', value: '' }); renderEstimateEditor(); saveEstEditSoon(); }
+function estLineDel2(grp, i) { const e = estE(); if (!e || e.locked) return; e[grp].splice(i, 1); renderEstimateEditor(); saveEstEditSoon(); }
+function estLineSet2(grp, i, field, val) { const e = estE(); if (!e || e.locked) return; e[grp][i][field] = val; estRecalc2(); }
+function estRecalc2() {
+  const e = estE(); if (!e) return;
+  const r = computeProjectEstimate(e);
+  EST_TRADE_META.forEach(t => { const h = document.getElementById('esthrs_' + t.key); if (h) h.textContent = Math.round(r.hrs[t.key] || 0); const l = document.getElementById('estlab_' + t.key); if (l) l.textContent = fmtMoney(r.laborVal[t.key]) || '$0'; });
+  const g = document.getElementById('estGrand2'); if (g) g.textContent = fmtMoney(r.totalBid) || '$0';
+  const s = document.getElementById('estSummary2'); if (s) s.innerHTML = estProjSummary(r);
+  saveEstEditSoon();
+}
+function saveEstEditSoon() { clearTimeout(_estSaveT2); _estSaveT2 = setTimeout(saveEstEditNow, 500); }
+function estSaveSoon2() { saveEstEditSoon(); }
+async function saveEstEditNow() { const e = estE(); if (!e) return; await saveEstimate(e); }
+
+/* ── Estimate summary PDF ── */
+function exportEstimatePdf(id) {
+  const e = estById(id); if (!e) return;
+  stickyToast('Building the estimate summary…');
+  const r = computeProjectEstimate(e);
+  ensureJsPDF().then(jspdf => {
+    const doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 40;
+    try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 24, 46, 46); } catch (x) {}
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor.apply(doc, ARCTIC_INK);
+    doc.text('ESTIMATE SUMMARY', M + 58, 44);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+    doc.text('ARCTIC SHEET METAL', pageW - M, 34, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
+    doc.text('HVAC · Pipefitting · Plumbing · Fabrication', pageW - M, 46, { align: 'right' });
+    doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.4); doc.line(M, 76, pageW - M, 76);
+    doc.autoTable({
+      body: [['Job', job.name || '', 'Estimate', e.name || ''], ['Job #', job.number || '', 'Bid #', (e.info || {}).bidNo || ''], ['Schedule', e.scheduleType || '', 'Date', csvDate(today())]],
+      startY: 88, theme: 'plain', margin: { left: M, right: M },
+      styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 2, textColor: ARCTIC_INK },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 70, textColor: [110, 116, 128] }, 1: { cellWidth: 210 }, 2: { fontStyle: 'bold', cellWidth: 60, textColor: [110, 116, 128] }, 3: { cellWidth: 'auto' } },
+    });
+    const laborRows = EST_TRADE_META.filter(t => r.hrs[t.key] || r.laborVal[t.key]).map(t => [t.label, Math.round(r.hrs[t.key]), fmtMoney(r.rate[t.key]) || '', fmtMoney(r.laborVal[t.key]) || '$0']);
+    if (laborRows.length) doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 12, margin: { left: M, right: M },
+      head: [['Labor', 'Hrs (w/ adders)', 'Blended rate', 'Cost']], body: laborRows,
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 3, lineColor: [226, 228, 233], lineWidth: 0.5, textColor: ARCTIC_INK },
+      headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    const rows = [];
+    const add = (l, v, ind) => rows.push([{ content: l, styles: ind ? { textColor: [110, 116, 128] } : {} }, fmtMoney(round2(v)) || '$0']);
+    add('Labor', r.subtotalLabor); if (r.ocipDeduct) add('OCIP deduct', r.ocipDeduct, 1);
+    add('Material', r.totalMaterial);
+    if (r.totalSubs) add('Subcontractors', r.totalSubs);
+    add('Other / supervision / GCs', r.totalOther);
+    add('Total direct costs', r.directCosts);
+    if (r.subMarkup) add('Sub markup', r.subMarkup, 1); if (r.equipMarkup) add('Equipment markup', r.equipMarkup, 1);
+    add('Overhead & profit', r.oANDp, 1);
+    add('Project subtotal', r.projectSubtotal);
+    if (r.marketRecovery) add('Market recovery', r.marketRecovery, 1); if (r.misc) add('Misc / contingency', r.misc, 1);
+    if (r.bond) add('Bond', r.bond, 1); if (r.permits) add('Permits', r.permits, 1);
+    if (r.tax) add('Tax', round2(r.tax), 1); if (r.leveler) add('Cost leveler', round2(r.leveler), 1);
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 12, margin: { left: pageW - M - 320, right: M },
+      body: rows, foot: [['TOTAL BID', fmtMoney(r.totalBid) || '$0']],
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 4, lineColor: [226, 228, 233], lineWidth: 0.5, textColor: ARCTIC_INK },
+      footStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 11 },
+      columnStyles: { 0: { cellWidth: 220 }, 1: { halign: 'right', cellWidth: 100, fontStyle: 'bold' } },
+    });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
+    doc.text(`Generated ${csvDate(today())} · Arctic Sheet Metal${e.locked ? ' · LOCKED snapshot' : ''}`, M, pageH - 16);
+    const base = (job.number ? job.number + '_' : '') + 'Estimate_' + String(e.name || '').replace(/[^\w.-]+/g, '-');
+    const blob = doc.output('blob');
+    (async () => {
+      if (jobFolder) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate'), base + '.pdf'); e.docs = (e.docs || []).filter(x => x.file !== file); e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveEstimate(e); noteFolderChanged(); } catch (x) { console.error(x); } }
+      doc.save(base + '.pdf');
+      toast('Estimate summary PDF created');
+    })();
+  }).catch(x => { console.error(x); toast('Could not build the PDF: ' + (x.message || x), true); });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
