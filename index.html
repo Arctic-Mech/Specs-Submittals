@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.9';
+const APP_VERSION = 'v7.10';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5448,6 +5448,7 @@ async function estTemplateBytes() {
 const EST_TPL_MARKER = 'DINGUS-EST';
 const EST_ADDER_ROW = { detailing: 12, testing: 13, safety: 14, qc: 15, matlhand: 16 };  // MCAA RECAP adder rows
 const EST_N_TPL_SUBS = 9, EST_N_TPL_EQUIP = 16;   // fixed template rows (subs B36:J44, equipment 114:129)
+const EST_TPL_GC_ROWS = [103, 104, 105];          // the workbook's blank "add your own" GC rows
 function estTaxLabelRecap(t) { return t === 'washington_bo' ? 'Washington B&O Tax' : t === 'none' ? 'No Tax' : 'Oregon CAT Tax'; }
 /* spell a dollar amount the way the workbook's SpellNumber macro does (for Proposal A45) */
 function estSpellDollars(amount) {
@@ -5495,6 +5496,9 @@ function injectEstRecap(xml, e, r, ctx) {
   N_('G79', e.smallToolsPct); N_('H79', r.smallTools);
   // equipment rentals (G=qty, H=duration, I=rate, rows 114-129)
   for (let i = 0; i < EST_N_TPL_EQUIP; i++) { const row = 114 + i; const q = (e.equipment || [])[i]; if (q && (q.qty || q.duration || q.rate || q.desc)) { S_('B' + row, q.desc || ''); N_('G' + row, q.qty); N_('H' + row, q.duration); N_('I' + row, q.rate); } }
+  // general-conditions line items → the "add your own" GC rows (103-105) so the GC page
+  // foots to its total; H107 stays the authoritative aggregate for any overflow beyond 3 lines
+  EST_TPL_GC_ROWS.forEach((row, i) => { const gc = (e.gcs || [])[i]; if (gc && (gc.desc || gc.qty || gc.rate)) { S_('B' + row, gc.desc || ''); N_('H' + row, estRound(estNum(gc.qty) * estNum(gc.rate), 2)); } });
   // markups, recovery, misc, bond, permits, tax, leveler, totals (value-stamped, drop feeder formulas)
   N_('H59', r.directCosts); N_('G62', e.oANDpPct); N_('H61', r.equipMarkup); N_('H62', r.oANDp); N_('H63', r.projectSubtotal);
   N_('H64', r.marketRecovery); N_('H65', r.misc);
