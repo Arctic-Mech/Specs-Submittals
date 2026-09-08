@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.3';
+const APP_VERSION = 'v7.4';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2209,7 +2209,7 @@ function trackedPaths() {
   for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) { (it.docs || []).forEach(add); (it.emails || []).forEach(add); }
   for (const ct of (contracts || [])) { (ct.docs || []).forEach(add); (ct.emails || []).forEach(add); (ct.changes || []).forEach(ch => (ch.docs || []).forEach(add)); }
   if (job && job.laborRates && job.laborRates.sourceDoc) add(job.laborRates.sourceDoc);   // the uploaded labor-rate PDF
-  for (const es of (estimates || [])) { (es.docs || []).forEach(add); }                    // exported estimate PDFs
+  for (const es of (estimates || [])) { (es.docs || []).forEach(add); if (es.file && es.file.file) set.add(DOCS_DIR + '/' + (es.file.dir ? es.file.dir + '/' : '') + es.file.file); }   // exported estimate PDFs + the synced .xlsx
   return set;
 }
 /* Files sitting in the ShareFile folder that the register doesn't reference —
@@ -2224,10 +2224,11 @@ async function scanUnassignedFiles() {
   const consider = (path, name, loc) => {
     const isPdf = /\.pdf$/i.test(name);
     const isEmail = /\.(msg|eml)$/i.test(name);
-    if (!isPdf && !isEmail) return;
+    const isXlsx = /\.xlsx$/i.test(name);
+    if (!isPdf && !isEmail && !isXlsx) return;
     if (tracked.has(path) || ignored.has(path)) return;
     if (/^register\.(json|csv)$/i.test(name) || /^job\.json$/i.test(name)) return;
-    found.push(Object.assign({ path, name, type: isPdf ? 'pdf' : 'email' }, loc));
+    found.push(Object.assign({ path, name, type: isPdf ? 'pdf' : isEmail ? 'email' : 'xlsx' }, loc));
   };
   try {                                   // loose files at the job-folder root
     for await (const e of jobFolder.values()) {
@@ -2285,6 +2286,7 @@ function assignModal(i) {
   const item = _assignQueue[i];
   if (!item) { closePdf(); noteFolderChanged(); return; }   // done → re-scan + refresh bar
   if (item.type === 'email') return assignEmailModal(i, item, total);
+  if (item.type === 'xlsx') return assignEstimateModal(i, item, total);
   const dv = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
   const firstKey = (sectionsOf(job).filter(s => s.division === dv).sort(sectionOrder)[0] || {}).key || '';
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
@@ -2379,6 +2381,7 @@ async function viewLoose(i) {
   const blob = await readLooseBlob(item);
   if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
   if (item.type === 'email') return openEmailBlob(blob, item.name);   // preview in-app
+  if (item.type === 'xlsx') { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = item.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000); return; }
   showPdf(URL.createObjectURL(blob), item.name);
 }
 /* An email (.msg/.eml) dropped in the folder → file it under a Job Tracking
@@ -5411,7 +5414,7 @@ function buildEstimateWorkbook(e, ctx) {
   const ref = (r, c) => '$' + XLSX.utils.encode_col(c) + '$' + (r + 1);
 
   txt(R, 0, 'PROJECT ESTIMATE'); R++;
-  txt(R, 0, 'Job'); txt(R, 1, ctx.jobName || ''); txt(R, 3, 'Estimate'); txt(R, 4, e.name || ''); R++;
+  txt(R, 0, 'Job'); txt(R, 1, ctx.jobName || ''); txt(R, 3, 'Estimate'); inpS('EST_NAME', R, 4, e.name || ''); R++;
   txt(R, 0, 'Bid #'); inpS('EST_bidNo', R, 1, (e.info || {}).bidNo || ''); txt(R, 3, 'Schedule'); inpS('EST_schedule', R, 4, e.scheduleType || "5 8's"); R++;
   txt(R, 0, 'Date'); txt(R, 1, ctx.date || ''); R++;
   txt(R, 0, 'How to use: edit the input cells (base hours, rates, %, $ amounts) and SAVE. When the folder is loaded in the website it picks up your changes. Do not delete rows above the totals.'); R++;
@@ -5543,6 +5546,7 @@ function parseEstimateWorkbook(wb) {
   const str = nm => { const v = N(nm); return v == null ? '' : String(v); };
   const e = {};
   e.id = str('EST_ID');
+  e.name = str('EST_NAME');
   e.info = { bidNo: str('EST_bidNo') };
   e.scheduleType = str('EST_schedule') || "5 8's";
   e.trades = {}; EST_X_TRADES.forEach(t => e.trades[t] = { hours: num('EST_hours_' + t) });
@@ -5585,7 +5589,7 @@ function estInputs(e) {
   const sv = (e.subs || []).map(s => [String(s.desc || ''), n(s.value)]).filter(s => s[0] || s[1]);
   const gc = (e.gcs || []).map(g => [String(g.desc || ''), n(g.qty), n(g.rate)]).filter(g => g[0] || g[1] || g[2]);
   const eq = (e.equipment || []).map(q => [String(q.desc || ''), n(q.qty), n(q.duration), n(q.rate)]).filter(q => q[0] || q[1] || q[2] || q[3]);
-  return { bidNo: String((e.info || {}).bidNo || ''), sched: e.scheduleType || "5 8's", t, rt, ad,
+  return { name: String(e.name || ''), bidNo: String((e.info || {}).bidNo || ''), sched: e.scheduleType || "5 8's", t, rt, ad,
     mat: [n((e.material || {}).plumb), n((e.material || {}).pipe), n((e.material || {}).sm)], ocip: n(e.ocipDeduct), subMk: n(e.subMarkupPct),
     sup: [n(sup.pmPct), n(sup.pmRate), n(sup.smFieldSupPct), n(sup.smFieldSupRate), n(sup.plumbSupPct), n(sup.plumbSupRate), n(sup.pipeSupPct), n(sup.pipeSupRate)],
     st: n(e.smallToolsPct), sv, gc, eq, eqMk: n(e.equipMarkup), op: n(e.oANDpPct), emo: n(e.emoReduce),
@@ -5635,7 +5639,7 @@ async function importEstimateFromFile(e, opts) {
   catch (x) { return false; }
   try {
     const XL = await loadSheetJS();
-    const wb = XL.read(buf, { type: 'array' });
+    const wb = XL.read(new Uint8Array(buf), { type: 'array' });
     const parsed = parseEstimateWorkbook(wb);
     const merged = Object.assign({}, e); ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(k => merged[k] = parsed[k]);
     const psig = estInputSig(merged);
@@ -5691,6 +5695,97 @@ function estSyncStatusHtml(e) {
   if (!e.file) return `<span class="est-sync none">Not saved to Excel yet</span>`;
   const changed = estInputSig(e) !== e.fileSig;
   return `<span class="est-sync ${changed ? 'pending' : 'ok'}">${changed ? '↻ Excel out of date' : '✓ In sync with Excel'}</span>`;
+}
+
+/* ── importing a LOOSE estimate spreadsheet (dropped straight into ShareFile) ──
+   Loose .xlsx files show up in the same "Assign" flow as loose PDFs and emails. */
+function estWorkbookLooksLikeOurs(wb) {
+  const names = (wb && wb.Workbook && wb.Workbook.Names) || [];
+  return names.some(n => n.Name === 'EST_o_totalBid' || n.Name === 'EST_SCHEMA' || n.Name === 'EST_hours_smField');
+}
+async function readLooseWorkbook(item) {
+  const blob = await readLooseBlob(item);
+  if (!blob) throw new Error('could not read the file — make the folder available offline in ShareFile');
+  const buf = await blob.arrayBuffer();
+  const XL = await loadSheetJS();
+  return XL.read(new Uint8Array(buf), { type: 'array' });
+}
+function makeEstimateFromParsed(parsed, fallbackName) {
+  const e = defaultEstimate();
+  ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(k => { if (parsed[k] !== undefined) e[k] = parsed[k]; });
+  e.name = (parsed.name && parsed.name.trim()) || fallbackName || 'Imported estimate';
+  return e;
+}
+async function importLooseAsEstimate(item, targetId, newName) {
+  const wb = await readLooseWorkbook(item);
+  const parsed = parseEstimateWorkbook(wb);
+  let e;
+  if (targetId) {
+    e = estById(targetId); if (!e) throw new Error('that estimate is no longer available');
+    if (e.locked) throw new Error('that estimate is locked — unlock it first');
+    ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(k => { if (parsed[k] !== undefined) e[k] = parsed[k]; });
+    e.updated = Date.now();
+  } else {
+    e = makeEstimateFromParsed(parsed, (newName || '').trim() || item.name.replace(/\.xlsx$/i, ''));
+    estimates = estimates.concat([e]);
+  }
+  e.file = null; e.fileSig = ''; e.fileSyncedAt = 0;    // force a fresh canonical write
+  await FB.setDoc(estimateRef(job.id, e.id), clean(e));
+  await writeEstimateFile(e, { force: true });          // writes Estimates/<name>.xlsx and tracks it
+  const canonical = e.file ? DOCS_DIR + '/' + (e.file.dir ? e.file.dir + '/' : ESTIMATE_DIR + '/') + e.file.file : '';
+  if (item.path !== canonical) { try { await deleteLoose(item); } catch (x) {} }   // remove the loose original, now filed
+  return { id: e.id, name: e.name, total: computeProjectEstimate(e).totalBid, updated: !!targetId };
+}
+/* the Assign-flow modal for a loose .xlsx */
+async function assignEstimateModal(i, item, total) {
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal"><div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div><div class="modal-body"><div class="muted">Reading “${esc(item.name)}”…</div></div></div></div>`;
+  let ours = false, bid = 0, nm = item.name.replace(/\.xlsx$/i, '');
+  try { const wb = await readLooseWorkbook(item); ours = estWorkbookLooksLikeOurs(wb); if (ours) { const parsed = parseEstimateWorkbook(wb); if (parsed.name && parsed.name.trim()) nm = parsed.name.trim(); bid = computeProjectEstimate(Object.assign(defaultEstimate(), parsed)).totalBid; } }
+  catch (e) { ours = false; }
+  if (_assignQueue[i] !== item) return;   // user moved on
+  const editable = (estimates || []).filter(e => !e.locked);
+  const existingOpts = editable.map(e => `<option value="${e.id}">${esc(e.name || 'Estimate')}</option>`).join('');
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
+    <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <div class="file-row" style="margin-bottom:14px"><span class="fi">📊</span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : DOCS_DIR + '/' + esc(item.dir || '')}</small></span>
+        <button class="btn sm" onclick="viewLoose(${i})">Download</button></div>
+      ${ours ? `
+      <div class="muted" style="margin-bottom:10px">This is an estimate spreadsheet${bid ? ' — total bid <b>' + esc(fmtMoney(bid) || '$0') + '</b>' : ''}.</div>
+      <div class="field"><label class="fl">Import as</label>
+        <select class="input" id="asgEstDest">
+          <option value="new">A new estimate</option>
+          ${editable.length ? `<option value="existing">Replace an existing estimate</option>` : ''}
+        </select></div>
+      <div class="field" id="asgEstNewWrap"><label class="fl">Estimate name</label>
+        <input class="input" id="asgEstName" value="${esc(nm)}"></div>
+      <div class="field" id="asgEstExistingWrap" hidden><label class="fl">Estimate to replace</label>
+        <select class="input" id="asgEstExisting">${existingOpts}</select>
+        <div class="muted" style="margin-top:4px">Its numbers are replaced with this spreadsheet’s. (Locked estimates aren’t listed.)</div></div>
+      ` : `
+      <div class="muted" style="margin-bottom:6px">This doesn’t look like a Dingus estimate file, so its numbers can’t be read automatically. You can leave it here and ignore it, or open it and re-save it from the website to put it in the right format.</div>`}
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
+      <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
+      ${ours ? `<button class="btn primary" onclick="assignEstimateGo(${i})">Import estimate</button>` : ''}
+    </div></div></div>`;
+  const destSel = document.getElementById('asgEstDest');
+  if (destSel) destSel.onchange = () => { document.getElementById('asgEstNewWrap').hidden = destSel.value !== 'new'; document.getElementById('asgEstExistingWrap').hidden = destSel.value !== 'existing'; };
+}
+function assignEstimateGo(i) {
+  const item = _assignQueue[i]; if (!item) return;
+  const destSel = document.getElementById('asgEstDest');
+  const dest = destSel ? destSel.value : 'new';
+  const targetId = dest === 'existing' ? (document.getElementById('asgEstExisting') || {}).value : null;
+  const newName = (document.getElementById('asgEstName') || {}).value;
+  stickyToast('Importing ' + item.name + '…');
+  importLooseAsEstimate(item, targetId, newName).then(r => {
+    renderJob();
+    toast(`${r.updated ? 'Updated' : 'Imported'} “${r.name}” — ${fmtMoney(r.total) || '$0'}`);
+    assignModal(i + 1);
+  }).catch(e => { console.error(e); toast('Could not import that spreadsheet: ' + (e.message || e), true); });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

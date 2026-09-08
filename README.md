@@ -329,7 +329,15 @@ It syncs **both directions**, newest-save-wins:
 
 Inputs are read back by **named cells**, so they survive inserting or moving rows in
 Excel. A **locked** estimate is never overwritten from its file — it stays the frozen
-snapshot. Because the round-trip uses the File System Access API, the Excel side of
+snapshot.
+
+**Dropping a *new* spreadsheet in** is handled the same way as loose PDFs and emails:
+an estimate `.xlsx` that doesn't yet belong to an estimate is flagged in the folder
+bar's **"N new files to assign"** count, and the **Assign** step offers to **import it
+as a new estimate** (or replace an existing one). If it's a Dingus estimate file the
+numbers come in and it shows the total bid; if it's some other spreadsheet the app
+says it can't read it and lets you ignore it. (Change orders don't have an Excel
+round-trip — they export a Change Proposal PDF.) Because the round-trip uses the File System Access API, the Excel side of
 the sync happens on a computer with the folder loaded in Chrome or Edge (the same
 requirement as the PDF features); editing the file in ShareFile's web preview or on a
 phone is picked up the next time someone opens the job on a synced desktop.
