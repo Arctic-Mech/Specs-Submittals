@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.10';
+const APP_VERSION = 'v7.11';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5538,7 +5538,11 @@ async function buildEstXlsm(e, ctx) {
   }
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
-function estTemplateLooksLikeOurs(wb) { const ws = wb && wb.Sheets && wb.Sheets['MCAA RECAP']; return !!(ws && ws['AB1'] && String(ws['AB1'].v) === EST_TPL_MARKER); }
+function estTemplateLooksLikeOurs(wb) {
+  const ws = wb && wb.Sheets && wb.Sheets['MCAA RECAP']; if (!ws) return false;
+  if (ws['AB1'] && String(ws['AB1'].v) === EST_TPL_MARKER) return true;    // app-generated (marker)
+  return !!(ws['D6'] && /Estimate Recap/i.test(String(ws['D6'].v)));       // a pristine MCAA RECAP workbook
+}
 /* parse the injected template: JSON model is authoritative; overlay scalar cells
    the user may have edited in Excel so those edits flow back to the website */
 function parseEstTemplate(wb) {
@@ -5562,6 +5566,12 @@ function parseEstTemplate(wb) {
   ovN('H65', () => e.misc, v => e.misc = v);
   { const v = g('A66'); if (v != null && v !== '') e.bond = { required: String(v).trim().toLowerCase() === 'yes' }; }
   { const v = g('E68'); if (v != null && v !== '') { const t = String(v).toLowerCase(); e.taxType = (t.indexOf('washington') >= 0 || t.indexOf('b&o') >= 0) ? 'washington_bo' : t.indexOf('no tax') >= 0 ? 'none' : 'oregon_cat'; } }
+  // pristine (non-app) workbook: no JSON model, so read the free-form lists straight
+  // from the sheet's own cells (keyed on a non-zero value so template default labels
+  // with a 0 amount don't become phantom line items)
+  if (!base.subs) { const subs = []; for (let i = 0; i < EST_N_TPL_SUBS; i++) { const row = 36 + i, val = estNum(g('J' + row)); if (val) subs.push({ desc: String(g('B' + row) || ''), value: val }); } e.subs = subs; }
+  if (!base.gcs) { const gcs = []; EST_TPL_GC_ROWS.forEach(row => { const amt = estNum(g('H' + row)); if (amt) gcs.push({ desc: String(g('B' + row) || ''), qty: 1, rate: amt }); }); e.gcs = gcs; }
+  if (!base.equipment) { const eq = []; for (let i = 0; i < EST_N_TPL_EQUIP; i++) { const row = 114 + i, qty = estNum(g('G' + row)), dur = estNum(g('H' + row)), rate = estNum(g('I' + row)); if (qty && rate) eq.push({ desc: String(g('B' + row) || ''), qty, duration: dur || 1, rate }); } e.equipment = eq; }
   return e;
 }
 
@@ -6182,7 +6192,12 @@ function parseCoTemplate(wb) {
   estLaborRows().forEach(rr => { const hrow = CO_LABOR_ROW[rr.key]; if (!hrow) return; const st = g('B' + hrow), ot = g('C' + hrow), dt = g('D' + hrow), sh = g('E' + hrow); const cell = {}; if (st) cell.st = estNum(st); if (ot) cell.ot = estNum(ot); if (dt) cell.dt = estNum(dt); if (sh) cell.shift = estNum(sh); if (Object.keys(cell).length) est.labor.rows[rr.key] = cell; });
   return { id: str('T2'), number: str('B5'), description: str('B7'), mod: str('T4'), rfiCcdAsi: str('T5'), est };
 }
-function coTemplateLooksLikeOurs(wb) { const ws = wb && wb.Sheets && wb.Sheets['CP Backup']; return !!(ws && ws['T1'] && String(ws['T1'].v) === CO_TPL_MARKER); }
+function coTemplateLooksLikeOurs(wb) {
+  const ws = wb && wb.Sheets && wb.Sheets['CP Backup']; if (!ws) return false;
+  if (ws['T1'] && String(ws['T1'].v) === CO_TPL_MARKER) return true;       // app-generated (marker)
+  const lbl = a => String((ws[a] || {}).v || '').trim();                   // a pristine Change Order workbook
+  return lbl('A125') === 'Total Bid' && lbl('A118') === 'Total Costs';
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    6d1e. CHANGE-PROPOSAL ⇄ EXCEL SYNC  —  same as estimates, for change orders.
