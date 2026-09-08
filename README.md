@@ -264,6 +264,18 @@ one-page proposal (labor breakdown + bid summary + total) and files it into the 
 ShareFile folder. The whole calculation is unit-tested against the source spreadsheet
 (it reproduces its totals to the cent).
 
+**Two-way Excel sync** — just like the Estimates tab. A CO with an estimate is
+mirrored to **`Change Proposal.xlsx`** inside that change order's ShareFile folder: a
+real workbook with editable input cells and live recap formulas that computes the same
+total the website does. Edit here or in Excel and the other side updates, newest save
+wins (Excel edits are read back when the folder is loaded on a Chrome/Edge desktop —
+on folder load, opening the Change Orders tab, or returning to the browser). The
+**Excel** and **↻ From Excel** buttons on the CO open or pull it manually. And a loose
+**change-proposal spreadsheet dropped straight into ShareFile** is flagged in the
+**"N new files to assign"** count; the Assign step offers to **import it as a new
+change order** (or add it to an existing one) — the same handling as loose PDFs,
+emails and estimate spreadsheets.
+
 ### Labor rates (upload your rate PDF)
 
 The **Labor rates** button (on any CO, or in the estimator) opens the job's

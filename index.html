@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.4';
+const APP_VERSION = 'v7.5';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3198,7 +3198,7 @@ function renderJob() {
   renderJobTabs();
   applyTabVisibility();
   if (jobTab === 'rfis') { renderRfis(); return; }
-  if (jobTab === 'changeorders') { renderCos(); return; }
+  if (jobTab === 'changeorders') { renderCos(); if (jobFolder) reconcileCoFiles().catch(() => {}); return; }
   if (jobTab === 'quotes') { renderLedger('quotes'); return; }
   if (jobTab === 'pos') { renderLedger('pos'); return; }
   if (jobTab === 'contracts') { renderContracts(); return; }
@@ -3893,6 +3893,7 @@ async function saveCo(c) {
   c.updated = Date.now();
   try { await FB.setDoc(coRef(job.id, c.id), clean(c)); }
   catch (e) { toast(writeError(e), true); }
+  if (c.est && typeof scheduleCoFileFlush === 'function') scheduleCoFileFlush(c);   // mirror the change proposal to Excel
 }
 function matchCo(c, q) {
   if (!q) return true;
@@ -4168,13 +4169,16 @@ function renderCoDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Estimate / Change Proposal</h4>
+        <h4>Estimate / Change Proposal ${c.est ? coSyncStatusHtml(c) : ''}</h4>
         ${coEstSummaryHtml(c)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
           <button class="btn primary sm" onclick="openCoEstimator('${c.id}')">${c.est ? '✎ Edit estimate' : '+ Build estimate'}</button>
-          ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ Change Proposal PDF</button>` : ''}
+          ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>` : ''}
+          ${c.est ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>` : ''}
+          ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the Excel file">↻ From Excel</button>` : ''}
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
+        ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsx</b> — edit here or in Excel, newest save wins.</div>` : ''}
       </div>
 
       <div class="sec">
@@ -5679,8 +5683,8 @@ async function reconcileEstimateFiles(opts) {
 if (typeof window !== 'undefined' && window.addEventListener && !window._estFocusWired) {
   window._estFocusWired = true;
   try {
-    window.addEventListener('focus', () => { if (view === 'job' && jobFolder) reconcileEstimateFiles().catch(() => {}); });
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view === 'job' && jobFolder) reconcileEstimateFiles().catch(() => {}); });
+    window.addEventListener('focus', () => { if (view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } });
   } catch (x) {}
 }
 /* open the .xlsx from the folder (download a copy; double-click to edit in Excel) */
@@ -5736,56 +5740,340 @@ async function importLooseAsEstimate(item, targetId, newName) {
   if (item.path !== canonical) { try { await deleteLoose(item); } catch (x) {} }   // remove the loose original, now filed
   return { id: e.id, name: e.name, total: computeProjectEstimate(e).totalBid, updated: !!targetId };
 }
-/* the Assign-flow modal for a loose .xlsx */
+/* the Assign-flow modal for a loose .xlsx — an estimate OR a change proposal */
 async function assignEstimateModal(i, item, total) {
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal"><div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div><div class="modal-body"><div class="muted">Reading “${esc(item.name)}”…</div></div></div></div>`;
-  let ours = false, bid = 0, nm = item.name.replace(/\.xlsx$/i, '');
-  try { const wb = await readLooseWorkbook(item); ours = estWorkbookLooksLikeOurs(wb); if (ours) { const parsed = parseEstimateWorkbook(wb); if (parsed.name && parsed.name.trim()) nm = parsed.name.trim(); bid = computeProjectEstimate(Object.assign(defaultEstimate(), parsed)).totalBid; } }
-  catch (e) { ours = false; }
+  let kind = 'none', bid = 0, nm = item.name.replace(/\.xlsx$/i, ''), coNumber = '';
+  try {
+    const wb = await readLooseWorkbook(item);
+    if (typeof coWorkbookLooksLikeOurs === 'function' && coWorkbookLooksLikeOurs(wb)) {
+      kind = 'co'; const parsed = parseCoWorkbook(wb); coNumber = parsed.number || ''; bid = computeEstimate(parsed.est, jobLaborRates()).totalBid;
+    } else if (estWorkbookLooksLikeOurs(wb)) {
+      kind = 'est'; const parsed = parseEstimateWorkbook(wb); if (parsed.name && parsed.name.trim()) nm = parsed.name.trim(); bid = computeProjectEstimate(Object.assign(defaultEstimate(), parsed)).totalBid;
+    }
+  } catch (e) { kind = 'none'; }
   if (_assignQueue[i] !== item) return;   // user moved on
-  const editable = (estimates || []).filter(e => !e.locked);
-  const existingOpts = editable.map(e => `<option value="${e.id}">${esc(e.name || 'Estimate')}</option>`).join('');
+  const editableEst = (estimates || []).filter(e => !e.locked);
+  const estOpts = editableEst.map(e => `<option value="${e.id}">${esc(e.name || 'Estimate')}</option>`).join('');
+  const coOpts = (cos || []).map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : 'Change order')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('');
+  const foundIn = item.at === 'root' ? 'the folder' : DOCS_DIR + '/' + esc(item.dir || '');
+  let body;
+  if (kind === 'co') {
+    body = `<div class="muted" style="margin-bottom:10px">This is a <b>change-order proposal</b> spreadsheet${bid ? ' — total <b>' + esc(fmtMoney(bid) || '$0') + '</b>' : ''}.</div>
+      <div class="field"><label class="fl">Import as</label>
+        <select class="input" id="asgXlsxDest">
+          <option value="new">A new change order</option>
+          ${coOpts ? `<option value="existing">Add to an existing change order</option>` : ''}
+        </select></div>
+      <div class="field" id="asgXlsxExistingWrap" hidden><label class="fl">Change order</label>
+        <select class="input" id="asgXlsxExisting">${coOpts}</select>
+        <div class="muted" style="margin-top:4px">Its estimate is replaced with this spreadsheet’s.</div></div>`;
+  } else if (kind === 'est') {
+    body = `<div class="muted" style="margin-bottom:10px">This is an <b>estimate</b> spreadsheet${bid ? ' — total bid <b>' + esc(fmtMoney(bid) || '$0') + '</b>' : ''}.</div>
+      <div class="field"><label class="fl">Import as</label>
+        <select class="input" id="asgXlsxDest">
+          <option value="new">A new estimate</option>
+          ${editableEst.length ? `<option value="existing">Replace an existing estimate</option>` : ''}
+        </select></div>
+      <div class="field" id="asgXlsxNewWrap"><label class="fl">Estimate name</label>
+        <input class="input" id="asgXlsxName" value="${esc(nm)}"></div>
+      <div class="field" id="asgXlsxExistingWrap" hidden><label class="fl">Estimate to replace</label>
+        <select class="input" id="asgXlsxExisting">${estOpts}</select>
+        <div class="muted" style="margin-top:4px">Its numbers are replaced with this spreadsheet’s. (Locked estimates aren’t listed.)</div></div>`;
+  } else {
+    body = `<div class="muted" style="margin-bottom:6px">This doesn’t look like a Dingus estimate or change-proposal file, so its numbers can’t be read automatically. You can leave it here and ignore it, or open it and re-save it from the website to put it in the right format.</div>`;
+  }
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
     <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
     <div class="modal-body">
       <div class="file-row" style="margin-bottom:14px"><span class="fi">📊</span>
-        <span class="fn"><b>${esc(item.name)}</b><small>found in ${item.at === 'root' ? 'the folder' : DOCS_DIR + '/' + esc(item.dir || '')}</small></span>
+        <span class="fn"><b>${esc(item.name)}</b><small>found in ${foundIn}</small></span>
         <button class="btn sm" onclick="viewLoose(${i})">Download</button></div>
-      ${ours ? `
-      <div class="muted" style="margin-bottom:10px">This is an estimate spreadsheet${bid ? ' — total bid <b>' + esc(fmtMoney(bid) || '$0') + '</b>' : ''}.</div>
-      <div class="field"><label class="fl">Import as</label>
-        <select class="input" id="asgEstDest">
-          <option value="new">A new estimate</option>
-          ${editable.length ? `<option value="existing">Replace an existing estimate</option>` : ''}
-        </select></div>
-      <div class="field" id="asgEstNewWrap"><label class="fl">Estimate name</label>
-        <input class="input" id="asgEstName" value="${esc(nm)}"></div>
-      <div class="field" id="asgEstExistingWrap" hidden><label class="fl">Estimate to replace</label>
-        <select class="input" id="asgEstExisting">${existingOpts}</select>
-        <div class="muted" style="margin-top:4px">Its numbers are replaced with this spreadsheet’s. (Locked estimates aren’t listed.)</div></div>
-      ` : `
-      <div class="muted" style="margin-bottom:6px">This doesn’t look like a Dingus estimate file, so its numbers can’t be read automatically. You can leave it here and ignore it, or open it and re-save it from the website to put it in the right format.</div>`}
+      <input type="hidden" id="asgXlsxKind" value="${kind}">
+      ${body}
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
       <button class="btn" onclick="assignModal(${i + 1})">Skip</button>
-      ${ours ? `<button class="btn primary" onclick="assignEstimateGo(${i})">Import estimate</button>` : ''}
+      ${kind !== 'none' ? `<button class="btn primary" onclick="assignEstimateGo(${i})">Import ${kind === 'co' ? 'change order' : 'estimate'}</button>` : ''}
     </div></div></div>`;
-  const destSel = document.getElementById('asgEstDest');
-  if (destSel) destSel.onchange = () => { document.getElementById('asgEstNewWrap').hidden = destSel.value !== 'new'; document.getElementById('asgEstExistingWrap').hidden = destSel.value !== 'existing'; };
+  const destSel = document.getElementById('asgXlsxDest');
+  if (destSel) destSel.onchange = () => { const nw = document.getElementById('asgXlsxNewWrap'); if (nw) nw.hidden = destSel.value !== 'new'; document.getElementById('asgXlsxExistingWrap').hidden = destSel.value !== 'existing'; };
 }
 function assignEstimateGo(i) {
   const item = _assignQueue[i]; if (!item) return;
-  const destSel = document.getElementById('asgEstDest');
+  const kind = (document.getElementById('asgXlsxKind') || {}).value;
+  const destSel = document.getElementById('asgXlsxDest');
   const dest = destSel ? destSel.value : 'new';
-  const targetId = dest === 'existing' ? (document.getElementById('asgEstExisting') || {}).value : null;
-  const newName = (document.getElementById('asgEstName') || {}).value;
+  const targetId = dest === 'existing' ? (document.getElementById('asgXlsxExisting') || {}).value : null;
   stickyToast('Importing ' + item.name + '…');
-  importLooseAsEstimate(item, targetId, newName).then(r => {
-    renderJob();
-    toast(`${r.updated ? 'Updated' : 'Imported'} “${r.name}” — ${fmtMoney(r.total) || '$0'}`);
-    assignModal(i + 1);
-  }).catch(e => { console.error(e); toast('Could not import that spreadsheet: ' + (e.message || e), true); });
+  const done = r => { renderJob(); toast(`${r.updated ? 'Updated' : 'Imported'} ${kind === 'co' ? 'CO ' + (r.number || '') : '“' + r.name + '”'} — ${fmtMoney(r.total) || '$0'}`); assignModal(i + 1); };
+  const fail = e => { console.error(e); toast('Could not import that spreadsheet: ' + (e.message || e), true); };
+  if (kind === 'co') importLooseAsCo(item, targetId).then(done).catch(fail);
+  else importLooseAsEstimate(item, targetId, (document.getElementById('asgXlsxName') || {}).value).then(done).catch(fail);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6d1e. CHANGE-PROPOSAL ⇄ EXCEL SYNC  —  same as estimates, for change orders.
+   A CO with an estimate is mirrored to "Change Proposal.xlsx" in its ShareFile
+   folder (named input cells + live formulas). Two-way, newest-save-wins. A loose
+   CO proposal .xlsx dropped in the folder is offered for import in the Assign flow.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const CO_N_LINES = 12;
+function buildCoWorkbook(c, rates, ctx) {
+  ctx = ctx || {};
+  const est = c.est || {};
+  const M = est.material || {}, E = est.equipment || {}, L = est.labor || {}, S = est.subs || {}, I = est.indirects || {}, T = est.totals || {};
+  const rt = (rates && rates.rates) ? rates.rates : {};
+  const ws = {}; const names = []; let R = 0;
+  const A1 = (r, cc) => XLSX.utils.encode_cell({ r, c: cc });
+  const cs = (r, cc, cell) => { ws[A1(r, cc)] = cell; };
+  const txt = (r, cc, s) => cs(r, cc, { t: 's', v: String(s == null ? '' : s) });
+  const nIn = (r, cc, v) => cs(r, cc, { t: 'n', v: estNum(v) });
+  const sIn = (r, cc, v) => cs(r, cc, { t: 's', v: String(v == null ? '' : v) });
+  const form = (r, cc, f) => cs(r, cc, { t: 'n', v: 0, f: f });
+  const nm = (name, r, cc) => { names.push({ Name: name, Ref: 'CO!$' + XLSX.utils.encode_col(cc) + '$' + (r + 1) }); };
+  const inpN = (name, r, cc, v) => { nIn(r, cc, v); nm(name, r, cc); };
+  const inpS = (name, r, cc, v) => { sIn(r, cc, v); nm(name, r, cc); };
+  const ref = (r, cc) => '$' + XLSX.utils.encode_col(cc) + '$' + (r + 1);
+
+  txt(R, 0, 'CHANGE PROPOSAL'); R++;
+  txt(R, 0, 'Job'); txt(R, 1, ctx.jobName || ''); txt(R, 4, 'CO #'); inpS('CO_NUMBER', R, 5, c.number || ''); R++;
+  txt(R, 0, 'Description'); inpS('CO_DESC', R, 1, c.description || ''); txt(R, 4, 'MOD'); inpS('CO_MOD', R, 5, c.mod || ''); R++;
+  txt(R, 0, 'RFI / CCD / ASI'); inpS('CO_RCA', R, 1, c.rfiCcdAsi || ''); txt(R, 4, 'Date'); txt(R, 5, ctx.date || ''); R++;
+  txt(R, 0, 'Edit the input cells (hours, rates, $ amounts, %) and SAVE. The website picks up changes when the folder is loaded.'); R++;
+  R++;
+
+  txt(R, 0, 'LABOR'); R++;
+  ['Class', 'ST hrs', 'OT hrs', 'DT hrs', 'ST rate', 'OT rate', 'DT rate', 'Cost'].forEach((h, i) => txt(R, i, h)); R++;
+  const rows = estLaborRows();
+  const labStart = R; nm('CO_labor_start', labStart, 0);
+  const fieldRows = [];
+  rows.forEach((row, i) => {
+    const r = labStart + i;
+    const h = (L.rows || {})[row.key] || {}; const rr = rt[row.key] || {};
+    txt(r, 0, row.label);
+    nIn(r, 1, h.st); nIn(r, 2, h.ot); nIn(r, 3, h.dt);
+    nIn(r, 4, rr.st); nIn(r, 5, rr.ot); nIn(r, 6, rr.dt);
+    form(r, 7, `ROUND(${ref(r, 1)}*${ref(r, 4)}+${ref(r, 2)}*${ref(r, 5)}+${ref(r, 3)}*${ref(r, 6)},2)`);
+    if (row.field) fieldRows.push(r);
+  });
+  R = labStart + rows.length;
+  const f0 = fieldRows[0], f1 = fieldRows[fieldRows.length - 1];
+  const fieldCostRow = R; txt(R, 0, 'Field labor cost'); form(R, 7, `SUM(${ref(f0, 7)}:${ref(f1, 7)})`); nm('CO_o_fieldCost', R, 7); R++;
+  const fieldHrsRow = R; txt(R, 0, 'Field hours'); form(R, 7, `SUM(${ref(f0, 1)}:${ref(f1, 1)})+SUM(${ref(f0, 2)}:${ref(f1, 2)})+SUM(${ref(f0, 3)}:${ref(f1, 3)})`); R++;
+  const laborSubRow = R; txt(R, 0, 'Labor subtotal'); form(R, 7, `ROUND(SUM(${ref(labStart, 7)}:${ref(labStart + rows.length - 1, 7)}),2)`); nm('CO_o_laborSub', R, 7); R++;
+  txt(R, 0, 'Per diem / day'); inpN('CO_perDiem', R, 1, L.perDiemPerDay); const perDiemInRow = R; R++;
+  const perDiemRow = R; txt(R, 0, 'Per diem cost'); form(R, 7, `ROUND(${ref(fieldHrsRow, 7)}/8*${ref(perDiemInRow, 1)},2)`); R++;
+  txt(R, 0, 'Labor markup %'); inpN('CO_laborMk', R, 1, L.markupPct); const laborMkPctRow = R; R++;
+  const laborMkRow = R; txt(R, 0, 'Labor markup'); form(R, 7, `ROUND(${ref(laborSubRow, 7)}*${ref(laborMkPctRow, 1)}/100,2)`); R++;
+  const laborTotRow = R; txt(R, 0, 'Labor total'); form(R, 7, `ROUND(${ref(laborSubRow, 7)}+${ref(perDiemRow, 7)}+${ref(laborMkRow, 7)},2)`); nm('CO_o_laborTotal', R, 7); R += 2;
+
+  txt(R, 0, 'MATERIAL'); R++;
+  txt(R, 0, 'From takeoff / inventory'); inpN('CO_takeoff', R, 1, M.takeoff); const takeoffRow = R; R++;
+  txt(R, 0, 'Additional material — Description / Cost'); R++;
+  const matStart = R; nm('CO_matlines_start', matStart, 0);
+  for (let i = 0; i < CO_N_LINES; i++) { const l = (M.lines || [])[i] || {}; sIn(matStart + i, 0, l.desc || ''); if (l.cost !== undefined && l.cost !== '') nIn(matStart + i, 1, l.cost); }
+  R = matStart + CO_N_LINES;
+  const matSubRow = R; txt(R, 0, 'Material subtotal'); form(R, 7, `ROUND(${ref(takeoffRow, 1)}+SUM(${ref(matStart, 1)}:${ref(matStart + CO_N_LINES - 1, 1)}),2)`); R++;
+  txt(R, 0, 'Material markup %'); inpN('CO_matMk', R, 1, M.markupPct); const matMkPctRow = R; R++;
+  const matTotRow = R; txt(R, 0, 'Material total'); form(R, 7, `ROUND(${ref(matSubRow, 7)}+ROUND(${ref(matSubRow, 7)}*${ref(matMkPctRow, 1)}/100,2),2)`); nm('CO_o_material', R, 7); R += 2;
+
+  txt(R, 0, 'EQUIPMENT & VENDOR (deducts negative) — Description / Cost'); R++;
+  const eqStart = R; nm('CO_eqlines_start', eqStart, 0);
+  for (let i = 0; i < CO_N_LINES; i++) { const l = (E.lines || [])[i] || {}; sIn(eqStart + i, 0, l.desc || ''); if (l.cost !== undefined && l.cost !== '') nIn(eqStart + i, 1, l.cost); }
+  R = eqStart + CO_N_LINES;
+  const eqSubRow = R; txt(R, 0, 'Equipment subtotal'); form(R, 7, `ROUND(SUM(${ref(eqStart, 1)}:${ref(eqStart + CO_N_LINES - 1, 1)}),2)`); R++;
+  txt(R, 0, 'Equipment markup %'); inpN('CO_eqMk', R, 1, E.markupPct); const eqMkPctRow = R; R++;
+  const eqTotRow = R; txt(R, 0, 'Equipment total'); form(R, 7, `ROUND(${ref(eqSubRow, 7)}+ROUND(${ref(eqSubRow, 7)}*${ref(eqMkPctRow, 1)}/100,2),2)`); nm('CO_o_equipment', R, 7); R += 2;
+
+  txt(R, 0, 'SUBCONTRACTORS — Description / Cost'); R++;
+  const subStart = R; nm('CO_sublines_start', subStart, 0);
+  for (let i = 0; i < CO_N_LINES; i++) { const l = (S.lines || [])[i] || {}; sIn(subStart + i, 0, l.desc || ''); if (l.cost !== undefined && l.cost !== '') nIn(subStart + i, 1, l.cost); }
+  R = subStart + CO_N_LINES;
+  const subSubRow = R; txt(R, 0, 'Subcontract subtotal'); form(R, 7, `ROUND(SUM(${ref(subStart, 1)}:${ref(subStart + CO_N_LINES - 1, 1)}),2)`); R++;
+  txt(R, 0, 'Sub markup %'); inpN('CO_subMk', R, 1, S.markupPct); const subMkPctRow = R; R++;
+  const subTotRow = R; txt(R, 0, 'Subcontract total'); form(R, 7, `ROUND(${ref(subSubRow, 7)}+ROUND(${ref(subSubRow, 7)}*${ref(subMkPctRow, 1)}/100,2),2)`); nm('CO_o_subs', R, 7); R += 2;
+
+  txt(R, 0, 'TOOLS, CONSUMABLES & SITE INDIRECTS (% of field labor)'); R++;
+  txt(R, 0, 'Small tools %'); inpN('CO_smallTools', R, 1, I.smallToolsPct); const stR = R; R++;
+  txt(R, 0, 'Consumables %'); inpN('CO_consumables', R, 1, I.consumablesPct); const conR = R; R++;
+  txt(R, 0, 'Site indirects %'); inpN('CO_siteIndirects', R, 1, I.siteIndirectsPct); const siR = R; R++;
+  txt(R, 0, 'Safety %'); inpN('CO_safety', R, 1, I.safetyPct); const safR = R; R++;
+  txt(R, 0, 'Delivery cost / qty'); inpN('CO_deliveryCost', R, 1, I.deliveryCost); inpN('CO_deliveryQty', R, 2, I.deliveryQty); const delR = R; R++;
+  txt(R, 0, 'Rentals $'); inpN('CO_rentals', R, 1, I.rentals); const rentR = R; R++;
+  txt(R, 0, 'Permits $'); inpN('CO_permits', R, 1, I.permits); const permR = R; R++;
+  txt(R, 0, 'Rental/indirect markup %'); inpN('CO_indirMk', R, 1, I.markupPct); const indMkR = R; R++;
+  const siteSubRow = R; txt(R, 0, 'Indirects subtotal');
+  form(R, 7, `ROUND(ROUND(${ref(stR, 1)}/100*${ref(fieldCostRow, 7)},2)+ROUND(${ref(conR, 1)}/100*${ref(fieldCostRow, 7)},2)+ROUND(${ref(siR, 1)}/100*${ref(fieldCostRow, 7)},2)+ROUND(${ref(safR, 1)}/100*${ref(fieldCostRow, 7)},2)+ROUND(${ref(delR, 1)}*${ref(delR, 2)},2)+ROUND(${ref(rentR, 1)},2)+ROUND(${ref(permR, 1)},2),2)`); R++;
+  const siteTotRow = R; txt(R, 0, 'Indirects total'); form(R, 7, `ROUND(${ref(siteSubRow, 7)}+ROUND(${ref(siteSubRow, 7)}*${ref(indMkR, 1)}/100,2),2)`); nm('CO_o_site', R, 7); R += 2;
+
+  const totalCostsRow = R; txt(R, 0, 'TOTAL COSTS'); form(R, 7, `ROUND(${ref(matTotRow, 7)}+${ref(eqTotRow, 7)}+${ref(laborTotRow, 7)}+${ref(subTotRow, 7)}+${ref(siteTotRow, 7)},2)`); nm('CO_o_totalCosts', R, 7); R++;
+  txt(R, 0, 'Total markup %'); inpN('CO_totalMk', R, 1, T.totalMarkupPct); const totMkPctRow = R; R++;
+  const totMkRow = R; txt(R, 0, 'Total markup'); form(R, 7, `ROUND(${ref(totalCostsRow, 7)}*${ref(totMkPctRow, 1)}/100,2)`); R++;
+  txt(R, 0, 'Bond $'); inpN('CO_bond', R, 1, T.bond); const bondR = R; R++;
+  txt(R, 0, 'OCIP deduct $'); inpN('CO_ocip', R, 1, T.ocip); const ocipR = R; R++;
+  txt(R, 0, 'Contingency $'); inpN('CO_contingency', R, 1, T.contingency); const contR = R; R++;
+  txt(R, 0, 'Tax (Oregon CAT / Washington B&O / None)'); inpS('CO_taxType', R, 1, T.taxType === 'washington_bo' ? 'Washington B&O' : T.taxType === 'none' ? 'None' : 'Oregon CAT'); const taxTypeR = R; R++;
+  const taxBaseRow = R; txt(R, 0, 'Tax base'); form(R, 7, `${ref(totalCostsRow, 7)}+${ref(totMkRow, 7)}+${ref(bondR, 1)}+${ref(ocipR, 1)}+${ref(contR, 1)}`); R++;
+  const taxRow = R; txt(R, 0, 'Tax'); form(R, 7, `${ref(taxBaseRow, 7)}*IF(${ref(taxTypeR, 1)}="Oregon CAT",0.0055,IF(${ref(taxTypeR, 1)}="Washington B&O",0.0059,0))`); nm('CO_o_tax', R, 7); R++;
+  txt(R, 0, 'Round to nearest $'); inpN('CO_round', R, 1, T.roundTo); const roundR = R; R++;
+  const preRoundRow = R; txt(R, 0, 'Pre-round'); form(R, 7, `${ref(totalCostsRow, 7)}+${ref(totMkRow, 7)}+${ref(bondR, 1)}+${ref(ocipR, 1)}+${ref(contR, 1)}+${ref(taxRow, 7)}`); R++;
+  txt(R, 0, 'TOTAL BID'); form(R, 7, `IF(${ref(roundR, 1)}=0,${ref(preRoundRow, 7)},ROUND(${ref(preRoundRow, 7)}/${ref(roundR, 1)},0)*${ref(roundR, 1)})`); nm('CO_o_totalBid', R, 7); R += 1;
+
+  cs(0, 20, { t: 's', v: String(c.id || '') }); nm('CO_ID', 0, 20);
+  cs(1, 20, { t: 's', v: 'dingus-co-proposal-v1' }); nm('CO_SCHEMA', 1, 20);
+
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: R + 1, c: 21 } });
+  ws['!cols'] = [{ wch: 34 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 15 }];
+  const ev = estEvalWb(ws, names); const vals = {};
+  for (const k in ws) { if (k[0] === '!') continue; if (ws[k].f != null) { try { vals[k] = ev.cell(k); } catch (x) { vals[k] = 0; } } }
+  for (const k in vals) { const v = vals[k]; if (typeof v === 'number' && isFinite(v)) { ws[k].t = 'n'; ws[k].v = v; } else if (typeof v === 'boolean') { ws[k].t = 'b'; ws[k].v = v; } else { ws[k].t = 's'; ws[k].v = String(v); } }
+  return { SheetNames: ['CO'], Sheets: { CO: ws }, Workbook: { Names: names } };
+}
+function parseCoWorkbook(wb) {
+  const wsName = (wb.SheetNames || []).indexOf('CO') >= 0 ? 'CO' : wb.SheetNames[0];
+  const ws = wb.Sheets[wsName];
+  const nameMap = {};
+  ((wb.Workbook && wb.Workbook.Names) || []).forEach(n => { const m = n.Ref.match(/!\$?([A-Z]+)\$?(\d+)/); if (m) nameMap[n.Name] = m[1] + m[2]; });
+  const cellAt = addr => { const cc = ws[addr]; return cc ? cc.v : undefined; };
+  const N = k => { const a = nameMap[k]; return a ? cellAt(a) : undefined; };
+  const num = k => estNum(N(k));
+  const str = k => { const v = N(k); return v == null ? '' : String(v); };
+  const readLines = anchor => {
+    const a = nameMap[anchor]; if (!a) return []; const base = XLSX.utils.decode_cell(a); const out = [];
+    for (let i = 0; i < CO_N_LINES; i++) { const desc = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c })); const cost = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c + 1 })); if ((desc != null && desc !== '') || (cost != null && cost !== '')) out.push({ desc: desc == null ? '' : String(desc), cost: cost == null ? '' : cost }); }
+    return out;
+  };
+  const est = {
+    material: { takeoff: num('CO_takeoff'), lines: readLines('CO_matlines_start'), markupPct: num('CO_matMk') },
+    equipment: { lines: readLines('CO_eqlines_start'), markupPct: num('CO_eqMk') },
+    labor: { rows: {}, perDiemPerDay: num('CO_perDiem'), markupPct: num('CO_laborMk') },
+    subs: { lines: readLines('CO_sublines_start'), markupPct: num('CO_subMk') },
+    indirects: { smallToolsPct: num('CO_smallTools'), consumablesPct: num('CO_consumables'), siteIndirectsPct: num('CO_siteIndirects'), safetyPct: num('CO_safety'), deliveryCost: num('CO_deliveryCost'), deliveryQty: num('CO_deliveryQty'), rentals: num('CO_rentals'), permits: num('CO_permits'), markupPct: num('CO_indirMk') },
+    totals: { totalMarkupPct: num('CO_totalMk'), bond: num('CO_bond'), ocip: num('CO_ocip'), contingency: num('CO_contingency'), taxType: (() => { const t = String(N('CO_taxType') || '').toLowerCase(); return (t.indexOf('washington') >= 0 || t.indexOf('b&o') >= 0) ? 'washington_bo' : t.indexOf('none') >= 0 ? 'none' : 'oregon_cat'; })(), roundTo: num('CO_round') },
+  };
+  const la = nameMap['CO_labor_start'];
+  if (la) { const base = XLSX.utils.decode_cell(la); estLaborRows().forEach((row, i) => { const st = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c + 1 })); const ot = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c + 2 })); const dt = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c + 3 })); const cell = {}; if (st != null && st !== '') cell.st = st; if (ot != null && ot !== '') cell.ot = ot; if (dt != null && dt !== '') cell.dt = dt; if (Object.keys(cell).length) est.labor.rows[row.key] = cell; }); }
+  return { id: str('CO_ID'), number: str('CO_NUMBER'), description: str('CO_DESC'), mod: str('CO_MOD'), rfiCcdAsi: str('CO_RCA'), est };
+}
+function coWorkbookLooksLikeOurs(wb) {
+  const names = (wb && wb.Workbook && wb.Workbook.Names) || [];
+  return names.some(n => n.Name === 'CO_SCHEMA' || n.Name === 'CO_o_totalBid' || n.Name === 'CO_labor_start');
+}
+function coInputs(c) {
+  const e = c.est || {}; const n = v => Math.round(estNum(v) * 1e6) / 1e6;
+  const rows = {}; estLaborRows().forEach(r => { const h = ((e.labor && e.labor.rows) || {})[r.key] || {}; const a = [n(h.st), n(h.ot), n(h.dt)]; if (a[0] || a[1] || a[2]) rows[r.key] = a; });
+  const lines = arr => (arr || []).map(l => [String(l.desc || ''), n(l.cost)]).filter(l => l[0] || l[1]);
+  const M = e.material || {}, E = e.equipment || {}, L = e.labor || {}, S = e.subs || {}, I = e.indirects || {}, T = e.totals || {};
+  return { num: String(c.number || ''), desc: String(c.description || ''), mod: String(c.mod || ''), rca: String(c.rfiCcdAsi || ''),
+    takeoff: n(M.takeoff), matL: lines(M.lines), matMk: n(M.markupPct), eqL: lines(E.lines), eqMk: n(E.markupPct),
+    rows, perDiem: n(L.perDiemPerDay), laborMk: n(L.markupPct), subL: lines(S.lines), subMk: n(S.markupPct),
+    ind: [n(I.smallToolsPct), n(I.consumablesPct), n(I.siteIndirectsPct), n(I.safetyPct), n(I.deliveryCost), n(I.deliveryQty), n(I.rentals), n(I.permits), n(I.markupPct)],
+    tot: [n(T.totalMarkupPct), n(T.bond), n(T.ocip), n(T.contingency), String(T.taxType || 'oregon_cat'), n(T.roundTo)] };
+}
+function coInputSig(c) { try { return JSON.stringify(coInputs(c)); } catch (x) { return ''; } }
+function coProposalDoc(c) { return (c.docs || []).find(d => d.coProposal); }
+async function coFileHandleGet(c) { const d = coProposalDoc(c); if (!d) return null; const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR); const dh = d.dir ? await walkDir(filesRoot, d.dir) : filesRoot; return dh.getFileHandle(d.file); }
+async function coFileMtime(c) { try { const fh = await coFileHandleGet(c); return (await fh.getFile()).lastModified; } catch (x) { return 0; } }
+function coSyncStatusHtml(c) { if (!c || !c.est) return ''; if (!coProposalDoc(c)) return `<span class="est-sync none">Not saved to Excel yet</span>`; const changed = coInputSig(c) !== c.coFileSig; return `<span class="est-sync ${changed ? 'pending' : 'ok'}">${changed ? '↻ Excel out of date' : '✓ In sync with Excel'}</span>`; }
+
+let _coFlushT = {};
+function scheduleCoFileFlush(c) { if (!jobFolder || !c || !c.est) return; clearTimeout(_coFlushT[c.id]); _coFlushT[c.id] = setTimeout(() => { writeCoFile(c).catch(() => {}); }, 2500); }
+async function writeCoFile(c, opts) {
+  opts = opts || {};
+  if (!jobFolder || !c || !c.est) return;
+  if (coProposalDoc(c) && coInputSig(c) === c.coFileSig && !opts.force) return;
+  try {
+    const XL = await loadSheetJS();
+    const wb = buildCoWorkbook(c, jobLaborRates(), { jobName: job.name, date: csvDate(today()) });
+    const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
+    const fname = 'Change Proposal.xlsx';
+    const f = new File([out], fname, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const { dir, file } = await putFileInDir(f, coDocDir(c), fname);
+    const existing = coProposalDoc(c);
+    if (existing) { existing.dir = dir; existing.file = file; existing.added = Date.now(); }
+    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
+    c.coFileSyncedAt = await coFileMtime(c);
+    c.coFileSig = coInputSig(c);
+    await FB.setDoc(coRef(job.id, c.id), clean(c));
+    noteFolderChanged();
+    if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
+    if (opts.toast) toast('Saved change proposal to Excel');
+  } catch (x) { console.error(x); if (opts.toast) toast('Could not write the Excel file: ' + (x.message || x), true); }
+}
+async function importCoFromFile(c, opts) {
+  opts = opts || {};
+  const d = coProposalDoc(c); if (!jobFolder || !c || !d) return false;
+  let buf, mtime;
+  try { const fh = await coFileHandleGet(c); const file = await fh.getFile(); mtime = file.lastModified; buf = await file.arrayBuffer(); } catch (x) { return false; }
+  try {
+    const XL = await loadSheetJS();
+    const parsed = parseCoWorkbook(XL.read(new Uint8Array(buf), { type: 'array' }));
+    const merged = Object.assign({}, c, { est: parsed.est, number: parsed.number || c.number, description: parsed.description || c.description, mod: parsed.mod || c.mod, rfiCcdAsi: parsed.rfiCcdAsi || c.rfiCcdAsi });
+    const psig = coInputSig(merged);
+    if (psig === c.coFileSig && !opts.force) { c.coFileSyncedAt = mtime; return false; }
+    c.est = parsed.est;
+    if (parsed.number) c.number = parsed.number; if (parsed.description) c.description = parsed.description;
+    if (parsed.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
+    c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
+    c.updated = Date.now(); c.coFileSyncedAt = mtime; c.coFileSig = coInputSig(c);
+    await FB.setDoc(coRef(job.id, c.id), clean(c));
+    if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
+    toast('CO ' + (c.number || '') + ' updated from Excel');
+    return true;
+  } catch (x) { console.error(x); return false; }
+}
+let _coReconcileAt = 0;
+async function reconcileCoFiles(opts) {
+  opts = opts || {};
+  if (!jobFolder || !cos.length) return;
+  const now = Date.now(); if (!opts.force && now - _coReconcileAt < 2500) return; _coReconcileAt = now;
+  for (const c of cos) {
+    try {
+      if (!c.est) continue;
+      const d = coProposalDoc(c);
+      if (!d) { if (coInputSig(c) !== (c.coFileSig || null)) await writeCoFile(c); continue; }
+      const fm = await coFileMtime(c);
+      if (!fm) { await writeCoFile(c, { force: true }); continue; }
+      if (openCo === c.id) continue;
+      const changed = fm > (c.coFileSyncedAt || 0) + 2000;
+      if (changed) { if (fm >= (c.updated || 0)) await importCoFromFile(c); else await writeCoFile(c, { force: true }); }
+      else if (coInputSig(c) !== c.coFileSig) await writeCoFile(c);
+    } catch (x) { console.error(x); }
+  }
+}
+async function openCoExcel(id) {
+  const c = coById(id); if (!c) return;
+  if (!jobFolder) { toast('Load the job’s ShareFile folder first', true); return; }
+  if (!c.est) { toast('Build an estimate first', true); return; }
+  if (!coProposalDoc(c) || !(await coFileMtime(c))) await writeCoFile(c, { force: true, toast: true });
+  try { const fh = await coFileHandleGet(c); const file = await fh.getFile(); const url = URL.createObjectURL(file); const a = document.createElement('a'); a.href = url; a.download = coProposalDoc(c).file; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000); toast('Opened the change proposal — it lives in the CO’s ShareFile folder'); }
+  catch (x) { toast('Could not open the Excel file: ' + (x.message || x), true); }
+}
+/* importing a loose CO proposal .xlsx dropped into the folder */
+async function importLooseAsCo(item, targetId) {
+  const wb = await readLooseWorkbook(item);
+  const parsed = parseCoWorkbook(wb);
+  let c;
+  if (targetId) {
+    c = coById(targetId); if (!c) throw new Error('that change order is no longer available');
+    c.est = parsed.est;
+    if (parsed.number) c.number = parsed.number; if (parsed.description) c.description = parsed.description;
+    if (parsed.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
+    c.updated = Date.now();
+  } else {
+    c = { id: uid('co'), number: parsed.number || nextCoNumber(), description: parsed.description || '', mod: parsed.mod || '', rfiCcdAsi: parsed.rfiCcdAsi || '', amount: '', status: 'pending', paid: false, paidDate: '', dateSubmitted: today(), dateApproved: '', notes: '', docs: [], checklist: [], est: parsed.est, created: Date.now(), updated: Date.now() };
+    cos = [c].concat(cos);
+  }
+  c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
+  c.coFileSig = ''; c.coFileSyncedAt = 0; c.docs = (c.docs || []).filter(d => !d.coProposal);
+  await FB.setDoc(coRef(job.id, c.id), clean(c));
+  await writeCoFile(c, { force: true });
+  const dd = coProposalDoc(c); const canonical = dd ? DOCS_DIR + '/' + (dd.dir ? dd.dir + '/' : '') + dd.file : '';
+  if (item.path !== canonical) { try { await deleteLoose(item); } catch (x) {} }
+  if (jobFolder && typeof syncCoFolders === 'function') syncCoFolders().catch(() => {});
+  return { id: c.id, number: c.number, total: computeEstimate(c.est, jobLaborRates()).totalBid, updated: !!targetId };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -8703,6 +8991,7 @@ async function markFolderLoaded(handle) {
   fileStagedUploads().catch(() => {});   // file any phone uploads waiting in Firebase
   syncAllSubmittals().catch(() => {});   // build/refresh the "All Submittals" mirror
   reconcileEstimateFiles({ force: true }).catch(() => {});   // pull in any estimate edited in Excel
+  reconcileCoFiles({ force: true }).catch(() => {});         // pull in any change proposal edited in Excel
   // Seed the "last saved" indicator from the folder's own snapshot (shared via
   // ShareFile sync) or this device's record, then track changes from here.
   folderSaveAt = 0;
