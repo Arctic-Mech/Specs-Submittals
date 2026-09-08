@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.11';
+const APP_VERSION = 'v7.12';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -9628,6 +9628,17 @@ async function refileAll(filesRoot) {
   }
   return moves.length;
 }
+/* Pre-create the submittal category folders so they're always visible inside
+   Dingus Documents/Submittals/ — like labeled dividers — even before anything is
+   filed into them. (Files are still filed into these same folders on demand.)
+   Idempotent: getDirectoryHandle({create:true}) is a no-op when the folder exists. */
+async function ensureSubmittalCategoryFolders(filesRoot) {
+  const seen = new Set();
+  for (const id of Object.keys(STATUS_DIR)) {
+    const rel = STATUS_DIR[id]; if (seen.has(rel)) continue; seen.add(rel);
+    try { await walkDirCreate(filesRoot, rel); } catch (e) {}
+  }
+}
 /* Where each old flat folder's leftovers belong now. */
 const OLD_FLAT_TARGET = {
   'Submitted to GC':     'Submittals/Submitted to GC',
@@ -9852,6 +9863,7 @@ async function maybeAutoOrganize() {
     let n = 0;
     if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
     const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
+    await ensureSubmittalCategoryFolders(filesRoot);       // keep all the submittal category folders visible, even empty ones
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     await syncCoFolders();                                // per-CO folders after any moves
     await reconcileLedgers();                             // vendor-quote / PO folders
