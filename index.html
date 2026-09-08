@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.6';
+const APP_VERSION = 'v7.7';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4077,7 +4077,7 @@ async function viewCoDoc(id, docId) {
   if (d) openStoredDoc(d);
 }
 function coDocList(c) {
-  const docs = c.docs || [];
+  const docs = (c.docs || []).filter(d => !d.coProposal);   // the synced Change Proposal.xlsx is managed by Excel sync, not a deletable attachment
   if (!docs.length) return '';
   return `<div class="file-list">` + docs.map(d => `
     <div class="file-row"><span class="fi">📄</span>
@@ -4194,7 +4194,8 @@ function renderCoDrawer() {
           <button class="btn primary sm" onclick="openCoEstimator('${c.id}')">${c.est ? '✎ Edit estimate' : '+ Build estimate'}</button>
           ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>` : ''}
           ${c.est ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>` : ''}
-          ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the Excel file">↻ From Excel</button>` : ''}
+          ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
+          <button class="btn sm ghost" onclick="importCoFilePick('${c.id}')" title="Import a change-proposal spreadsheet from your computer into this CO">⤒ Import Excel</button>
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
         ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsx</b> — edit here or in Excel, newest save wins.</div>` : ''}
@@ -5026,7 +5027,7 @@ function renderEstimates() {
   const cmp = estCompare.length >= 2
     ? `<button class="btn primary" onclick="renderEstimateCompare()">Compare ${estCompare.length} estimates →</button>`
     : `<span class="muted">Tick 2+ estimates to compare them.</span>`;
-  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}</div>
+  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}<div class="spacer" style="flex:1"></div><button class="btn sm ghost" onclick="importEstimateFilePick()" title="Import an estimate spreadsheet from your computer">⤒ Import Excel</button></div>
     <div class="est-cards">${cards}</div>`;
 }
 
@@ -5720,6 +5721,52 @@ function estSyncStatusHtml(e) {
   if (!e.file) return `<span class="est-sync none">Not saved to Excel yet</span>`;
   const changed = estInputSig(e) !== e.fileSig;
   return `<span class="est-sync ${changed ? 'pending' : 'ok'}">${changed ? '↻ Excel out of date' : '✓ In sync with Excel'}</span>`;
+}
+/* ── import a spreadsheet from the website (file picker, no folder needed) ── */
+function pickXlsxFile(cb) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) cb(f); };
+  inp.click();
+}
+async function readPickedWorkbook(file) { const buf = await file.arrayBuffer(); const XL = await loadSheetJS(); return XL.read(new Uint8Array(buf), { type: 'array' }); }
+/* Estimates tab: pick an estimate spreadsheet → new estimate */
+function importEstimateFilePick() {
+  if (!job) return;
+  pickXlsxFile(async file => {
+    stickyToast('Reading ' + file.name + '…');
+    try {
+      const wb = await readPickedWorkbook(file);
+      if (!estWorkbookLooksLikeOurs(wb)) { toast('That isn’t a Dingus estimate spreadsheet — its numbers can’t be read automatically.', true); return; }
+      const e = makeEstimateFromParsed(parseEstimateWorkbook(wb), file.name.replace(/\.(xlsx|xlsm)$/i, ''));
+      estimates = estimates.concat([e]);
+      await FB.setDoc(estimateRef(job.id, e.id), clean(e));
+      if (jobFolder) await writeEstimateFile(e, { force: true });
+      renderEstimates();
+      toast('Imported estimate — ' + (fmtMoney(computeProjectEstimate(e).totalBid) || '$0'));
+      openEstimateEditor(e.id);
+    } catch (x) { console.error(x); toast('Could not read that file: ' + (x.message || x), true); }
+  });
+}
+/* CO drawer: pick a change-proposal spreadsheet → replace THIS CO's estimate */
+function importCoFilePick(id) {
+  const c = coById(id); if (!c) return;
+  pickXlsxFile(async file => {
+    stickyToast('Reading ' + file.name + '…');
+    try {
+      const wb = await readPickedWorkbook(file);
+      if (!coWorkbookLooksLikeOurs(wb)) { toast('That isn’t a Dingus change-proposal spreadsheet — its numbers can’t be read automatically.', true); return; }
+      const parsed = parseCoWorkbook(wb);
+      c.est = parsed.est;
+      if (parsed.number) c.number = parsed.number; if (parsed.description) c.description = parsed.description;
+      if (parsed.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
+      c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
+      c.coFileSig = '';
+      await saveCo(c);
+      renderCos(); if (openCo === c.id) renderCoDrawer();
+      toast('Imported the proposal — ' + (fmtMoney(computeEstimate(c.est, jobLaborRates()).totalBid) || '$0'));
+    } catch (x) { console.error(x); toast('Could not read that file: ' + (x.message || x), true); }
+  });
 }
 
 /* ── importing a LOOSE estimate spreadsheet (dropped straight into ShareFile) ──
