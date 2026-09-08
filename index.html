@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.7';
+const APP_VERSION = 'v7.8';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2100,6 +2100,11 @@ async function removeNumberedSiblings(relDir, canonicalName, keepSet) {
     for (const n of names) { try { await dh.removeEntry(n); } catch (x) {} }
   } catch (e) {}
 }
+/* Delete one exact file (by name) from files/<relDir>/ if it exists. */
+async function removeNamedSibling(relDir, name) {
+  if (!jobFolder) return;
+  try { const dh = await walkDir(await jobFolder.getDirectoryHandle(DOCS_DIR), relDir); await dh.removeEntry(name); } catch (e) {}
+}
 function estFileKeepSet() { return new Set((estimates || []).map(x => estFileDesiredName(x)).concat((estimates || []).map(x => x.file && x.file.file).filter(Boolean))); }
 /* Write a PDF into files/<statusDir>/, keeping its name; returns { dir, file }. */
 async function putFile(file, statusId) {
@@ -2243,7 +2248,7 @@ async function scanUnassignedFiles() {
   const consider = (path, name, loc) => {
     const isPdf = /\.pdf$/i.test(name);
     const isEmail = /\.(msg|eml)$/i.test(name);
-    const isXlsx = /\.xlsx$/i.test(name);
+    const isXlsx = /\.xls[xm]$/i.test(name);   // .xlsx and macro-enabled .xlsm
     if (!isPdf && !isEmail && !isXlsx) return;
     if (tracked.has(path) || ignored.has(path)) return;
     if (/^register\.(json|csv)$/i.test(name) || /^job\.json$/i.test(name)) return;
@@ -4198,7 +4203,7 @@ function renderCoDrawer() {
           <button class="btn sm ghost" onclick="importCoFilePick('${c.id}')" title="Import a change-proposal spreadsheet from your computer into this CO">⤒ Import Excel</button>
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
-        ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsx</b> — edit here or in Excel, newest save wins.</div>` : ''}
+        ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsm</b> — a copy of your real workbook with this CO’s numbers filled in. Edit here or in Excel, newest save wins.</div>` : ''}
       </div>
 
       <div class="sec">
@@ -5882,12 +5887,159 @@ function assignEstimateGo(i) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   6d1e0. TEMPLATE-BASED EXCEL — inject the app's numbers into the user's REAL
+   workbook so every sheet, style, chart and macro is byte-identical to the
+   original. We surgically edit cell values in the CP Backup sheet (the CP and
+   Proposal sheets mirror it), value-stamp the leaf inputs, refresh the cached
+   totals, and set fullCalcOnLoad so Excel recomputes the rest on open. The file
+   stays a real .xlsm; two-way sync reads the same visible cells back.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const CO_TEMPLATE_URL = 'templates/co-proposal-template.xlsm';
+let _coTemplateBuf = null;
+async function coTemplateBytes() {
+  if (_coTemplateBuf) return _coTemplateBuf.slice(0);
+  const res = await fetch(CO_TEMPLATE_URL, { cache: 'force-cache' });
+  if (!res.ok) throw new Error('template ' + res.status);
+  _coTemplateBuf = await res.arrayBuffer();
+  return _coTemplateBuf.slice(0);
+}
+/* ---- surgical worksheet-XML cell editing (preserves style, sheet, macros) ---- */
+function xlEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function xlColToNum(c) { let n = 0; for (const ch of c) n = n * 26 + (ch.charCodeAt(0) - 64); return n; }
+function xlSetCell(xml, ref, spec) {
+  const col = ref.match(/[A-Z]+/)[0], row = ref.match(/\d+/)[0];
+  let inner, tattr = '';
+  if ('str' in spec) { tattr = ' t="inlineStr"'; inner = '<is><t xml:space="preserve">' + xlEsc(spec.str) + '</t></is>'; }
+  else if ('formula' in spec) { inner = '<f>' + xlEsc(spec.formula) + '</f>' + ('v' in spec ? '<v>' + spec.v + '</v>' : ''); }
+  else { inner = '<v>' + spec.num + '</v>'; }
+  const reFull = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>[\\s\\S]*?</c>)');
+  const m = xml.match(reFull);
+  if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; return xml.replace(reFull, '<c r="' + ref + '"' + s + tattr + '>' + inner + '</c>'); }
+  const reRow = new RegExp('(<row r="' + row + '"[^>]*>)([\\s\\S]*?)(</row>)');
+  const rm = xml.match(reRow); const cellXml = '<c r="' + ref + '"' + tattr + '>' + inner + '</c>';
+  if (rm) {
+    const cells = [...rm[2].matchAll(/<c r="([A-Z]+)\d+"[\s\S]*?(?:\/>|<\/c>)/g)]; let out = '', placed = false;
+    for (const cm of cells) { if (!placed && xlColToNum(cm[1]) > xlColToNum(col)) { out += cellXml; placed = true; } out += cm[0]; }
+    if (!placed) out += cellXml; return xml.replace(reRow, rm[1] + out + rm[3]);
+  }
+  return xml;
+}
+function xlClearCell(xml, ref) {
+  const reFull = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>[\\s\\S]*?</c>)'); const m = xml.match(reFull);
+  if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; return xml.replace(reFull, '<c r="' + ref + '"' + s + '/>'); } return xml;
+}
+/* refresh only the cached <v> of a formula cell, keeping the formula intact */
+function xlCacheValue(xml, ref, v) {
+  const reFull = new RegExp('<c r="' + ref + '"([^>]*?)>([\\s\\S]*?)</c>'); const m = xml.match(reFull);
+  if (m && /<f/.test(m[2])) { const fm = m[2].match(/<f[^>]*>[\s\S]*?<\/f>|<f[^>]*\/>/); if (fm) return xml.replace(reFull, '<c r="' + ref + '"' + m[1] + '>' + fm[0] + '<v>' + v + '</v></c>'); }
+  return xml;
+}
+/* CP Backup layout: app labor key -> hours row (rate row = +1); line-item rows */
+const CO_LABOR_ROW = { plumb_app: 48, plumb_jrny: 50, plumb_frmn: 52, plumb_gf: 54, pipe_app: 56, pipe_jrny: 58, pipe_frmn: 60, pipe_gf: 62, smf_app: 64, smf_jrny: 66, smf_frmn: 68, smf_gf: 70, sms_app: 72, sms_jrny: 74, sms_frmn: 76, sms_gf: 78, pm: 80, pe: 82, bim: 84, custom1: 86, custom2: 88, custom3: 90 };
+const CO_TPL_MAT_ROWS = [25, 26, 27, 28, 29, 30], CO_TPL_EQ_ROWS = [37, 38, 39, 40, 41, 42], CO_TPL_SUB_ROWS = [98, 99, 100, 101, 102, 103];
+const CO_TPL_MARKER = 'DINGUS-CO';
+function coTaxLabel(t) { return t === 'washington_bo' ? 'Washington B&O Tax' : t === 'none' ? 'No Tax' : 'Oregon CAT Tax'; }
+/* inject the CO's numbers into the CP Backup worksheet XML */
+function injectCoSheet(xml, c, rates, r, ctx) {
+  ctx = ctx || {};
+  const est = c.est || {}, M = est.material || {}, E = est.equipment || {}, L = est.labor || {}, S = est.subs || {}, I = est.indirects || {}, T = est.totals || {};
+  const rt = (rates && rates.rates) || {};
+  const S_ = (ref, v) => { xml = xlSetCell(xml, ref, { str: v == null ? '' : String(v) }); };
+  const N_ = (ref, v) => { xml = xlSetCell(xml, ref, { num: estNum(v) }); };
+  const CLR = ref => { xml = xlClearCell(xml, ref); };
+  const CACHE = (ref, v) => { xml = xlCacheValue(xml, ref, v); };
+  const lineRows = (rows, arr) => rows.forEach((row, i) => { const l = (arr || [])[i]; if (l && l.cost !== '' && l.cost != null) { S_('A' + row, l.desc || ''); N_('D' + row, l.cost); } else { CLR('D' + row); } });
+  // header (mirrored onto CP + Proposal via cell refs)
+  S_('D2', ctx.jobName || ''); S_('D3', ctx.jobNumber || ''); if (ctx.customer) S_('D4', ctx.customer);
+  const numStr = String(c.number == null ? '' : c.number);
+  if (numStr && !/^\d+(\.\d+)?$/.test(numStr)) S_('B5', numStr); else N_('B5', numStr || c.mod || 0);   // MOD # cell (numeric when it can be, else literal)
+  S_('B7', c.description || '');
+  // material
+  N_('D24', M.takeoff); lineRows(CO_TPL_MAT_ROWS, M.lines); N_('B32', estNum(M.markupPct) / 100);
+  // equipment (deducts are negative lines)
+  lineRows(CO_TPL_EQ_ROWS, E.lines); N_('B44', estNum(E.markupPct) / 100);
+  // labor: value-stamp hours (B/C/D/E on the class row) + rates (B/C/D on the rate row); refresh the cost cache
+  estLaborRows().forEach(rr => {
+    const hrow = CO_LABOR_ROW[rr.key]; if (!hrow) return; const rrow = hrow + 1;
+    const h = (L.rows || {})[rr.key] || {}, rate = rt[rr.key] || {};
+    N_('B' + hrow, h.st); N_('C' + hrow, h.ot); N_('D' + hrow, h.dt); N_('E' + hrow, h.shift);
+    N_('B' + rrow, rate.st); N_('C' + rrow, rate.ot); N_('D' + rrow, rate.dt);
+    CACHE('F' + rrow, (r.perRow[rr.key] || {}).cost || 0);
+  });
+  N_('B93', L.perDiemPerDay); N_('B94', estNum(L.markupPct) / 100);
+  // subcontractors
+  lineRows(CO_TPL_SUB_ROWS, S.lines); N_('B105', estNum(S.markupPct) / 100);
+  // tools, consumables & site indirects
+  N_('H108', estNum(I.smallToolsPct) / 100); N_('H109', estNum(I.consumablesPct) / 100); N_('H110', estNum(I.siteIndirectsPct) / 100); N_('H113', estNum(I.safetyPct) / 100);
+  N_('D109', I.rentals); N_('B111', I.deliveryCost); N_('C111', I.deliveryQty); N_('D113', I.permits); N_('B115', estNum(I.markupPct) / 100);
+  // total markup, adders, tax, rounding
+  N_('B119', estNum(T.totalMarkupPct) / 100); N_('D120', T.bond); N_('D121', T.ocip); N_('D122', T.contingency);
+  S_('A123', coTaxLabel(T.taxType)); N_('C123', estTaxRate(T.taxType)); N_('H125', T.roundTo);
+  // refresh the cached totals so the file reads correct even before a recalc
+  CACHE('D31', r.matSub); CACHE('D32', r.matMk); CACHE('D33', r.matTotal);
+  CACHE('D43', r.eqSub); CACHE('D44', r.eqMk); CACHE('D45', r.eqTotal);
+  CACHE('H86', r.fieldHrs); CACHE('H87', r.fieldCost); CACHE('D92', r.laborSub); CACHE('D93', r.perDiem); CACHE('D94', r.laborMk); CACHE('D95', r.laborTotal);
+  CACHE('D104', r.subsSub); CACHE('D105', r.subsMk); CACHE('D106', r.subsTotal);
+  CACHE('D108', round2(r.smallTools + r.consumables + r.siteIndirects)); CACHE('D109', r.rentals); CACHE('D111', r.deliveries); CACHE('D112', r.safety); CACHE('D113', r.permits);
+  CACHE('D114', r.siteSub); CACHE('D115', r.siteMk); CACHE('D116', r.siteTotal);
+  CACHE('D118', r.totalCosts); CACHE('D119', r.totalMk); CACHE('D123', r.tax); CACHE('D124', r.roundAdj); CACHE('D125', r.totalBid);
+  // Dingus marker (out-of-the-way cells) for detection + lossless round-trip of fields
+  // that have no natural cell in the workbook (MOD and RFI/CCD/ASI)
+  S_('T1', CO_TPL_MARKER); S_('T2', c.id || ''); S_('T4', c.mod || ''); S_('T5', c.rfiCcdAsi || '');
+  return xml;
+}
+/* build the injected .xlsm bytes from the user's real template */
+async function buildCoXlsm(c, rates, ctx) {
+  const JZ = await ensureJSZip();
+  const r = computeEstimate(c.est, rates);
+  const zip = await JZ.loadAsync(await coTemplateBytes());
+  const sheetFile = 'xl/worksheets/sheet5.xml';   // CP Backup
+  let s5 = await zip.file(sheetFile).async('string');
+  s5 = injectCoSheet(s5, c, rates, r, ctx); zip.file(sheetFile, s5);
+  // force a full recalc on open (CP + Proposal are pure references to CP Backup)
+  let wbx = await zip.file('xl/workbook.xml').async('string');
+  wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
+  zip.file('xl/workbook.xml', wbx);
+  // drop the stale calc chain (Excel rebuilds it) + its wiring
+  if (zip.file('xl/calcChain.xml')) {
+    zip.remove('xl/calcChain.xml');
+    try { let ct = await zip.file('[Content_Types].xml').async('string'); ct = ct.replace(/<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/, ''); zip.file('[Content_Types].xml', ct); } catch (x) {}
+    try { let rels = await zip.file('xl/_rels/workbook.xml.rels').async('string'); rels = rels.replace(/<Relationship[^>]*calcChain\.xml"[^>]*\/>/, ''); zip.file('xl/_rels/workbook.xml.rels', rels); } catch (x) {}
+  }
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
+}
+/* parse the injected template back into a CO estimate (reads the visible cells) */
+function parseCoTemplate(wb) {
+  const ws = wb.Sheets['CP Backup']; if (!ws) return null;
+  const g = a => { const c = ws[a]; return c ? c.v : undefined; };
+  const num = a => estNum(g(a)), str = a => { const v = g(a); return v == null ? '' : String(v); };
+  // key a line on its COST cell (col D) — the template keeps section labels in col A
+  // ("Additional Material", etc.) that must not be mistaken for a line item
+  const lines = rows => { const out = []; rows.forEach(row => { const co = g('D' + row); if (co != null && co !== '') { const d = g('A' + row); out.push({ desc: d == null ? '' : String(d), cost: co }); } }); return out; };
+  const taxType = (() => { const t = str('A123').toLowerCase(); return (t.indexOf('washington') >= 0 || t.indexOf('b&o') >= 0) ? 'washington_bo' : t.indexOf('no tax') >= 0 ? 'none' : 'oregon_cat'; })();
+  const est = {
+    material: { takeoff: num('D24'), lines: lines(CO_TPL_MAT_ROWS), markupPct: num('B32') * 100 },
+    equipment: { lines: lines(CO_TPL_EQ_ROWS), markupPct: num('B44') * 100 },
+    labor: { rows: {}, perDiemPerDay: num('B93'), markupPct: num('B94') * 100 },
+    subs: { lines: lines(CO_TPL_SUB_ROWS), markupPct: num('B105') * 100 },
+    indirects: { smallToolsPct: num('H108') * 100, consumablesPct: num('H109') * 100, siteIndirectsPct: num('H110') * 100, safetyPct: num('H113') * 100, deliveryCost: num('B111'), deliveryQty: num('C111'), rentals: num('D109'), permits: num('D113'), markupPct: num('B115') * 100 },
+    totals: { totalMarkupPct: num('B119') * 100, bond: num('D120'), ocip: num('D121'), contingency: num('D122'), taxType, roundTo: num('H125') },
+  };
+  estLaborRows().forEach(rr => { const hrow = CO_LABOR_ROW[rr.key]; if (!hrow) return; const st = g('B' + hrow), ot = g('C' + hrow), dt = g('D' + hrow), sh = g('E' + hrow); const cell = {}; if (st) cell.st = estNum(st); if (ot) cell.ot = estNum(ot); if (dt) cell.dt = estNum(dt); if (sh) cell.shift = estNum(sh); if (Object.keys(cell).length) est.labor.rows[rr.key] = cell; });
+  return { id: str('T2'), number: str('B5'), description: str('B7'), mod: str('T4'), rfiCcdAsi: str('T5'), est };
+}
+function coTemplateLooksLikeOurs(wb) { const ws = wb && wb.Sheets && wb.Sheets['CP Backup']; return !!(ws && ws['T1'] && String(ws['T1'].v) === CO_TPL_MARKER); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    6d1e. CHANGE-PROPOSAL ⇄ EXCEL SYNC  —  same as estimates, for change orders.
-   A CO with an estimate is mirrored to "Change Proposal.xlsx" in its ShareFile
-   folder (named input cells + live formulas). Two-way, newest-save-wins. A loose
-   CO proposal .xlsx dropped in the folder is offered for import in the Assign flow.
+   A CO with an estimate is mirrored to "Change Proposal.xlsm" (a byte-identical
+   copy of the real workbook with this CO's numbers injected) in its ShareFile
+   folder. Two-way, newest-save-wins. A loose CO proposal dropped in the folder is
+   offered for import in the Assign flow. Older ".xlsx" mirrors are still read.
    ═══════════════════════════════════════════════════════════════════════════ */
 const CO_N_LINES = 12;
+const CO_PROPOSAL_NAME = 'Change Proposal.xlsm';
+const CO_PROPOSAL_OLD = 'Change Proposal.xlsx';
 function buildCoWorkbook(c, rates, ctx) {
   ctx = ctx || {};
   const est = c.est || {};
@@ -6000,6 +6152,10 @@ function buildCoWorkbook(c, rates, ctx) {
   return { SheetNames: ['CO'], Sheets: { CO: ws }, Workbook: { Names: names } };
 }
 function parseCoWorkbook(wb) {
+  if (coTemplateLooksLikeOurs(wb)) return parseCoTemplate(wb);   // real-workbook mirror
+  return parseCoWorkbookLegacy(wb);                              // older named-cell .xlsx
+}
+function parseCoWorkbookLegacy(wb) {
   const wsName = (wb.SheetNames || []).indexOf('CO') >= 0 ? 'CO' : wb.SheetNames[0];
   const ws = wb.Sheets[wsName];
   const nameMap = {};
@@ -6026,6 +6182,7 @@ function parseCoWorkbook(wb) {
   return { id: str('CO_ID'), number: str('CO_NUMBER'), description: str('CO_DESC'), mod: str('CO_MOD'), rfiCcdAsi: str('CO_RCA'), est };
 }
 function coWorkbookLooksLikeOurs(wb) {
+  if (coTemplateLooksLikeOurs(wb)) return true;
   const names = (wb && wb.Workbook && wb.Workbook.Names) || [];
   return names.some(n => n.Name === 'CO_SCHEMA' || n.Name === 'CO_o_totalBid' || n.Name === 'CO_labor_start');
 }
@@ -6053,15 +6210,28 @@ async function writeCoFile(c, opts) {
   if (!jobFolder || !c || !c.est) return;
   if (coProposalDoc(c) && coInputSig(c) === c.coFileSig && !opts.force) return;
   try {
-    const XL = await loadSheetJS();
-    const wb = buildCoWorkbook(c, jobLaborRates(), { jobName: job.name, date: csvDate(today()) });
-    const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
-    const fname = 'Change Proposal.xlsx';
-    const f = new File([out], fname, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const rates = jobLaborRates();
+    const ctx = { jobName: job.name || '', jobNumber: job.number || job.jobNumber || '', customer: job.customer || job.owner || '', date: csvDate(today()) };
+    let out, fname, mime;
+    try {
+      // preferred: inject this CO's numbers into the user's REAL workbook (every sheet identical)
+      out = await buildCoXlsm(c, rates, ctx);
+      fname = CO_PROPOSAL_NAME;   // Change Proposal.xlsm
+      mime = 'application/vnd.ms-excel.sheet.macroEnabled.12';
+    } catch (tplErr) {
+      // fallback (template asset unreachable): the older generated-from-scratch .xlsx
+      console.warn('CO template unavailable, using legacy workbook:', tplErr && tplErr.message || tplErr);
+      const XL = await loadSheetJS();
+      out = XL.write(buildCoWorkbook(c, rates, ctx), { bookType: 'xlsx', type: 'array' });
+      fname = CO_PROPOSAL_OLD; mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    const f = new File([out], fname, { type: mime });
     const { dir, file } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
-    removeNumberedSiblings(coDocDir(c), fname).catch(() => {});   // sweep up any "Change Proposal (2).xlsx" duplicates
+    removeNumberedSiblings(coDocDir(c), fname).catch(() => {});                                  // sweep "Change Proposal (2)" duplicates
+    const otherName = fname === CO_PROPOSAL_NAME ? CO_PROPOSAL_OLD : CO_PROPOSAL_NAME;
+    removeNamedSibling(coDocDir(c), otherName).catch(() => {}); removeNumberedSiblings(coDocDir(c), otherName).catch(() => {});  // remove the other-format mirror so only one remains
     const existing = coProposalDoc(c);
-    if (existing) { existing.dir = dir; existing.file = file; existing.added = Date.now(); }
+    if (existing) { existing.dir = dir; existing.file = file; existing.name = fname; existing.added = Date.now(); }
     else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
     c.coFileSyncedAt = await coFileMtime(c);
     c.coFileSig = coInputSig(c);
@@ -6102,7 +6272,7 @@ async function reconcileCoFiles(opts) {
     try {
       if (!c.est) continue;
       const d = coProposalDoc(c);
-      if (d) removeNumberedSiblings(coDocDir(c), 'Change Proposal.xlsx').catch(() => {});   // sweep leftover numbered duplicates
+      if (d) { removeNumberedSiblings(coDocDir(c), CO_PROPOSAL_NAME).catch(() => {}); removeNumberedSiblings(coDocDir(c), CO_PROPOSAL_OLD).catch(() => {}); }   // sweep leftover numbered duplicates
       if (!d) { if (coInputSig(c) !== (c.coFileSig || null)) await writeCoFile(c); continue; }
       const fm = await coFileMtime(c);
       if (!fm) { await writeCoFile(c, { force: true }); continue; }
