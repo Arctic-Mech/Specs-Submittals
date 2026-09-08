@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.5';
+const APP_VERSION = 'v7.6';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2068,20 +2068,39 @@ async function uniqueFileName(dirHandle, name) {
   }
 }
 /* Write a file into files/<relDir>/, keeping its name; returns { dir, file }.
-   relDir may be nested (e.g. "Emails/RFI Answers"); each level is created. */
-async function putFileInDir(file, relDir, cleanName) {
+   relDir may be nested (e.g. "Emails/RFI Answers"); each level is created.
+   opts.overwrite keeps the exact name (for app-managed files that REPLACE a prior
+   version — the synced .xlsx, branded PDFs); without it, a name clash is de-duped
+   with " (2)" so a user's dropped file never clobbers an existing one. */
+async function putFileInDir(file, relDir, cleanName, opts) {
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
   let dirHandle = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
   for (const part of relDir.split('/').filter(Boolean)) {
     dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
   }
-  const fname = await uniqueFileName(dirHandle, cleanName);
+  const fname = (opts && opts.overwrite) ? cleanName : await uniqueFileName(dirHandle, cleanName);
   const fh = await dirHandle.getFileHandle(fname, { create: true });
   const w = await fh.createWritable();
   await w.write(file);
   await w.close();
   return { dir: relDir, file: fname };
 }
+/* Remove "<base> (N)<ext>" siblings of a canonical app-managed file — cleans up
+   the numbered duplicates an earlier build created before overwrite was used. */
+async function removeNumberedSiblings(relDir, canonicalName, keepSet) {
+  if (!jobFolder) return;
+  try {
+    const dh = await walkDir(await jobFolder.getDirectoryHandle(DOCS_DIR), relDir);
+    const dot = canonicalName.lastIndexOf('.');
+    const base = dot > 0 ? canonicalName.slice(0, dot) : canonicalName;
+    const ext = dot > 0 ? canonicalName.slice(dot) : '';
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('^' + esc(base) + ' \\(\\d+\\)' + esc(ext) + '$', 'i');
+    const names = []; for await (const e of dh.values()) if (e.kind === 'file' && re.test(e.name) && !(keepSet && keepSet.has(e.name))) names.push(e.name);
+    for (const n of names) { try { await dh.removeEntry(n); } catch (x) {} }
+  } catch (e) {}
+}
+function estFileKeepSet() { return new Set((estimates || []).map(x => estFileDesiredName(x)).concat((estimates || []).map(x => x.file && x.file.file).filter(Boolean))); }
 /* Write a PDF into files/<statusDir>/, keeping its name; returns { dir, file }. */
 async function putFile(file, statusId) {
   return putFileInDir(file, statusDirName(statusId), sanitizeFileName(file.name));
@@ -4752,7 +4771,7 @@ function exportChangeProposal(id) {
     const blob = doc.output('blob');
     // Save into the CO's ShareFile folder if loaded; always download too.
     (async () => {
-      if (jobFolder) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, coDocDir(c), base + '.pdf'); c.docs = (c.docs || []).filter(d => d.file !== file); c.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveCo(c); noteFolderChanged(); } catch (e) { console.error(e); } }
+      if (jobFolder) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, coDocDir(c), base + '.pdf', { overwrite: true }); removeNumberedSiblings(coDocDir(c), base + '.pdf').catch(() => {}); c.docs = (c.docs || []).filter(d => d.file !== file); c.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveCo(c); noteFolderChanged(); } catch (e) { console.error(e); } }
       doc.save(base + '.pdf');
       toast('Change Proposal PDF created');
       if (openCo === c.id) renderCoDrawer();
@@ -5286,7 +5305,7 @@ function exportEstimatePdf(id) {
     const base = (job.number ? job.number + '_' : '') + 'Estimate_' + String(e.name || '').replace(/[^\w.-]+/g, '-');
     const blob = doc.output('blob');
     (async () => {
-      if (jobFolder) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate'), base + '.pdf'); e.docs = (e.docs || []).filter(x => x.file !== file); e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveEstimate(e); noteFolderChanged(); } catch (x) { console.error(x); } }
+      if (jobFolder) { try { const eDir = ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate'); const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, eDir, base + '.pdf', { overwrite: true }); removeNumberedSiblings(eDir, base + '.pdf').catch(() => {}); e.docs = (e.docs || []).filter(x => x.file !== file); e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveEstimate(e); noteFolderChanged(); } catch (x) { console.error(x); } }
       doc.save(base + '.pdf');
       toast('Estimate summary PDF created');
     })();
@@ -5621,7 +5640,8 @@ async function writeEstimateFile(e, opts) {
     const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
     const desired = estFileDesiredName(e);
     const f = new File([out], desired, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired);
+    const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
+    removeNumberedSiblings(ESTIMATE_DIR, desired, estFileKeepSet()).catch(() => {});   // sweep "<name> (2).xlsx" duplicates (never another estimate's file)
     // remove a stale file left by a rename
     if (e.file && e.file.file && e.file.file !== file) { try { const d = await estDirHandle(false); await d.removeEntry(e.file.file); } catch (x) {} }
     e.file = { dir, file };
@@ -5663,6 +5683,7 @@ async function reconcileEstimateFiles(opts) {
   const now = Date.now(); if (!opts.force && now - _estReconcileAt < 2500) return; _estReconcileAt = now;
   for (const e of estimates) {
     try {
+      if (e.file && e.file.file) removeNumberedSiblings(ESTIMATE_DIR, estFileDesiredName(e), estFileKeepSet()).catch(() => {});   // sweep leftover numbered duplicates
       if (!e.file || !e.file.file) { if (!e.locked && estInputSig(e) !== (e.fileSig || null)) await writeEstimateFile(e); continue; }
       const fm = await estFileMtime(e);
       if (!fm) { if (!e.locked) await writeEstimateFile(e, { force: true }); continue; }   // file vanished — recreate
@@ -5990,7 +6011,8 @@ async function writeCoFile(c, opts) {
     const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
     const fname = 'Change Proposal.xlsx';
     const f = new File([out], fname, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const { dir, file } = await putFileInDir(f, coDocDir(c), fname);
+    const { dir, file } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
+    removeNumberedSiblings(coDocDir(c), fname).catch(() => {});   // sweep up any "Change Proposal (2).xlsx" duplicates
     const existing = coProposalDoc(c);
     if (existing) { existing.dir = dir; existing.file = file; existing.added = Date.now(); }
     else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
@@ -6033,6 +6055,7 @@ async function reconcileCoFiles(opts) {
     try {
       if (!c.est) continue;
       const d = coProposalDoc(c);
+      if (d) removeNumberedSiblings(coDocDir(c), 'Change Proposal.xlsx').catch(() => {});   // sweep leftover numbered duplicates
       if (!d) { if (coInputSig(c) !== (c.coFileSig || null)) await writeCoFile(c); continue; }
       const fm = await coFileMtime(c);
       if (!fm) { await writeCoFile(c, { force: true }); continue; }
@@ -8933,10 +8956,14 @@ async function migrateOldFolderFiles(handle) {
   await moveToLink(handle, ld, FOLDER_README, FOLDER_README);
   for (const nested of [LINK_DIR, ...LINK_DIR_OLDS]) { try { await ld.removeEntry(nested, { recursive: true }); } catch (e) {} }   // clear a stray nested link folder from a mis-pick
 }
-/* Copy everything under `src` into `dst` (recursively), preserving subfolders. */
+/* Merge everything under `src` into `dst` (recursively), preserving subfolders.
+   NEVER overwrites a file that already exists in `dst` — so re-running the
+   migration can't clobber a doc that was edited in the new folder. */
 async function copyDirInto(src, dst) {
   for await (const e of src.values()) {
     if (e.kind === 'file') {
+      let exists = true; try { await dst.getFileHandle(e.name); } catch (_) { exists = false; }
+      if (exists) continue;                                   // keep the newer copy in dst
       const blob = await e.getFile();
       const fh = await dst.getFileHandle(e.name, { create: true });
       const w = await fh.createWritable(); await w.write(blob); await w.close();
@@ -8945,9 +8972,24 @@ async function copyDirInto(src, dst) {
     }
   }
 }
+/* Remove a directory and everything under it, even when the browser/ShareFile
+   won't honour removeEntry({recursive:true}) — falls back to emptying it by hand. */
+async function removeDirDeep(parent, name) {
+  try { await parent.removeEntry(name, { recursive: true }); return true; } catch (e) {}
+  let dir; try { dir = await parent.getDirectoryHandle(name); } catch (e) { return true; }   // already gone
+  try {
+    for await (const e of dir.values()) {
+      if (e.kind === 'directory') await removeDirDeep(dir, e.name);
+      else { try { await dir.removeEntry(e.name); } catch (x) {} }
+    }
+    await parent.removeEntry(name);
+    return true;
+  } catch (e) { return false; }
+}
 /* Migrate the PDF tree from any earlier-named docs folder ("files") into the
-   current "Dingus Documents" folder, then remove the old one. Copy-before-delete,
-   so nothing is lost if it's interrupted. Runs before anything reads the tree. */
+   current "Dingus Documents" folder, then remove the old one. Merge (never
+   overwrite) so a re-run can't clobber edited files, and delete robustly so the
+   old folder actually goes away instead of lingering beside the new one. */
 async function migrateDocsFolder(handle) {
   for (const oldName of DOCS_DIR_OLDS) {
     let src; try { src = await handle.getDirectoryHandle(oldName); } catch (e) { continue; }   // no old folder → nothing to do
@@ -8956,7 +8998,7 @@ async function migrateDocsFolder(handle) {
       const dst = await handle.getDirectoryHandle(DOCS_DIR, { create: true });
       try { await copyDirInto(src, dst); } catch (e) { continue; }   // copy failed — leave the old folder intact, retry next load
     }
-    try { await handle.removeEntry(oldName, { recursive: true }); } catch (e) {}
+    await removeDirDeep(handle, oldName);
   }
 }
 /* Keep the folder self-explanatory and self-healing: reorganise the bookkeeping
