@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.12';
+const APP_VERSION = 'v7.13';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6197,6 +6197,140 @@ function coTemplateLooksLikeOurs(wb) {
   if (ws['T1'] && String(ws['T1'].v) === CO_TPL_MARKER) return true;       // app-generated (marker)
   const lbl = a => String((ws[a] || {}).v || '').trim();                   // a pristine Change Order workbook
   return lbl('A125') === 'Total Bid' && lbl('A118') === 'Total Costs';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIVE WORKBOOK ENGINE — recomputes a SheetJS workbook from its OWN formulas so
+   the website can drive the whole change-order estimate (takeoff → Crew Mix →
+   CP Backup → total) with no Excel. Multi-sheet refs, named ranges, whole-column
+   ranges, and the function set these workbooks use. Per-instance cache + input
+   overrides; verified to reproduce the workbook's own numbers to the cent.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function makeWbEngine(wb) {
+  const XL = window.XLSX;
+  const NAMED = {};
+  (wb.Workbook && wb.Workbook.Names || []).forEach(n => { if (!n.Ref || /\[\d+\]/.test(n.Ref)) return; const m = n.Ref.match(/^(?:'([^']+)'|([A-Za-z0-9_ ]+))!(.+)$/); if (m) NAMED[n.Name] = { sheet: (m[1] || m[2]), a1: m[3].replace(/\$/g, '') }; });
+  const maxRowOf = {};
+  wb.SheetNames.forEach(s => { const ws = wb.Sheets[s]; const r = ws && ws['!ref'] ? XL.utils.decode_range(ws['!ref']) : { e: { r: 0 } }; maxRowOf[s] = r.e.r; });
+  const hiddenOf = {};
+  ((wb.Workbook && wb.Workbook.Sheets) || []).forEach((s, i) => { hiddenOf[wb.SheetNames[i]] = s && s.Hidden || 0; });
+  let cache = {}; const stackSet = {}; const overrides = {};
+  const okey = (s, a) => s + '!' + a;
+  function cellRaw(sheet, addr) { const ws = wb.Sheets[sheet]; return ws ? ws[addr] : undefined; }
+  function num(v) { if (v === true) return 1; if (v === false) return 0; if (v == null || v === '') return 0; const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; }
+  function getCell(sheet, addr) {
+    const key = okey(sheet, addr);
+    if (key in overrides) return overrides[key];
+    if (key in cache) return cache[key];
+    if (stackSet[key]) { const c = cellRaw(sheet, addr); return c ? (c.v != null ? c.v : 0) : 0; }
+    stackSet[key] = 1;
+    const c = cellRaw(sheet, addr); let out;
+    if (!c) out = 0;
+    else if (c.f != null) { try { out = evalFormula(c.f, sheet); if (typeof out === 'number' && !isFinite(out)) out = (c.v != null ? c.v : 0); } catch (e) { out = (c.v != null ? c.v : 0); } }
+    else out = (c.v != null ? c.v : (c.w != null ? c.w : 0));
+    delete stackSet[key]; cache[key] = out; return out;
+  }
+  function tokenize(f) {
+    const t = []; let i = 0;
+    while (i < f.length) {
+      const ch = f[i];
+      if (ch === ' ') { i++; continue; }
+      if (ch === '"') { let j = i + 1, s = ''; while (j < f.length) { if (f[j] === '"' && f[j + 1] === '"') { s += '"'; j += 2; continue; } if (f[j] === '"') break; s += f[j++]; } t.push({ t: 'str', v: s }); i = j + 1; continue; }
+      if (ch === "'") { let j = i + 1, s = ''; while (j < f.length && f[j] !== "'") s += f[j++]; j++; let rest = ''; if (f[j] === '!') { j++; while (j < f.length && /[A-Za-z0-9_.$:]/.test(f[j])) rest += f[j++]; } t.push({ t: 'ref', sheet: s, body: rest }); i = j; continue; }
+      if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(f[i + 1]))) { let j = i, s = ''; while (j < f.length && /[0-9.]/.test(f[j])) s += f[j++]; if (f[j] === 'E' || f[j] === 'e') { s += f[j++]; if (f[j] === '+' || f[j] === '-') s += f[j++]; while (j < f.length && /[0-9]/.test(f[j])) s += f[j++]; } t.push({ t: 'num', v: parseFloat(s) }); i = j; continue; }
+      if (/[A-Za-z_$]/.test(ch)) { let j = i, s = ''; while (j < f.length && /[A-Za-z0-9_.$]/.test(f[j])) s += f[j++]; if (f[j] === '!') { j++; let rest = ''; while (j < f.length && /[A-Za-z0-9_.$:]/.test(f[j])) rest += f[j++]; t.push({ t: 'ref', sheet: s, body: rest }); i = j; continue; } t.push({ t: 'id', v: s }); i = j; continue; }
+      if (ch === '<' && f[i + 1] === '=') { t.push({ t: 'op', v: '<=' }); i += 2; continue; }
+      if (ch === '>' && f[i + 1] === '=') { t.push({ t: 'op', v: '>=' }); i += 2; continue; }
+      if (ch === '<' && f[i + 1] === '>') { t.push({ t: 'op', v: '<>' }); i += 2; continue; }
+      if ('+-*/^&()=<>,:%'.indexOf(ch) >= 0) { t.push({ t: 'op', v: ch }); i++; continue; }
+      i++;
+    }
+    return t;
+  }
+  function refToCells(sheet, body) {
+    if (NAMED[body]) { const nm = NAMED[body]; return refToCells(nm.sheet, nm.a1); }
+    body = body.replace(/\$/g, '');
+    if (body.indexOf(':') >= 0) {
+      const parts = body.split(':'), a = parts[0], b = parts[1];
+      if (/^[A-Z]+$/.test(a) && /^[A-Z]+$/.test(b)) { const c1 = XL.utils.decode_col(a), c2 = XL.utils.decode_col(b); const out = []; for (let c = c1; c <= c2; c++) for (let r = 0; r <= (maxRowOf[sheet] || 0); r++) out.push([sheet, XL.utils.encode_cell({ r, c })]); return { kind: 'range', cells: out }; }
+      const ca = XL.utils.decode_cell(a), cb = XL.utils.decode_cell(b); const out = []; for (let r = Math.min(ca.r, cb.r); r <= Math.max(ca.r, cb.r); r++) for (let c = Math.min(ca.c, cb.c); c <= Math.max(ca.c, cb.c); c++) out.push([sheet, XL.utils.encode_cell({ r, c })]); return { kind: 'range', cells: out };
+    }
+    return { kind: 'cell', sheet, addr: body };
+  }
+  function rangeValues(sheet, body) { const r = refToCells(sheet, body); if (r.kind === 'cell') return [getCell(r.sheet, r.addr)]; return r.cells.map(x => getCell(x[0], x[1])); }
+  function refValue(sheet, body) { const r = refToCells(sheet, body); if (r.kind === 'cell') return getCell(r.sheet, r.addr); const v = r.cells.map(x => getCell(x[0], x[1])); return v.length ? v[0] : 0; }
+  function evalFormula(f, sheet) {
+    const toks = tokenize(f); let p = 0;
+    const peek = () => toks[p], next = () => toks[p++];
+    function parseExpr() { return parseCmp(); }
+    function parseCmp() { let l = parseConcat(); while (peek() && peek().t === 'op' && ['=', '<', '>', '<=', '>=', '<>'].indexOf(peek().v) >= 0) { const op = next().v; const r = parseConcat(); l = cmp(op, l, r); } return l; }
+    function parseConcat() { let l = parseAdd(); while (peek() && peek().t === 'op' && peek().v === '&') { next(); const r = parseAdd(); l = ('' + toStr(l)) + toStr(r); } return l; }
+    function parseAdd() { let l = parseMul(); while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) { const op = next().v; const r = parseMul(); l = op === '+' ? nv(l) + nv(r) : nv(l) - nv(r); } return l; }
+    function parseMul() { let l = parsePow(); while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/')) { const op = next().v; const r = parsePow(); l = op === '*' ? nv(l) * nv(r) : nv(l) / nv(r); } return l; }
+    function parsePow() { let l = parseUnary(); while (peek() && peek().t === 'op' && peek().v === '^') { next(); const r = parseUnary(); l = Math.pow(nv(l), nv(r)); } return l; }
+    function parseUnary() { if (peek() && peek().t === 'op' && peek().v === '-') { next(); return -nv(parseUnary()); } if (peek() && peek().t === 'op' && peek().v === '+') { next(); return parseUnary(); } return parsePrimary(); }
+    function parsePrimary() { let v = parseAtom(); while (peek() && peek().t === 'op' && peek().v === ':') { next(); const r = parseAtom(); v = mergeRange(v, r); } return v; }
+    function mergeRange(a, b) { const sa = (a && a.__ref) ? a.sheet : sheet; const ba = (a && a.__ref) ? a.body : String(a); const bb = (b && b.__ref) ? b.body : String(b); return { __ref: true, sheet: sa, body: ba + ':' + bb }; }
+    function parseAtom() {
+      const tk = peek(); if (!tk) return 0;
+      if (tk.t === 'num') { next(); return tk.v; }
+      if (tk.t === 'str') { next(); return tk.v; }
+      if (tk.t === 'ref') { next(); return { __ref: true, sheet: tk.sheet, body: tk.body }; }
+      if (tk.t === 'op' && tk.v === '(') { next(); const v = parseExpr(); if (peek() && peek().v === ')') next(); return v; }
+      if (tk.t === 'id') { next(); if (peek() && peek().t === 'op' && peek().v === '(') { next(); const args = []; if (!(peek() && peek().v === ')')) { do { args.push(parseExpr()); } while (peek() && peek().v === ',' && next()); } if (peek() && peek().v === ')') next(); return callFn(tk.v.toUpperCase(), args, sheet); } return { __ref: true, sheet, body: tk.v }; }
+      next(); return 0;
+    }
+    function deref(v) { if (v && v.__ref) return refValue(v.sheet, v.body); return v; }
+    const nv = v => num(deref(v));
+    function toStr(v) { v = deref(v); if (v == null) return ''; return String(v); }
+    function cmp(op, l, r) { l = deref(l); r = deref(r); if (typeof l === 'string' || typeof r === 'string') { const ls = String(l), rs = String(r); if (op === '=') return ls === rs; if (op === '<>') return ls !== rs; l = num(l); r = num(r); } else { l = num(l); r = num(r); } if (op === '=') return l === r; if (op === '<>') return l !== r; if (op === '<') return l < r; if (op === '>') return l > r; if (op === '<=') return l <= r; return l >= r; }
+    function argVals(v) { if (v && v.__ref) return rangeValues(v.sheet, v.body); return [deref(v)]; }
+    function callFn(name, args, sheet) {
+      const A = i => deref(args[i]);
+      if (name === 'SUM') { let s = 0; args.forEach(a => argVals(a).forEach(x => s += num(x))); return s; }
+      if (name === 'ROUND') { const x = num(A(0)), d = num(A(1)), m = Math.pow(10, d); return Math.round(x * m + (x >= 0 ? 1e-9 : -1e-9)) / m; }
+      if (name === 'ROUNDUP') { const x = num(A(0)), d = num(A(1)), m = Math.pow(10, d), s = x < 0 ? -1 : 1; return s * Math.ceil(Math.abs(x) * m - 1e-9) / m; }
+      if (name === 'ROUNDDOWN') { const x = num(A(0)), d = num(A(1)), m = Math.pow(10, d), s = x < 0 ? -1 : 1; return s * Math.floor(Math.abs(x) * m + 1e-9) / m; }
+      if (name === 'MROUND') { const x = num(A(0)), m = num(A(1)); if (!m) return 0; return Math.round(x / m) * m; }
+      if (name === 'ABS') return Math.abs(num(A(0)));
+      if (name === 'INT') return Math.floor(num(A(0)));
+      if (name === 'MIN') { let s = Infinity; args.forEach(a => argVals(a).forEach(x => { const n = num(x); if (n < s) s = n; })); return isFinite(s) ? s : 0; }
+      if (name === 'MAX') { let s = -Infinity; args.forEach(a => argVals(a).forEach(x => { const n = num(x); if (n > s) s = n; })); return isFinite(s) ? s : 0; }
+      if (name === 'IF') { const c = A(0); const t = (typeof c === 'boolean') ? c : num(c) !== 0; return t ? A(1) : (args.length > 2 ? A(2) : false); }
+      if (name === 'IFERROR') { try { const v = A(0); return v; } catch (e) { return A(1); } }
+      if (name === 'AND') { let r = true; args.forEach(a => argVals(a).forEach(x => { if (!(x === true || num(x) !== 0)) r = false; })); return r; }
+      if (name === 'OR') { let r = false; args.forEach(a => argVals(a).forEach(x => { if (x === true || num(x) !== 0) r = true; })); return r; }
+      if (name === 'NOT') { const c = A(0); return !((typeof c === 'boolean') ? c : num(c) !== 0); }
+      if (name === 'ISNUMBER') { return typeof A(0) === 'number'; }
+      if (name === 'ISBLANK') { const v = A(0); return v == null || v === ''; }
+      if (name === 'LEFT') { const s = String(A(0) == null ? '' : A(0)); const n = args.length > 1 ? num(A(1)) : 1; return s.slice(0, n); }
+      if (name === 'RIGHT') { const s = String(A(0) == null ? '' : A(0)); const n = args.length > 1 ? num(A(1)) : 1; return s.slice(s.length - n); }
+      if (name === 'LEN') { return String(A(0) == null ? '' : A(0)).length; }
+      if (name === 'MATCH') { const lv = A(0); const arr = argVals(args[1]); const mt = args.length > 2 ? num(A(2)) : 1; for (let i = 0; i < arr.length; i++) { if (mt === 0 ? String(arr[i]) === String(lv) : num(arr[i]) === num(lv)) return i + 1; } return 0; }
+      if (name === 'INDEX') { const arr = argVals(args[0]); const idx = num(A(1)); return arr[idx - 1] != null ? arr[idx - 1] : 0; }
+      if (name === 'SUMIF') { const rng = argVals(args[0]); const crit = A(1); const sumr = args.length > 2 ? argVals(args[2]) : rng; let s = 0; for (let i = 0; i < rng.length; i++) if (matchCrit(rng[i], crit)) s += num(sumr[i]); return s; }
+      if (name === 'SUMIFS') { const sumr = argVals(args[0]); let idxs = sumr.map((_, i) => i); for (let a = 1; a + 1 < args.length; a += 2) { const rng = argVals(args[a]); const crit = A(a + 1); idxs = idxs.filter(i => matchCrit(rng[i], crit)); } let s = 0; idxs.forEach(i => s += num(sumr[i])); return s; }
+      if (name === 'COUNTIF') { const rng = argVals(args[0]); const crit = A(1); let n = 0; rng.forEach(x => { if (matchCrit(x, crit)) n++; }); return n; }
+      if (name === 'VLOOKUP') { const lv = A(0); if (!args[1] || !args[1].__ref) return 0; const tbl = refToCells(args[1].sheet, args[1].body); const col = num(A(2)); const approx = args.length > 3 ? (A(3) === true || num(A(3)) !== 0) : true; if (tbl.kind !== 'range') return 0; const rows = {}; tbl.cells.forEach(x => { const dc = XL.utils.decode_cell(x[1]); (rows[dc.r] = rows[dc.r] || {})[dc.c] = getCell(x[0], x[1]); }); const rkeys = Object.keys(rows).map(Number).sort((a, b) => a - b); const cols = tbl.cells.map(x => XL.utils.decode_cell(x[1]).c); const c0 = Math.min.apply(null, cols); let best = 0; for (let k = 0; k < rkeys.length; k++) { const rk = rkeys[k]; const first = rows[rk][c0]; if (approx) { if (num(first) <= num(lv)) best = rows[rk][c0 + col - 1]; else break; } else { if (String(first) === String(lv)) return rows[rk][c0 + col - 1]; } } return best != null ? best : 0; }
+      return 0;
+    }
+    function matchCrit(val, crit) { crit = deref(crit); if (typeof crit === 'string') { const m = crit.match(/^(<=|>=|<>|<|>|=)(.*)$/); if (m) { const op = m[1], rhs = m[2], rn = num(rhs), vn = num(val); if (op === '=') return String(val) === rhs || vn === rn; if (op === '<>') return String(val) !== rhs; if (op === '<') return vn < rn; if (op === '>') return vn > rn; if (op === '<=') return vn <= rn; return vn >= rn; } if (/[*?]/.test(crit)) { const re = new RegExp('^' + crit.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); return re.test(String(val)); } return String(val) === crit; } return num(val) === num(crit); }
+    const result = parseExpr();
+    return (result && result.__ref) ? refValue(result.sheet, result.body) : result;
+  }
+  return {
+    sheetNames: wb.SheetNames.slice(),
+    visibleSheets: wb.SheetNames.filter(s => (hiddenOf[s] || 0) !== 2),
+    get: getCell,
+    raw: cellRaw,
+    isInput(sheet, addr) { const c = cellRaw(sheet, addr); return !c || (c.f == null); },
+    setInput(sheet, addr, val) { overrides[okey(sheet, addr)] = val; cache = {}; },
+    clearInput(sheet, addr) { delete overrides[okey(sheet, addr)]; cache = {}; },
+    getOverride(sheet, addr) { const k = okey(sheet, addr); return k in overrides ? overrides[k] : undefined; },
+    overrides,
+    range(s) { const ws = wb.Sheets[s]; return (ws && ws['!ref']) ? XL.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }; },
+    recalc() { cache = {}; },
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
