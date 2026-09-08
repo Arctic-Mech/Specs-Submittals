@@ -308,6 +308,32 @@ estimate to freeze it as a snapshot: locked estimates are read-only, so later ed
 can't override them (duplicate or unlock to change one). Each estimate's summary PDF
 files into `Dingus Documents/Estimates/<name>/`.
 
+### Two-way Excel sync
+
+Every estimate is also mirrored to a **real Excel file** at
+`Dingus Documents/Estimates/<name>.xlsx`. It opens and recalculates like the
+original bid sheet — the input cells (base hours, rates, %, $ amounts) are editable
+and the recap totals are **live formulas** (they include the correct cached values,
+so the total reads right even in a preview). The workbook computes the same
+`$2,055,185` the website does, to the cent.
+
+It syncs **both directions**, newest-save-wins:
+
+- **Edit on the website → the Excel file updates.** Saving in the estimator writes
+  the `.xlsx` a couple of seconds later.
+- **Edit the Excel file → the website updates.** When the job's folder is loaded
+  (Chrome/Edge desktop), the app checks the file whenever you open the Estimates
+  tab, load the folder, or switch back to the browser tab; if the Excel was saved
+  more recently, it reads the changes back in. The **↻ From Excel** button forces a
+  check.
+
+Inputs are read back by **named cells**, so they survive inserting or moving rows in
+Excel. A **locked** estimate is never overwritten from its file — it stays the frozen
+snapshot. Because the round-trip uses the File System Access API, the Excel side of
+the sync happens on a computer with the folder loaded in Chrome or Edge (the same
+requirement as the PDF features); editing the file in ShareFile's web preview or on a
+phone is picked up the next time someone opens the job on a synced desktop.
+
 ## Contracts
 
 The **Contracts** tab holds the job's contracts in two sections — the **GC

@@ -840,6 +840,10 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 .cmp-delta { display: block; font-size: 10.5px; font-weight: 600; }
 .cmp-delta.up { color: var(--red, #c0392b); }
 .cmp-delta.down { color: var(--green, #1e8e3e); }
+.est-sync { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; border-radius: 20px; padding: 1px 8px; white-space: nowrap; }
+.est-sync.ok { color: var(--green, #1e8e3e); background: color-mix(in srgb, var(--green, #1e8e3e) 12%, transparent); }
+.est-sync.pending { color: var(--amber, #b7791f); background: color-mix(in srgb, var(--amber, #b7791f) 14%, transparent); }
+.est-sync.none { color: var(--text-2); background: var(--surface-2); }
 </style>
 </head>
 <body>
@@ -1013,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.2';
+const APP_VERSION = 'v7.3';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3195,7 +3199,7 @@ function renderJob() {
   if (jobTab === 'quotes') { renderLedger('quotes'); return; }
   if (jobTab === 'pos') { renderLedger('pos'); return; }
   if (jobTab === 'contracts') { renderContracts(); return; }
-  if (jobTab === 'estimates') { renderEstimates(); return; }
+  if (jobTab === 'estimates') { renderEstimates(); if (jobFolder) reconcileEstimateFiles().catch(() => {}); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
   if (jobTab === 'billing') { renderBilling(); return; }
 
@@ -4827,7 +4831,8 @@ function computeProjectEstimate(e) {
   const laborVal = { plumb: rate.plumb * hrs.plumb, pipe: rate.pipe * hrs.pipe, smField: rate.smField * hrs.smField, smShop: rate.smShop * hrs.smShop };
   const subtotalLabor = laborVal.plumb + laborVal.pipe + laborVal.smField + laborVal.smShop;
   const ocip = e.ocip || {};
-  const ocipDeduct = (ocip.mode && ocip.mode !== 'none') ? -Math.abs(estNum(ocip.deduct)) : 0;
+  const ocipDeduct = (e.ocipDeduct !== undefined && e.ocipDeduct !== '') ? estNum(e.ocipDeduct)
+    : ((ocip.mode && ocip.mode !== 'none') ? -Math.abs(estNum(ocip.deduct)) : 0);
   const totalLabor = subtotalLabor + ocipDeduct;
   // 4. material
   const totalMaterial = estNum(mat.plumb) + estNum(mat.pipe) + estNum(mat.sm);
@@ -4852,7 +4857,8 @@ function computeProjectEstimate(e) {
   const oANDp = estRoundUp(estNum(e.oANDpPct) * (directCosts - totalSubs) - estNum(e.emoReduce), 0);
   const projectSubtotal = directCosts + subMarkup + equipMarkup + oANDp;
   // 9. recovery, misc, bond, permits
-  const marketRecovery = -(e.workRecovery || []).reduce((a, w) => { const b = estNum(w.hours), mx = estNum(w.maxHours); return a + estRound(estNum(w.ratePerHr) * (mx > 0 && mx < b ? mx : b), 0); }, 0);
+  const marketRecovery = (e.marketRecovery !== undefined && e.marketRecovery !== '') ? estNum(e.marketRecovery)
+    : -(e.workRecovery || []).reduce((a, w) => { const b = estNum(w.hours), mx = estNum(w.maxHours); return a + estRound(estNum(w.ratePerHr) * (mx > 0 && mx < b ? mx : b), 0); }, 0);
   const misc = estNum(e.misc);
   const permits = e.permits ? ['plumbing', 'hvac', 'medGas', 'boiler', 'specialInsp'].reduce((a, k) => a + estNum(e.permits[k]), 0) : 0;
   const sellBeforeBond = projectSubtotal + marketRecovery + misc + permits;
@@ -4881,7 +4887,7 @@ function defaultEstimate() {
     material: { plumb: '', pipe: '', sm: '' },
     adders: JSON.parse(JSON.stringify(EST_ADDERS)),
     rates: { plumb: { st: 129.55, ot: 194.32 }, pipe: { st: 129.55, ot: 194.32 }, smField: { st: 97.32, ot: 130.06 }, smShop: { st: 106.5, ot: 130.06 } },
-    ocip: { mode: 'none', deduct: '' },
+    ocip: { mode: 'none', deduct: '' }, ocipDeduct: '', marketRecovery: '',
     subs: [],
     subMarkupPct: 0.10,
     supervision: { pmPct: 0.10, pmRate: 112.52, smFieldSupPct: 0.15, smFieldSupRate: 109.28, plumbSupPct: 0.15, plumbSupRate: 134.26, pipeSupPct: 0.15, pipeSupRate: 134.26 },
@@ -4917,6 +4923,7 @@ async function saveEstimate(e) {
   e.updated = Date.now();
   try { await FB.setDoc(estimateRef(job.id, e.id), clean(e)); }
   catch (err) { toast(writeError(err), true); }
+  if (typeof scheduleEstFileFlush === 'function') scheduleEstFileFlush(e);   // mirror web edits to the .xlsx
 }
 function newEstimate() {
   if (!job) return;
@@ -4979,9 +4986,11 @@ function renderEstimates() {
         <div class="est-card-name">${esc(e.name || 'Untitled estimate')} ${e.locked ? '<span class="lock-badge">🔒 Locked</span>' : ''}</div>
         <div class="est-card-total">${esc(fmtMoney(r.totalBid) || '$0')}</div>
         <div class="est-card-meta">${esc(fmtMoney(r.directCosts) || '$0')} direct · ${esc(fmtMoney(round2(r.totalBid - r.directCosts)) || '$0')} markup/tax · ${r.totalFieldHours ? Math.round(r.totalFieldHours) + ' fld hrs' : 'no hours'}${e.updated ? ' · ' + esc(estShortDate(e.updated)) : ''}</div>
+        <div class="est-card-meta">${estSyncStatusHtml(e)}</div>
       </div>
       <div class="est-card-actions">
         <button class="btn sm" onclick="openEstimateEditor('${e.id}')">${e.locked ? 'View' : 'Open'}</button>
+        <button class="btn sm ghost" onclick="openEstimateExcel('${e.id}')" title="Open the Excel copy from the ShareFile folder">Excel</button>
         <button class="btn sm ghost" onclick="duplicateEstimate('${e.id}')" title="Duplicate">⿻</button>
         <button class="btn sm ghost" onclick="toggleLockEstimate('${e.id}')" title="${e.locked ? 'Unlock' : 'Lock so it can’t change'}">${e.locked ? '🔓' : '🔒'}</button>
         <button class="icon-btn" onclick="deleteEstimate('${e.id}')" title="Delete" ${e.locked ? 'disabled' : ''}>🗑</button>
@@ -5084,13 +5093,16 @@ function renderEstimateEditor() {
     <div class="modal-head">
       <input class="est-title" ${d} value="${esc(e.name || '')}" placeholder="Estimate name" onchange="renameEstimate('${e.id}',this.value)">
       ${ro ? '<span class="lock-badge">🔒 Locked</span>' : ''}
+      ${estSyncStatusHtml(e)}
+      <button class="btn sm ghost" onclick="openEstimateExcel('${e.id}')" title="Open the Excel copy">Excel</button>
+      ${ro ? '' : `<button class="btn sm ghost" onclick="importEstimateFromFile(estById('${e.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the Excel file">↻ From Excel</button>`}
       <button class="btn sm" onclick="exportEstimatePdf('${e.id}')">⭳ PDF</button>
       <button class="btn sm ghost" onclick="duplicateEstimate('${e.id}')">Duplicate</button>
       <button class="btn sm ghost" onclick="toggleLockEstimate('${e.id}')">${ro ? '🔓 Unlock' : '🔒 Lock'}</button>
       <button class="icon-btn" onclick="closeEstimateEditor()">✕</button>
     </div>
     <div class="modal-body flush">
-    ${ro ? '<div class="lr-note" style="margin:12px 16px 0">This estimate is <b>locked</b> — a fixed snapshot that changes can’t override. <button class="btn sm" onclick="duplicateEstimate(\'' + e.id + '\')">Duplicate to edit</button> or unlock it.</div>' : ''}
+    <div class="lr-note" style="margin:12px 16px 0">This estimate is mirrored to <b>Dingus Documents/Estimates/</b> as a live Excel file. Edit it here or in Excel — whichever you save last wins. ${ro ? 'It is <b>locked</b>: a fixed snapshot that changes can’t override — <button class="btn sm" onclick="duplicateEstimate(\'' + e.id + '\')">Duplicate to edit</button> or unlock it.' : 'Excel edits are picked up when the folder is loaded here (Chrome/Edge desktop).'}</div>
     <div class="est-wrap">
       <div class="est-main">
         <div class="est-sec">
@@ -5155,6 +5167,8 @@ function renderEstimateEditor() {
         <div class="est-sec">
           <h4>Markups, bond, permits &amp; tax</h4>
           <div class="est-inrow"><span>Overhead &amp; profit %</span>${pctf('oANDpPct', e.oANDpPct)}</div>
+          <div class="est-inrow"><span>OCIP labor deduct $ (negative)</span>${money('ocipDeduct', e.ocipDeduct)}</div>
+          <div class="est-inrow"><span>Market recovery $ (credit, negative)</span>${money('marketRecovery', e.marketRecovery)}</div>
           <div class="est-inrow"><span>Miscellaneous / contingency $</span>${money('misc', e.misc)}</div>
           <div class="est-inrow"><span>Bond required</span><label class="est-check"><input type="checkbox" ${d} ${e.bond && e.bond.required ? 'checked' : ''} onchange="estSet('bond.required',this.checked);estSaveSoon2()"> yes (bracket schedule)</label></div>
           <div class="est-inrow"><span>Permits — Plumbing</span>${money('permits.plumbing', e.permits.plumbing)}</div>
@@ -5270,6 +5284,413 @@ function exportEstimatePdf(id) {
       toast('Estimate summary PDF created');
     })();
   }).catch(x => { console.error(x); toast('Could not build the PDF: ' + (x.message || x), true); });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6d1d. ESTIMATE ⇄ EXCEL SYNC  —  each estimate is mirrored to a real .xlsx in
+   Dingus Documents/Estimates/. The workbook has named input cells + live recap
+   formulas (opens and recalculates like the original sheet). Two-way: editing
+   the website writes the file; editing the file (in Excel, on a machine with the
+   folder loaded) is read back into the website. Newest save wins.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let _sheetjsP = null;
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!_sheetjsP) _sheetjsP = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => res(window.XLSX);
+    s.onerror = () => { _sheetjsP = null; rej(new Error('Could not load the spreadsheet engine — check the connection and try again.')); };
+    document.head.appendChild(s);
+  });
+  return _sheetjsP;
+}
+const EST_X_TRADES = EST_TRADE_META.map(m => m.key);
+const EST_X_TLABEL = (() => { const o = {}; EST_TRADE_META.forEach(m => o[m.key] = m.label); return o; })();
+const EST_X_ADDERS = EST_ADDERS.map(a => [a.key, a.label]);
+const EST_N_SUBS = 15, EST_N_GCS = 15, EST_N_EQUIP = 15;
+
+/* ---- minimal Excel-formula evaluator (stamps cached values so previewers and
+   SheetJS keep the formula cells; Excel still recomputes live on edit) ---- */
+function estEvalWb(ws, names) {
+  const nameMap = {};
+  (names || []).forEach(n => { const m = n.Ref.match(/!\$?([A-Z]+)\$?(\d+)/); if (m) nameMap[n.Name] = m[1] + m[2]; });
+  const cache = {}, stack = {};
+  function cellVal(addr) {
+    if (addr in cache) return cache[addr];
+    if (stack[addr]) throw new Error('cycle');
+    stack[addr] = 1;
+    const c = ws[addr]; let out;
+    if (!c) out = 0; else if (c.f != null) out = evalFormula(c.f); else if (typeof c.v === 'number') out = c.v; else out = (c.v == null ? 0 : c.v);
+    delete stack[addr]; cache[addr] = out; return out;
+  }
+  const resolveRef = tok => nameMap[tok] || tok.replace(/\$/g, '');
+  function tokenize(f) {
+    const toks = []; let i = 0;
+    while (i < f.length) {
+      const ch = f[i];
+      if (ch === ' ') { i++; continue; }
+      if (ch === '"') { let j = i + 1, s = ''; while (j < f.length && f[j] !== '"') s += f[j++]; toks.push({ t: 'str', v: s }); i = j + 1; continue; }
+      if (/[0-9.]/.test(ch)) { let j = i, s = ''; while (j < f.length && /[0-9.]/.test(f[j])) s += f[j++]; toks.push({ t: 'num', v: parseFloat(s) }); i = j; continue; }
+      if (/[A-Za-z_$]/.test(ch)) { let j = i, s = ''; while (j < f.length && /[A-Za-z0-9_$.&]/.test(f[j])) s += f[j++]; toks.push({ t: 'id', v: s }); i = j; continue; }
+      if ('+-*/(),:=<>'.indexOf(ch) >= 0) {
+        if ((ch === '<' || ch === '>') && f[i + 1] === '=') { toks.push({ t: 'op', v: ch + '=' }); i += 2; continue; }
+        if (ch === '<' && f[i + 1] === '>') { toks.push({ t: 'op', v: '<>' }); i += 2; continue; }
+        toks.push({ t: 'op', v: ch }); i++; continue;
+      }
+      throw new Error('bad char');
+    }
+    return toks;
+  }
+  function evalFormula(f) {
+    const toks = tokenize(f); let p = 0;
+    const peek = () => toks[p], nx = () => toks[p++];
+    const num = x => typeof x === 'number' ? x : (typeof x === 'boolean' ? (x ? 1 : 0) : (parseFloat(x) || 0));
+    function parseExpr() { return parseCompare(); }
+    function parseCompare() {
+      let l = parseAdd();
+      while (peek() && peek().t === 'op' && ['=', '<', '>', '<=', '>=', '<>'].indexOf(peek().v) >= 0) {
+        const op = nx().v, r = parseAdd();
+        if (op === '=') l = (l === r || String(l) === String(r)); else if (op === '<') l = l < r; else if (op === '>') l = l > r; else if (op === '<=') l = l <= r; else if (op === '>=') l = l >= r; else l = !(l === r);
+      }
+      return l;
+    }
+    function parseAdd() { let l = parseMul(); while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) { const op = nx().v, r = parseMul(); l = op === '+' ? num(l) + num(r) : num(l) - num(r); } return l; }
+    function parseMul() { let l = parseUnary(); while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/')) { const op = nx().v, r = parseUnary(); l = op === '*' ? num(l) * num(r) : num(l) / num(r); } return l; }
+    function parseUnary() { if (peek() && peek().t === 'op' && peek().v === '-') { nx(); return -parseUnary(); } return parsePrimary(); }
+    function parsePrimary() {
+      const tk = peek(); if (!tk) return 0;
+      if (tk.t === 'num') { nx(); return tk.v; }
+      if (tk.t === 'str') { nx(); return tk.v; }
+      if (tk.t === 'op' && tk.v === '(') { nx(); const v = parseExpr(); if (peek() && peek().v === ')') nx(); return v; }
+      if (tk.t === 'id') {
+        nx(); const id = tk.v;
+        if (peek() && peek().t === 'op' && peek().v === '(') {
+          nx(); const args = [];
+          if (!(peek() && peek().v === ')')) { do { args.push(parseArg()); } while (peek() && peek().v === ',' && nx()); }
+          if (peek() && peek().v === ')') nx();
+          return callFn(id.toUpperCase(), args);
+        }
+        return cellVal(resolveRef(id));
+      }
+      nx(); return 0;
+    }
+    function parseArg() {
+      const tk = peek();
+      if (tk && tk.t === 'id') { const save = p; const id = nx().v; if (peek() && peek().t === 'op' && peek().v === ':') { nx(); const id2 = nx().v; return { range: [resolveRef(id), resolveRef(id2)] }; } p = save; }
+      return parseExpr();
+    }
+    function rangeVals(a, b) { const ca = XLSX.utils.decode_cell(a), cb = XLSX.utils.decode_cell(b); const out = []; for (let r = Math.min(ca.r, cb.r); r <= Math.max(ca.r, cb.r); r++) for (let c = Math.min(ca.c, cb.c); c <= Math.max(ca.c, cb.c); c++) out.push(cellVal(XLSX.utils.encode_cell({ r, c }))); return out; }
+    function flat(args) { const out = []; args.forEach(a => { if (a && a.range) rangeVals(a.range[0], a.range[1]).forEach(v => out.push(v)); else out.push(num(a)); }); return out; }
+    function callFn(name, args) {
+      if (name === 'SUM') return flat(args).reduce((s, v) => s + num(v), 0);
+      if (name === 'MIN') return Math.min.apply(null, flat(args).map(num));
+      if (name === 'MAX') return Math.max.apply(null, flat(args).map(num));
+      if (name === 'ROUND') { const x = num(args[0]), d = num(args[1]), m = Math.pow(10, d); return Math.round(x * m + (x >= 0 ? 1e-9 : -1e-9)) / m; }
+      if (name === 'ROUNDUP') { const x = num(args[0]), d = num(args[1]), m = Math.pow(10, d), s = x < 0 ? -1 : 1; return s * Math.ceil(Math.abs(x) * m - 1e-9) / m; }
+      if (name === 'IF') { const c = args[0], t = (typeof c === 'boolean') ? c : num(c) !== 0; return t ? args[1] : (args.length > 2 ? args[2] : false); }
+      throw new Error('unknown fn ' + name);
+    }
+    return parseExpr();
+  }
+  return { name: nm => cellVal(nameMap[nm]), cell: cellVal };
+}
+
+function buildEstimateWorkbook(e, ctx) {
+  ctx = ctx || {};
+  const ws = {}; const names = []; let R = 0;
+  const A1 = (r, c) => XLSX.utils.encode_cell({ r, c });
+  const cs = (r, c, cell) => { ws[A1(r, c)] = cell; };
+  const txt = (r, c, s) => cs(r, c, { t: 's', v: String(s == null ? '' : s) });
+  const nInput = (r, c, val) => cs(r, c, { t: 'n', v: estNum(val) });
+  const sInput = (r, c, val) => cs(r, c, { t: 's', v: String(val == null ? '' : val) });
+  const form = (r, c, f) => cs(r, c, { t: 'n', v: 0, f: f });
+  const name = (nm, r, c) => { names.push({ Name: nm, Ref: 'Estimate!$' + XLSX.utils.encode_col(c) + '$' + (r + 1) }); };
+  const inpN = (nm, r, c, val) => { nInput(r, c, val); name(nm, r, c); };
+  const inpS = (nm, r, c, val) => { sInput(r, c, val); name(nm, r, c); };
+  const ref = (r, c) => '$' + XLSX.utils.encode_col(c) + '$' + (r + 1);
+
+  txt(R, 0, 'PROJECT ESTIMATE'); R++;
+  txt(R, 0, 'Job'); txt(R, 1, ctx.jobName || ''); txt(R, 3, 'Estimate'); txt(R, 4, e.name || ''); R++;
+  txt(R, 0, 'Bid #'); inpS('EST_bidNo', R, 1, (e.info || {}).bidNo || ''); txt(R, 3, 'Schedule'); inpS('EST_schedule', R, 4, e.scheduleType || "5 8's"); R++;
+  txt(R, 0, 'Date'); txt(R, 1, ctx.date || ''); R++;
+  txt(R, 0, 'How to use: edit the input cells (base hours, rates, %, $ amounts) and SAVE. When the folder is loaded in the website it picks up your changes. Do not delete rows above the totals.'); R++;
+  R++;
+  const schedRef = 'EST_schedule';
+
+  txt(R, 0, 'LABOR'); R++;
+  const labHdr = R;
+  ['Trade', 'Base hrs', 'ST rate', 'OT rate', 'Hrs + adders', 'Blended rate', 'Labor cost'].forEach((h, i) => txt(labHdr, i, h)); R++;
+  const labStart = R; const tradeRow = {}; EST_X_TRADES.forEach((t, i) => tradeRow[t] = labStart + i);
+  const laborSubRow = labStart + EST_X_TRADES.length + 1;
+  const adderHdr = laborSubRow + 2, adderStart = adderHdr + 1, lopRow = adderStart + EST_X_ADDERS.length;
+  const adderCol = { plumb: 1, pipe: 2, smField: 3 };
+  EST_X_TRADES.forEach(t => {
+    const r = tradeRow[t];
+    txt(r, 0, EST_X_TLABEL[t]);
+    inpN('EST_hours_' + t, r, 1, (e.trades[t] || {}).hours);
+    inpN('EST_st_' + t, r, 2, (e.rates[t] || {}).st);
+    if (t !== 'smShop') inpN('EST_ot_' + t, r, 3, (e.rates[t] || {}).ot); else txt(r, 3, '');
+    if (t === 'smShop') form(r, 4, ref(r, 1) + '*0');
+    else { const col = adderCol[t]; const terms = EST_X_ADDERS.map((_, ai) => 'ROUND(' + ref(r, 1) + '*' + ref(adderStart + ai, col) + ',2)'); terms.push('ROUND(' + ref(r, 1) + '*' + ref(lopRow, 1) + ',2)'); form(r, 4, terms.join('+')); }
+    if (t === 'smShop') form(r, 5, ref(r, 2));
+    else form(r, 5, `IF(${schedRef}="5 8's",${ref(r, 2)},IF(${schedRef}="5 10's",(4*${ref(r, 2)}+${ref(r, 3)})/5,IF(${schedRef}="6 10's",(4*${ref(r, 2)}+2*${ref(r, 3)})/6,(12*${ref(r, 2)}+5*${ref(r, 3)})/17)))`);
+    form(r, 6, ref(r, 5) + '*(' + ref(r, 1) + '+' + ref(r, 4) + ')');
+  });
+  txt(laborSubRow, 0, 'Labor subtotal'); form(laborSubRow, 6, `SUM(${ref(tradeRow[EST_X_TRADES[0]], 6)}:${ref(tradeRow[EST_X_TRADES[3]], 6)})`); name('EST_o_laborSub', laborSubRow, 6);
+
+  txt(adderHdr, 0, 'LABOR MODIFIERS (% of base hours)'); txt(adderHdr, 1, 'Plumb %'); txt(adderHdr, 2, 'Pipe %'); txt(adderHdr, 3, 'SM Field %');
+  EST_X_ADDERS.forEach(([key, label], ai) => { const r = adderStart + ai; txt(r, 0, label); const a = (e.adders || []).find(x => x.key === key) || {}; inpN('EST_adder_' + key + '_plumb', r, 1, a.plumb); inpN('EST_adder_' + key + '_pipe', r, 2, a.pipe); inpN('EST_adder_' + key + '_smField', r, 3, a.smField); });
+  txt(lopRow, 0, 'Loss of production (auto from schedule)'); form(lopRow, 1, `IF(${schedRef}="5 8's",0,IF(${schedRef}="5 10's",0.15,0.25))`); name('EST_lop', lopRow, 1);
+  R = lopRow + 2;
+  txt(R, 0, 'Total hours (with adders)'); form(R, 6, EST_X_TRADES.map(t => '(' + ref(tradeRow[t], 1) + '+' + ref(tradeRow[t], 4) + ')').join('+')); name('EST_allHrs', R, 6); R += 2;
+
+  txt(R, 0, 'MATERIAL'); R++;
+  txt(R, 0, 'Plumbing'); inpN('EST_mat_plumb', R, 1, (e.material || {}).plumb); const mp = R; R++;
+  txt(R, 0, 'Piping'); inpN('EST_mat_pipe', R, 1, (e.material || {}).pipe); R++;
+  txt(R, 0, 'Sheet metal'); inpN('EST_mat_sm', R, 1, (e.material || {}).sm); const ms = R; R++;
+  txt(R, 0, 'Total material'); form(R, 6, `SUM(${ref(mp, 1)}:${ref(ms, 1)})`); const matTotRow = R; name('EST_o_material', R, 6); R += 2;
+
+  txt(R, 0, 'OCIP labor deduct (enter negative)'); inpN('EST_ocipDeduct', R, 1, e.ocipDeduct); const ocipRow = R; R += 2;
+  const totLaborRow = R; txt(R, 0, 'Total labor cost'); form(R, 6, ref(laborSubRow, 6) + '+' + ref(ocipRow, 1)); name('EST_o_totalLabor', R, 6); R += 2;
+
+  txt(R, 0, 'SUBCONTRACTORS'); R++;
+  txt(R, 0, 'Description'); txt(R, 1, 'Value'); R++;
+  const subStart = R; name('EST_subs_start', subStart, 0);
+  for (let i = 0; i < EST_N_SUBS; i++) { const s = (e.subs || [])[i] || {}; sInput(subStart + i, 0, s.desc || ''); if (s.value !== undefined && s.value !== '') nInput(subStart + i, 1, s.value); }
+  R = subStart + EST_N_SUBS;
+  const subTotRow = R; txt(R, 0, 'Subcontract total'); form(R, 6, `SUM(${ref(subStart, 1)}:${ref(subStart + EST_N_SUBS - 1, 1)})`); name('EST_o_subs', R, 6); R++;
+  txt(R, 0, 'Sub markup %'); inpN('EST_subMarkupPct', R, 1, e.subMarkupPct); const subMkPctRow = R; R++;
+  const subMkRow = R; txt(R, 0, 'Sub markup'); form(R, 6, `ROUNDUP(${ref(subMkPctRow, 1)}*${ref(subTotRow, 6)},0)`); name('EST_o_subMarkup', R, 6); R += 2;
+
+  txt(R, 0, 'SUPERVISION & OTHER COSTS'); R++;
+  txt(R, 0, 'Project manager (% all hrs / rate)'); inpN('EST_pmPct', R, 1, (e.supervision || {}).pmPct); inpN('EST_pmRate', R, 2, (e.supervision || {}).pmRate);
+  const pmRow = R; form(R, 6, `ROUNDUP(ROUND(EST_allHrs*${ref(R, 1)},2)*${ref(R, 2)},2)`); R++;
+  txt(R, 0, 'SM field supervision (% / rate)'); inpN('EST_smFieldSupPct', R, 1, (e.supervision || {}).smFieldSupPct); inpN('EST_smFieldSupRate', R, 2, (e.supervision || {}).smFieldSupRate);
+  const smSupRow = R; form(R, 6, `ROUND(${ref(R, 1)}*(${ref(tradeRow.smField, 1)}+${ref(tradeRow.smField, 4)}),2)*${ref(R, 2)}`); R++;
+  txt(R, 0, 'Plumb supervision (% / rate)'); inpN('EST_plumbSupPct', R, 1, (e.supervision || {}).plumbSupPct); inpN('EST_plumbSupRate', R, 2, (e.supervision || {}).plumbSupRate);
+  const plSupRow = R; form(R, 6, `ROUND(${ref(R, 1)}*(${ref(tradeRow.plumb, 1)}+${ref(tradeRow.plumb, 4)}),2)*${ref(R, 2)}`); R++;
+  txt(R, 0, 'Pipe supervision (% / rate)'); inpN('EST_pipeSupPct', R, 1, (e.supervision || {}).pipeSupPct); inpN('EST_pipeSupRate', R, 2, (e.supervision || {}).pipeSupRate);
+  const piSupRow = R; form(R, 6, `ROUND(${ref(R, 1)}*(${ref(tradeRow.pipe, 1)}+${ref(tradeRow.pipe, 4)}),2)*${ref(R, 2)}`); R++;
+  txt(R, 0, 'Small tools (% of straight field labor)'); inpN('EST_smallToolsPct', R, 1, e.smallToolsPct);
+  const stRow = R; form(R, 6, `ROUND(${ref(R, 1)}*${ref(laborSubRow, 6)},2)`); R++;
+  txt(R, 0, 'General conditions — Description / Qty / Rate'); R++;
+  const gcStart = R; name('EST_gcs_start', gcStart, 0);
+  for (let i = 0; i < EST_N_GCS; i++) { const g = (e.gcs || [])[i] || {}; sInput(gcStart + i, 0, g.desc || ''); if (g.qty !== undefined && g.qty !== '') nInput(gcStart + i, 1, g.qty); if (g.rate !== undefined && g.rate !== '') nInput(gcStart + i, 2, g.rate); form(gcStart + i, 6, `ROUND(${ref(gcStart + i, 1)}*${ref(gcStart + i, 2)},2)`); }
+  R = gcStart + EST_N_GCS;
+  const gcTotRow = R; txt(R, 0, 'GC total'); form(R, 6, `SUM(${ref(gcStart, 6)}:${ref(gcStart + EST_N_GCS - 1, 6)})`); R++;
+  txt(R, 0, 'Equipment rentals — Description / Qty / Duration / Rate'); R++;
+  const eqStart = R; name('EST_equip_start', eqStart, 0);
+  for (let i = 0; i < EST_N_EQUIP; i++) { const q = (e.equipment || [])[i] || {}; sInput(eqStart + i, 0, q.desc || ''); if (q.qty !== undefined && q.qty !== '') nInput(eqStart + i, 1, q.qty); if (q.duration !== undefined && q.duration !== '') nInput(eqStart + i, 2, q.duration); if (q.rate !== undefined && q.rate !== '') nInput(eqStart + i, 3, q.rate); form(eqStart + i, 6, `ROUND(${ref(eqStart + i, 1)}*${ref(eqStart + i, 2)}*${ref(eqStart + i, 3)},2)`); }
+  R = eqStart + EST_N_EQUIP;
+  const eqTotRow = R; txt(R, 0, 'Equipment total'); form(R, 6, `SUM(${ref(eqStart, 6)}:${ref(eqStart + EST_N_EQUIP - 1, 6)})`); R++;
+  txt(R, 0, 'Equipment markup $'); inpN('EST_equipMarkup', R, 1, e.equipMarkup); const eqMkRow = R; R++;
+  const otherTotRow = R; txt(R, 0, 'Total other / supervision / GCs'); form(R, 6, [ref(pmRow, 6), ref(smSupRow, 6), ref(plSupRow, 6), ref(piSupRow, 6), ref(stRow, 6), ref(gcTotRow, 6), ref(eqTotRow, 6)].join('+')); name('EST_o_other', R, 6); R += 2;
+
+  const directRow = R; txt(R, 0, 'TOTAL DIRECT COSTS'); form(R, 6, ref(otherTotRow, 6) + '+' + ref(subTotRow, 6) + '+' + ref(totLaborRow, 6) + '+' + ref(matTotRow, 6)); name('EST_o_direct', R, 6); R += 2;
+
+  txt(R, 0, 'Overhead & profit %'); inpN('EST_oANDpPct', R, 1, e.oANDpPct); const opPctRow = R; R++;
+  txt(R, 0, 'EMO reduction $'); inpN('EST_emoReduce', R, 1, e.emoReduce); const emoRow = R; R++;
+  const opRow = R; txt(R, 0, 'Overhead & profit'); form(R, 6, `ROUNDUP(${ref(opPctRow, 1)}*(${ref(directRow, 6)}-${ref(subTotRow, 6)})-${ref(emoRow, 1)},0)`); name('EST_o_oANDp', R, 6); R++;
+  const projSubRow = R; txt(R, 0, 'PROJECT SUBTOTAL'); form(R, 6, ref(directRow, 6) + '+' + ref(subMkRow, 6) + '+' + ref(eqMkRow, 1) + '+' + ref(opRow, 6)); name('EST_o_projSubtotal', R, 6); R += 2;
+
+  txt(R, 0, 'Market recovery (credit, enter negative)'); inpN('EST_marketRecovery', R, 1, e.marketRecovery); const mrRow = R; R++;
+  txt(R, 0, 'Miscellaneous / contingency $'); inpN('EST_misc', R, 1, e.misc); const miscRow = R; R++;
+  txt(R, 0, 'Permits — Plumbing'); inpN('EST_permit_plumbing', R, 1, (e.permits || {}).plumbing); const pP = R; R++;
+  txt(R, 0, 'Permits — HVAC'); inpN('EST_permit_hvac', R, 1, (e.permits || {}).hvac); R++;
+  txt(R, 0, 'Permits — Med Gas'); inpN('EST_permit_medGas', R, 1, (e.permits || {}).medGas); R++;
+  txt(R, 0, 'Permits — Boiler'); inpN('EST_permit_boiler', R, 1, (e.permits || {}).boiler); R++;
+  txt(R, 0, 'Permits — Special Insp'); inpN('EST_permit_specialInsp', R, 1, (e.permits || {}).specialInsp); const pI = R; R++;
+  const permitTotRow = R; txt(R, 0, 'Total permits'); form(R, 6, `SUM(${ref(pP, 1)}:${ref(pI, 1)})`); name('EST_o_permits', R, 6); R++;
+  txt(R, 0, 'Bond required (Yes/No)'); inpS('EST_bond_required', R, 1, (e.bond && e.bond.required) ? 'Yes' : 'No'); const bondReqRow = R; R++;
+  const sellBeforeBondRow = R; txt(R, 0, 'Sell before bond'); form(R, 6, ref(projSubRow, 6) + '+' + ref(mrRow, 1) + '+' + ref(miscRow, 1) + '+' + ref(permitTotRow, 6)); R++;
+  const brackets = [[500000, 14.4], [2000000, 8.7], [2500000, 6.9], [2500000, 6.3], [999999999, 5.76]];
+  txt(R, 0, 'Bond brackets (auto)'); R++;
+  const brRow0 = R;
+  brackets.forEach((b, i) => { const r = brRow0 + i; nInput(r, 1, b[0]); nInput(r, 2, b[1]); const lower = i === 0 ? '0' : `SUM(${ref(brRow0, 1)}:${ref(brRow0 + i - 1, 1)})`; form(r, 6, `ROUNDUP(MIN(MAX(${ref(sellBeforeBondRow, 6)}-${lower},0),${ref(r, 1)})/1000*${ref(r, 2)},0)`); });
+  R = brRow0 + brackets.length;
+  const bondRow = R; txt(R, 0, 'Bond'); form(R, 6, `IF(${ref(bondReqRow, 1)}="Yes",SUM(${ref(brRow0, 6)}:${ref(brRow0 + brackets.length - 1, 6)}),0)`); name('EST_o_bond', R, 6); R++;
+
+  txt(R, 0, 'Tax type (Oregon CAT / Washington B&O / None)'); inpS('EST_taxType', R, 1, e.taxType === 'washington_bo' ? 'Washington B&O' : e.taxType === 'none' ? 'None' : 'Oregon CAT'); const taxTypeRow = R; R++;
+  const taxBaseRow = R; txt(R, 0, 'Tax base'); form(R, 6, ref(projSubRow, 6) + '+' + ref(mrRow, 1) + '+' + ref(miscRow, 1) + '+' + ref(bondRow, 6) + '+' + ref(permitTotRow, 6)); R++;
+  const taxRow = R; txt(R, 0, 'Tax'); form(R, 6, `${ref(taxBaseRow, 6)}*IF(${ref(taxTypeRow, 1)}="Oregon CAT",0.0055,IF(${ref(taxTypeRow, 1)}="Washington B&O",0.00634,0))`); name('EST_o_tax', R, 6); R++;
+
+  txt(R, 0, 'Cost leveler — round to $'); inpN('EST_levelerRound', R, 1, e.levelerRound || 5); const lrRow = R; R++;
+  txt(R, 0, 'Add / deduct $'); inpN('EST_levelerAddDeduct', R, 1, e.levelerAddDeduct); const ladRow = R; R++;
+  const preLevelRow = R; txt(R, 0, 'Pre-round'); form(R, 6, ref(projSubRow, 6) + '+' + ref(mrRow, 1) + '+' + ref(miscRow, 1) + '+' + ref(bondRow, 6) + '+' + ref(permitTotRow, 6) + '+' + ref(taxRow, 6)); R++;
+  const levRow = R; txt(R, 0, 'Cost leveler'); form(R, 6, `ROUNDUP(${ref(preLevelRow, 6)}/${ref(lrRow, 1)},0)*${ref(lrRow, 1)}-${ref(preLevelRow, 6)}+${ref(ladRow, 1)}`); R++;
+  txt(R, 0, 'TOTAL BID'); form(R, 6, ref(preLevelRow, 6) + '+' + ref(levRow, 6)); name('EST_o_totalBid', R, 6); R += 1;
+
+  cs(0, 20, { t: 's', v: String(e.id || '') }); name('EST_ID', 0, 20);
+  cs(1, 20, { t: 's', v: 'dingus-estimate-v1' }); name('EST_SCHEMA', 1, 20);
+
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: R + 1, c: 21 } });
+  ws['!cols'] = [{ wch: 42 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+  const ev = estEvalWb(ws, names); const vals = {};
+  for (const k in ws) { if (k[0] === '!') continue; if (ws[k].f != null) { try { vals[k] = ev.cell(k); } catch (x) { vals[k] = 0; } } }
+  for (const k in vals) { const v = vals[k]; if (typeof v === 'number' && isFinite(v)) { ws[k].t = 'n'; ws[k].v = v; } else if (typeof v === 'boolean') { ws[k].t = 'b'; ws[k].v = v; } else { ws[k].t = 's'; ws[k].v = String(v); } }
+  return { SheetNames: ['Estimate'], Sheets: { Estimate: ws }, Workbook: { Names: names } };
+}
+
+function parseEstimateWorkbook(wb) {
+  const wsName = (wb.SheetNames || []).indexOf('Estimate') >= 0 ? 'Estimate' : wb.SheetNames[0];
+  const ws = wb.Sheets[wsName];
+  const nameMap = {};
+  ((wb.Workbook && wb.Workbook.Names) || []).forEach(n => { const m = n.Ref.match(/!\$?([A-Z]+)\$?(\d+)/); if (m) nameMap[n.Name] = m[1] + m[2]; });
+  const cellAt = addr => { const c = ws[addr]; return c ? c.v : undefined; };
+  const N = nm => { const a = nameMap[nm]; return a ? cellAt(a) : undefined; };
+  const num = nm => estNum(N(nm));
+  const str = nm => { const v = N(nm); return v == null ? '' : String(v); };
+  const e = {};
+  e.id = str('EST_ID');
+  e.info = { bidNo: str('EST_bidNo') };
+  e.scheduleType = str('EST_schedule') || "5 8's";
+  e.trades = {}; EST_X_TRADES.forEach(t => e.trades[t] = { hours: num('EST_hours_' + t) });
+  e.rates = {}; EST_X_TRADES.forEach(t => { e.rates[t] = { st: num('EST_st_' + t) }; if (t !== 'smShop') e.rates[t].ot = num('EST_ot_' + t); });
+  e.adders = EST_X_ADDERS.map(([key]) => ({ key, plumb: num('EST_adder_' + key + '_plumb'), pipe: num('EST_adder_' + key + '_pipe'), smField: num('EST_adder_' + key + '_smField'), smShop: 0 }));
+  e.material = { plumb: num('EST_mat_plumb'), pipe: num('EST_mat_pipe'), sm: num('EST_mat_sm') };
+  e.ocipDeduct = num('EST_ocipDeduct');
+  e.subMarkupPct = num('EST_subMarkupPct');
+  e.supervision = { pmPct: num('EST_pmPct'), pmRate: num('EST_pmRate'), smFieldSupPct: num('EST_smFieldSupPct'), smFieldSupRate: num('EST_smFieldSupRate'), plumbSupPct: num('EST_plumbSupPct'), plumbSupRate: num('EST_plumbSupRate'), pipeSupPct: num('EST_pipeSupPct'), pipeSupRate: num('EST_pipeSupRate') };
+  e.smallToolsPct = num('EST_smallToolsPct');
+  e.equipMarkup = num('EST_equipMarkup');
+  e.oANDpPct = num('EST_oANDpPct');
+  e.emoReduce = num('EST_emoReduce');
+  e.marketRecovery = num('EST_marketRecovery');
+  e.misc = num('EST_misc');
+  e.permits = { plumbing: num('EST_permit_plumbing'), hvac: num('EST_permit_hvac'), medGas: num('EST_permit_medGas'), boiler: num('EST_permit_boiler'), specialInsp: num('EST_permit_specialInsp') };
+  e.bond = { required: String(N('EST_bond_required') || '').trim().toLowerCase() === 'yes' };
+  const tt = String(N('EST_taxType') || '').toLowerCase();
+  e.taxType = (tt.indexOf('washington') >= 0 || tt.indexOf('b&o') >= 0) ? 'washington_bo' : tt.indexOf('none') >= 0 ? 'none' : 'oregon_cat';
+  e.levelerRound = num('EST_levelerRound') || 5;
+  e.levelerAddDeduct = num('EST_levelerAddDeduct');
+  const readBlock = (anchor, count, cols) => {
+    const a = nameMap[anchor]; if (!a) return []; const base = XLSX.utils.decode_cell(a); const out = [];
+    for (let i = 0; i < count; i++) { const row = {}; let any = false; for (const [field, cOff] of cols) { const v = cellAt(XLSX.utils.encode_cell({ r: base.r + i, c: base.c + cOff })); if (v != null && v !== '') { row[field] = v; any = true; } } if (any) out.push(row); }
+    return out;
+  };
+  e.subs = readBlock('EST_subs_start', EST_N_SUBS, [['desc', 0], ['value', 1]]).map(r => ({ desc: r.desc || '', value: r.value == null ? '' : r.value }));
+  e.gcs = readBlock('EST_gcs_start', EST_N_GCS, [['desc', 0], ['qty', 1], ['rate', 2]]).map(r => ({ desc: r.desc || '', qty: r.qty == null ? '' : r.qty, rate: r.rate == null ? '' : r.rate }));
+  e.equipment = readBlock('EST_equip_start', EST_N_EQUIP, [['desc', 0], ['qty', 1], ['duration', 2], ['rate', 3]]).map(r => ({ desc: r.desc || '', qty: r.qty == null ? '' : r.qty, duration: r.duration == null ? '' : r.duration, rate: r.rate == null ? '' : r.rate }));
+  return e;
+}
+
+/* ---- canonical input snapshot (change detection / newest-wins) ---- */
+function estInputs(e) {
+  const n = v => Math.round(estNum(v) * 1e6) / 1e6;
+  const t = {}; EST_X_TRADES.forEach(m => t[m] = n((e.trades[m] || {}).hours));
+  const rt = {}; EST_X_TRADES.forEach(m => { const r = (e.rates || {})[m] || {}; rt[m] = m === 'smShop' ? [n(r.st)] : [n(r.st), n(r.ot)]; });
+  const ad = EST_ADDERS.map(a => { const x = (e.adders || []).find(y => y.key === a.key) || {}; return [n(x.plumb), n(x.pipe), n(x.smField)]; });
+  const sup = e.supervision || {};
+  const sv = (e.subs || []).map(s => [String(s.desc || ''), n(s.value)]).filter(s => s[0] || s[1]);
+  const gc = (e.gcs || []).map(g => [String(g.desc || ''), n(g.qty), n(g.rate)]).filter(g => g[0] || g[1] || g[2]);
+  const eq = (e.equipment || []).map(q => [String(q.desc || ''), n(q.qty), n(q.duration), n(q.rate)]).filter(q => q[0] || q[1] || q[2] || q[3]);
+  return { bidNo: String((e.info || {}).bidNo || ''), sched: e.scheduleType || "5 8's", t, rt, ad,
+    mat: [n((e.material || {}).plumb), n((e.material || {}).pipe), n((e.material || {}).sm)], ocip: n(e.ocipDeduct), subMk: n(e.subMarkupPct),
+    sup: [n(sup.pmPct), n(sup.pmRate), n(sup.smFieldSupPct), n(sup.smFieldSupRate), n(sup.plumbSupPct), n(sup.plumbSupRate), n(sup.pipeSupPct), n(sup.pipeSupRate)],
+    st: n(e.smallToolsPct), sv, gc, eq, eqMk: n(e.equipMarkup), op: n(e.oANDpPct), emo: n(e.emoReduce),
+    mr: n(e.marketRecovery), misc: n(e.misc), perm: [n((e.permits || {}).plumbing), n((e.permits || {}).hvac), n((e.permits || {}).medGas), n((e.permits || {}).boiler), n((e.permits || {}).specialInsp)],
+    bond: !!(e.bond && e.bond.required), tax: e.taxType || 'oregon_cat', lr: n(e.levelerRound) || 5, lad: n(e.levelerAddDeduct) };
+}
+function estInputSig(e) { try { return JSON.stringify(estInputs(e)); } catch (x) { return ''; } }
+function estFileDesiredName(e) { return sanitizeAnyName(String(e.name || 'Estimate').slice(0, 70), 'Estimate') + '.xlsx'; }
+async function estDirHandle(create) { const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: !!create }); return filesRoot.getDirectoryHandle(ESTIMATE_DIR, { create: !!create }); }
+async function estFileMtime(e) { try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(e.file.file); return (await fh.getFile()).lastModified; } catch (x) { return 0; } }
+
+let _estFlushT = {};
+function scheduleEstFileFlush(e) {
+  if (!jobFolder || !e) return;
+  clearTimeout(_estFlushT[e.id]);
+  _estFlushT[e.id] = setTimeout(() => { writeEstimateFile(e).catch(() => {}); }, 2500);
+}
+async function writeEstimateFile(e, opts) {
+  opts = opts || {};
+  if (!jobFolder || !e) return;
+  if (e.file && e.file.file && estInputSig(e) === e.fileSig && !opts.force) return;   // nothing changed
+  try {
+    const XL = await loadSheetJS();
+    const wb = buildEstimateWorkbook(e, { jobName: job.name, date: csvDate(today()) });
+    const out = XL.write(wb, { bookType: 'xlsx', type: 'array' });
+    const desired = estFileDesiredName(e);
+    const f = new File([out], desired, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired);
+    // remove a stale file left by a rename
+    if (e.file && e.file.file && e.file.file !== file) { try { const d = await estDirHandle(false); await d.removeEntry(e.file.file); } catch (x) {} }
+    e.file = { dir, file };
+    e.fileSyncedAt = await estFileMtime(e);
+    e.fileSig = estInputSig(e);
+    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xlsx$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, xlsx: true, added: Date.now() }]); }
+    await FB.setDoc(estimateRef(job.id, e.id), clean(e));
+    noteFolderChanged();
+    if (view === 'job' && jobTab === 'estimates') { if (openEstimate === e.id) renderEstimateEditor(); else renderEstimates(); }
+    if (opts.toast) toast('Saved to Excel — ' + desired);
+  } catch (x) { console.error(x); if (opts.toast) toast('Could not write the Excel file: ' + (x.message || x), true); }
+}
+/* Read the .xlsx back; import if it changed on disk (newest-save-wins). */
+async function importEstimateFromFile(e, opts) {
+  opts = opts || {};
+  if (!jobFolder || !e || !e.file) return false;
+  let buf, mtime;
+  try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(e.file.file); const file = await fh.getFile(); mtime = file.lastModified; buf = await file.arrayBuffer(); }
+  catch (x) { return false; }
+  try {
+    const XL = await loadSheetJS();
+    const wb = XL.read(buf, { type: 'array' });
+    const parsed = parseEstimateWorkbook(wb);
+    const merged = Object.assign({}, e); ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(k => merged[k] = parsed[k]);
+    const psig = estInputSig(merged);
+    if (psig === e.fileSig && !opts.force) { e.fileSyncedAt = mtime; return false; }   // no real change
+    Object.assign(e, merged);
+    e.updated = Date.now(); e.fileSyncedAt = mtime; e.fileSig = psig;
+    await FB.setDoc(estimateRef(job.id, e.id), clean(e));
+    if (view === 'job' && jobTab === 'estimates') { if (openEstimate === e.id) renderEstimateEditor(); else renderEstimates(); }
+    toast('“' + (e.name || 'Estimate') + '” updated from Excel');
+    return true;
+  } catch (x) { console.error(x); return false; }
+}
+let _estReconcileAt = 0;
+async function reconcileEstimateFiles(opts) {
+  opts = opts || {};
+  if (!jobFolder || !estimates.length) return;
+  const now = Date.now(); if (!opts.force && now - _estReconcileAt < 2500) return; _estReconcileAt = now;
+  for (const e of estimates) {
+    try {
+      if (!e.file || !e.file.file) { if (!e.locked && estInputSig(e) !== (e.fileSig || null)) await writeEstimateFile(e); continue; }
+      const fm = await estFileMtime(e);
+      if (!fm) { if (!e.locked) await writeEstimateFile(e, { force: true }); continue; }   // file vanished — recreate
+      const externallyChanged = fm > (e.fileSyncedAt || 0) + 2000;
+      if (e.locked) { continue; }                              // frozen snapshot — never import
+      if (openEstimate === e.id) continue;                     // don't clobber an open editor
+      if (externallyChanged) {
+        // newest-save-wins: file vs website
+        if (fm >= (e.updated || 0)) await importEstimateFromFile(e);
+        else await writeEstimateFile(e, { force: true });
+      } else if (estInputSig(e) !== e.fileSig) {
+        await writeEstimateFile(e);                            // website changed since last file write
+      }
+    } catch (x) { console.error(x); }
+  }
+}
+// window focus / tab return → check for Excel edits
+if (typeof window !== 'undefined' && window.addEventListener && !window._estFocusWired) {
+  window._estFocusWired = true;
+  try {
+    window.addEventListener('focus', () => { if (view === 'job' && jobFolder) reconcileEstimateFiles().catch(() => {}); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view === 'job' && jobFolder) reconcileEstimateFiles().catch(() => {}); });
+  } catch (x) {}
+}
+/* open the .xlsx from the folder (download a copy; double-click to edit in Excel) */
+async function openEstimateExcel(id) {
+  const e = estById(id); if (!e) return;
+  if (!jobFolder) { toast('Load the job’s ShareFile folder first', true); return; }
+  if (!e.file || !(await estFileMtime(e))) { await writeEstimateFile(e, { force: true, toast: true }); }
+  try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(e.file.file); const file = await fh.getFile(); const url = URL.createObjectURL(file); const a = document.createElement('a'); a.href = url; a.download = e.file.file; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000); toast('Opened ' + e.file.file + ' — it lives in Dingus Documents/Estimates/'); }
+  catch (x) { toast('Could not open the Excel file: ' + (x.message || x), true); }
+}
+function estSyncStatusHtml(e) {
+  if (!e.file) return `<span class="est-sync none">Not saved to Excel yet</span>`;
+  const changed = estInputSig(e) !== e.fileSig;
+  return `<span class="est-sync ${changed ? 'pending' : 'ok'}">${changed ? '↻ Excel out of date' : '✓ In sync with Excel'}</span>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -8186,6 +8607,7 @@ async function markFolderLoaded(handle) {
   await maybeAutoOrganize();     // migrate/consolidate the folder layout (awaited so the mirror doesn't race it)
   fileStagedUploads().catch(() => {});   // file any phone uploads waiting in Firebase
   syncAllSubmittals().catch(() => {});   // build/refresh the "All Submittals" mirror
+  reconcileEstimateFiles({ force: true }).catch(() => {});   // pull in any estimate edited in Excel
   // Seed the "last saved" indicator from the folder's own snapshot (shared via
   // ShareFile sync) or this device's record, then track changes from here.
   folderSaveAt = 0;
