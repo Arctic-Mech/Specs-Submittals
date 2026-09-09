@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.25';
+const APP_VERSION = 'v7.26';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4224,18 +4224,22 @@ function renderCoDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Change Proposal ${c.src === 'estimator' ? '<span class="est-sync ok" title="Built in the web estimator; the spreadsheet is filed in this CO’s folder">⧉ Estimator</span>' : (c.est ? coSyncStatusHtml(c) : '')}</h4>
+        <h4>Change Proposal ${c.src === 'estimator' ? '<span class="est-sync ok" title="Built in the web estimator (bid format)">⧉ Estimator</span>' : (c.est ? coSyncStatusHtml(c) : '')}</h4>
         ${c.src === 'estimator'
-          ? `<div class="est-mini">Built in the web estimator. Total <b>${esc(fmtMoney(c.estimatorTotal != null ? c.estimatorTotal : c.amount) || '$0')}</b> — filed in this CO’s folder as <b>Change Proposal.xlsm</b>.</div>`
+          ? `<div class="est-mini">Built in the web <b>estimator</b> (bid format). Total <b>${esc(fmtMoney(c.estimatorTotal != null ? c.estimatorTotal : c.amount) || '$0')}</b> — filed in this CO’s folder as <b>Change Proposal.xlsm</b>.</div>`
           : coEstSummaryHtml(c)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <button class="btn primary sm" onclick="openCoInEstimator('${c.id}')" title="Build this change order in the web estimator — the same bid tool as estimates">${(c.src === 'estimator' || c.est) ? '✎ Edit in estimator' : '+ Build in estimator'}</button>
           ${c.src === 'estimator'
-            ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the change-proposal spreadsheet from the ShareFile folder">Open spreadsheet</button>`
-            : `${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>
-          <button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>
-          <button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
-          <button class="btn sm" onclick="importCoFilePick('${c.id}')" title="Already started this change proposal in Excel? Bring its numbers in.">⤒ Upload started proposal</button>`}
+            ? `<button class="btn primary sm" onclick="openCoInEstimator('${c.id}')" title="Edit in the web estimator (bid format)">✎ Edit in estimator</button>
+          <button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the change-proposal spreadsheet from the ShareFile folder">Open spreadsheet</button>`
+            : c.est
+              ? `<button class="btn primary sm" onclick="openCoEstimator('${c.id}')" title="Edit this change proposal — the CP change-order workbook">✎ Edit change proposal</button>
+          <button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>
+          <button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the CP spreadsheet from the ShareFile folder">Excel</button>
+          <button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>`
+              : `<button class="btn primary sm" onclick="openCoInEstimator('${c.id}')" title="Build this change order in the web estimator (bid format), same as an estimate">+ Build in estimator</button>
+          <button class="btn sm" onclick="openCoEstimator('${c.id}')" title="Build this change order as the CP change-proposal workbook">+ Build CP proposal</button>`}
+          <button class="btn sm" onclick="importCoFilePick('${c.id}')" title="Upload a started change order — a bid/estimate spreadsheet OR the old CP workbook. It opens in the matching editor.">⤒ Upload started proposal</button>
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
       </div>
@@ -6203,22 +6207,34 @@ function importCoFilePick(id) {
     try {
       const buf = await file.arrayBuffer(); const bytes = new Uint8Array(buf);
       const XL = await loadSheetJS(); const wb = XL.read(bytes, { type: 'array' });
-      // Change orders now build in the estimator (bid format), same as estimates. A bid-format
-      // upload becomes this CO's proposal and opens in the estimator.
+      // Recognize the format and open the matching editor.
       if (estWorkbookLooksLikeOurs(wb)) {
+        // a bid/estimate-format change order → the web estimator
         const ws = wb.Sheets['MCAA RECAP'];
         const tot = (ws && ws['H70'] && ws['H70'].v != null) ? round2(estNum(ws['H70'].v))
           : round2(computeProjectEstimate(Object.assign(defaultEstimate(), parseEstimateWorkbook(wb))).totalBid);
+        delete c.est;                                                // switching this CO to bid format
         c.src = 'estimator'; c.estimatorTotal = tot; c.amount = String(tot); c.updated = Date.now();
         await saveCo(c);
         if (jobFolder) await writeCoBytes(c, bytes);                 // file the exact uploaded spreadsheet as this CO's proposal
         renderCos(); if (openCo === c.id) renderCoDrawer();
         toast('Imported change order — opening in the estimator…');
-        openCoInEstimator(c.id, bytes);                             // open it there with its exact bytes
+        openCoInEstimator(c.id, bytes);
       } else if (typeof coWorkbookLooksLikeOurs === 'function' && coWorkbookLooksLikeOurs(wb)) {
-        toast('That’s the older change-proposal workbook (CP) format. Change orders now build in the estimator — click “Edit in estimator” to build it there, or upload a bid-format estimate spreadsheet.', true);
+        // the old CP change-proposal workbook → the CP editor (outputs the CP spreadsheet)
+        const parsed = parseCoWorkbook(wb);
+        if (c.src === 'estimator') delete c.src;                     // switching this CO to CP format
+        c.est = parsed.est; c.estimatorTotal = null;
+        if (parsed.number && !c.number) c.number = parsed.number; if (parsed.description && !c.description) c.description = parsed.description;
+        if (parsed.mod && !c.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi && !c.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
+        c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
+        c.coFileSig = '';
+        await saveCo(c);
+        renderCos(); if (openCo === c.id) renderCoDrawer();
+        toast('Imported change proposal — ' + (fmtMoney(computeEstimate(c.est, jobLaborRates()).totalBid) || '$0'));
+        openCoEstimator(c.id);                                       // edit it in the CP change-proposal editor
       } else {
-        toast('That isn’t a recognized estimate/change-order spreadsheet.', true);
+        toast('That isn’t a recognized estimate or change-order spreadsheet.', true);
       }
     } catch (x) { console.error(x); toast('Could not read that file: ' + (x.message || x), true); }
   });
