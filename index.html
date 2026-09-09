@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.18';
+const APP_VERSION = 'v7.19';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2273,7 +2273,38 @@ async function scanUnassignedFiles() {
     };
     await walk(filesRoot, '');
   } catch (e) {}
+  // A loose spreadsheet that is really a copy of a CO/estimate we already imported must not be
+  // re-offered for assignment (e.g. the file the user just picked with the Import button, which
+  // lives in the synced ShareFile folder). Drop any .xlsx/.xlsm whose Dingus id or numbers match
+  // an existing record. Parses are cached by path+mtime so repeat scans stay cheap.
+  if (found.some(f => f.type === 'xlsx') && ((cos && cos.length) || (estimates && estimates.length))) {
+    const drop = new Set();
+    for (const f of found) { if (f.type === 'xlsx' && await looseXlsxAlreadyImported(f)) drop.add(f.path); }
+    if (drop.size) return found.filter(f => !drop.has(f.path));
+  }
   return found;
+}
+const _looseImportCache = new Map();   // path -> { mt, sz, hit } so we parse each loose spreadsheet once
+async function looseXlsxAlreadyImported(item) {
+  try {
+    const blob = await readLooseBlob(item); if (!blob) return false;
+    const cached = _looseImportCache.get(item.path);
+    if (cached && cached.mt === blob.lastModified && cached.sz === blob.size) return cached.hit;
+    const XL = await loadSheetJS();
+    const wb = XL.read(new Uint8Array(await blob.arrayBuffer()), { type: 'array' });
+    let hit = false;
+    if (typeof coWorkbookLooksLikeOurs === 'function' && coWorkbookLooksLikeOurs(wb)) {
+      const p = parseCoWorkbook(wb);
+      if (p.id && (cos || []).some(c => c.id === p.id)) hit = true;
+      else { const sig = coInputSig({ number: p.number, description: p.description, mod: p.mod, rfiCcdAsi: p.rfiCcdAsi, est: p.est }); hit = (cos || []).some(c => coInputSig(c) === sig); }
+    } else if (typeof estWorkbookLooksLikeOurs === 'function' && estWorkbookLooksLikeOurs(wb)) {
+      const p = parseEstimateWorkbook(wb);
+      if (p.id && (estimates || []).some(e => e.id === p.id)) hit = true;
+      else { const sig = estInputSig(Object.assign(defaultEstimate(), p)); hit = (estimates || []).some(e => estInputSig(e) === sig); }
+    }
+    _looseImportCache.set(item.path, { mt: blob.lastModified, sz: blob.size, hit });
+    return hit;
+  } catch (x) { return false; }
 }
 /* The directory handle that holds a loose item (item.dir is the path under
    files/, '' for directly inside files/). */
@@ -4201,7 +4232,7 @@ function renderCoDrawer() {
           ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>` : ''}
           ${c.est ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>` : ''}
           ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
-          <button class="btn sm ghost" onclick="importCoFilePick('${c.id}')" title="Import a change-proposal spreadsheet from your computer into this CO">⤒ Import Excel</button>
+          <button class="btn sm" onclick="importCoFilePick('${c.id}')" title="Already started this change proposal in Excel? Bring its numbers in — the CO keeps its number and stays synced to Excel.">⤒ Upload started proposal</button>
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
         ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsm</b> — a copy of your real workbook with this CO’s numbers filled in. Edit here or in Excel, newest save wins.</div>` : ''}
@@ -5007,7 +5038,9 @@ function renderEstimates() {
   if (!estimates.length) {
     host.innerHTML = `<div class="empty" style="padding:40px 20px">
       <b>No estimates yet.</b><br><span class="muted">Build a full MCAA-style bid estimate — labor with adders &amp; schedule-blended rates, material, subs, general conditions, equipment, markups, bond, permits and tax. Create several and compare them; lock one so it can’t be changed.</span><br><br>
-      <button class="btn primary" onclick="newEstimate()">+ New estimate</button></div>`;
+      <button class="btn primary" onclick="newEstimate()">+ New estimate</button>
+      <button class="btn" onclick="importEstimateFilePick()" title="Already started an estimate in Excel? Bring it in — the numbers load into the website and it keeps syncing to Excel.">⤒ Upload a started estimate (.xlsx)</button>
+      <br><span class="muted" style="font-size:12px">Already have a spreadsheet going? Use <b>Upload a started estimate</b> to import it.</span></div>`;
     return;
   }
   const cards = estimates.map(e => {
@@ -5035,7 +5068,7 @@ function renderEstimates() {
   const cmp = estCompare.length >= 2
     ? `<button class="btn primary" onclick="renderEstimateCompare()">Compare ${estCompare.length} estimates →</button>`
     : `<span class="muted">Tick 2+ estimates to compare them.</span>`;
-  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}<div class="spacer" style="flex:1"></div><button class="btn sm ghost" onclick="importEstimateFilePick()" title="Import an estimate spreadsheet from your computer">⤒ Import Excel</button></div>
+  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}<div class="spacer" style="flex:1"></div><button class="btn sm" onclick="newEstimate()" title="Start a fresh estimate on the website">+ New estimate</button> <button class="btn sm" onclick="importEstimateFilePick()" title="Already started an estimate in Excel? Bring it in — the numbers load into the website and it keeps syncing to Excel.">⤒ Upload started estimate</button></div>
     <div class="est-cards">${cards}</div>`;
 }
 
@@ -5931,8 +5964,10 @@ function importCoFilePick(id) {
       if (!coWorkbookLooksLikeOurs(wb)) { toast('That isn’t a Dingus change-proposal spreadsheet — its numbers can’t be read automatically.', true); return; }
       const parsed = parseCoWorkbook(wb);
       c.est = parsed.est;
-      if (parsed.number) c.number = parsed.number; if (parsed.description) c.description = parsed.description;
-      if (parsed.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
+      // importing pulls in the estimate numbers — it must NOT rename the CO. Keep the CO's
+      // own number/description; only fill them from the file when this CO has none yet.
+      if (parsed.number && !c.number) c.number = parsed.number; if (parsed.description && !c.description) c.description = parsed.description;
+      if (parsed.mod && !c.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi && !c.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
       c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
       c.coFileSig = '';
       await saveCo(c);
@@ -6121,7 +6156,11 @@ function injectCoSheet(xml, c, rates, r, ctx) {
   // header (mirrored onto CP + Proposal via cell refs)
   S_('D2', ctx.jobName || ''); S_('D3', ctx.jobNumber || ''); if (ctx.customer) S_('D4', ctx.customer);
   const numStr = String(c.number == null ? '' : c.number);
-  if (numStr && !/^\d+(\.\d+)?$/.test(numStr)) S_('B5', numStr); else N_('B5', numStr || c.mod || 0);   // MOD # cell (numeric when it can be, else literal)
+  // MOD # cell: keep it numeric only when the number survives a round-trip; otherwise store the
+  // literal string so values like "03" (leading zero) or "PCO-12" are preserved exactly.
+  const numRoundTrips = numStr && /^\d+(\.\d+)?$/.test(numStr) && String(estNum(numStr)) === numStr;
+  if (numStr && !numRoundTrips) S_('B5', numStr); else N_('B5', numStr || c.mod || 0);
+  S_('T3', numStr);   // verbatim CO number — parseCoTemplate prefers this so "03" never becomes "3"
   S_('B7', c.description || '');
   // material
   N_('D24', M.takeoff); lineRows(CO_TPL_MAT_ROWS, M.lines); N_('B32', estNum(M.markupPct) / 100);
@@ -6237,7 +6276,8 @@ function parseCoTemplate(wb) {
     totals: { totalMarkupPct: num('B119') * 100, bond: num('D120'), ocip: num('D121'), contingency: num('D122'), taxType, roundTo: num('H125') },
   };
   estLaborRows().forEach(rr => { const hrow = CO_LABOR_ROW[rr.key]; if (!hrow) return; const st = g('B' + hrow), ot = g('C' + hrow), dt = g('D' + hrow), sh = g('E' + hrow); const cell = {}; if (st) cell.st = estNum(st); if (ot) cell.ot = estNum(ot); if (dt) cell.dt = estNum(dt); if (sh) cell.shift = estNum(sh); if (Object.keys(cell).length) est.labor.rows[rr.key] = cell; });
-  return { id: str('T2'), number: str('B5'), description: str('B7'), mod: str('T4'), rfiCcdAsi: str('T5'), est };
+  const numT3 = str('T3');   // verbatim number stamped by injectCoSheet (lossless: keeps leading zeros)
+  return { id: str('T2'), number: numT3 !== '' ? numT3 : str('B5'), description: str('B7'), mod: str('T4'), rfiCcdAsi: str('T5'), est };
 }
 function coTemplateLooksLikeOurs(wb) {
   const ws = wb && wb.Sheets && wb.Sheets['CP Backup']; if (!ws) return false;
