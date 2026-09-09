@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.21';
+const APP_VERSION = 'v7.22';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5067,7 +5067,7 @@ function renderEstimates() {
   const cmp = estCompare.length >= 2
     ? `<button class="btn primary" onclick="renderEstimateCompare()">Compare ${estCompare.length} estimates →</button>`
     : `<span class="muted">Tick 2+ estimates to compare them.</span>`;
-  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}<div class="spacer" style="flex:1"></div><button class="btn sm" onclick="newEstimateInEstimator()" title="Start a fresh estimate in the web estimator">+ New estimate</button> <button class="btn sm" onclick="importEstimateFilePick()" title="Already started an estimate in Excel? Bring it in — it opens in the estimator and keeps syncing.">⤒ Upload started estimate</button></div>
+  host.innerHTML = `<div class="est-tab-bar">${cmp}${estCompare.length ? ` <button class="btn sm ghost" onclick="estCompare=[];renderEstimates()">Clear</button>` : ''}<div class="spacer" style="flex:1"></div><button class="btn sm ghost" onclick="loadCompanyFilePick()" title="Load or replace the Arctic company rates file the estimator needs (saved in ShareFile, not the website)">⚙ Company file…</button> <button class="btn sm" onclick="newEstimateInEstimator()" title="Start a fresh estimate in the web estimator">+ New estimate</button> <button class="btn sm" onclick="importEstimateFilePick()" title="Already started an estimate in Excel? Bring it in — it opens in the estimator and keeps syncing.">⤒ Upload started estimate</button></div>
     <div class="est-cards">${cards}</div>`;
 }
 
@@ -5912,8 +5912,8 @@ async function reconcileEstimateFiles(opts) {
 if (typeof window !== 'undefined' && window.addEventListener && !window._estFocusWired) {
   window._estFocusWired = true;
   try {
-    window.addEventListener('focus', () => { applyPendingEstimatorResults().catch(() => {}); if (view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } });
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { applyPendingEstimatorResults().catch(() => {}); if (view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } } });
+    window.addEventListener('focus', () => { if (view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view === 'job' && jobFolder) { reconcileEstimateFiles().catch(() => {}); reconcileCoFiles().catch(() => {}); } });
   } catch (x) {}
 }
 /* open the .xlsx from the folder (download a copy; double-click to edit in Excel) */
@@ -5931,35 +5931,80 @@ function estSyncStatusHtml(e) {
   return `<span class="est-sync ${changed ? 'pending' : 'ok'}">${changed ? '↻ Excel out of date' : '✓ In sync with Excel'}</span>`;
 }
 /* ── The web Estimator (the Arctic Bid Tool, vendored at estimator/) ──
-   One editor for estimates — the rich, workbook-style web UI. The Dingus hands the
-   estimate's spreadsheet over (same-origin localStorage) and the estimator hands the
-   edited spreadsheet back, which we file as this estimate's mirror. */
+   One editor for estimates — the rich, workbook-style web UI, shown as a page INSIDE The
+   Dingus (an iframe, not a new tab). The Dingus hands the estimate spreadsheet (and, the
+   first time on a browser, the private company file) to it over postMessage, and files the
+   edited spreadsheet it sends back into ShareFile. Nothing goes to Firebase. */
 function estimatorUrl() { try { return new URL('estimator/index.html', location.href).href; } catch (x) { return 'estimator/index.html'; } }
+
+// ---- the private Arctic company file (rates + workbook), kept in ShareFile, never the repo ----
+const COMPANY_FILE_NAME = 'Arctic Company File.arctic';
+let _companyBytesCache = null;
+async function readCompanyFileBytes() {
+  if (_companyBytesCache) return _companyBytesCache;
+  if (!jobFolder) return null;
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
+    const fh = await filesRoot.getFileHandle(COMPANY_FILE_NAME);
+    _companyBytesCache = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+    return _companyBytesCache;
+  } catch (x) { return null; }
+}
+async function saveCompanyFileBytes(bytes) {
+  if (!jobFolder) { toast('Load the job’s ShareFile folder first', true); return false; }
+  try {
+    const f = new File([bytes], COMPANY_FILE_NAME, { type: 'application/octet-stream' });
+    await putFileInDir(f, '', COMPANY_FILE_NAME, { overwrite: true });
+    _companyBytesCache = new Uint8Array(bytes);
+    return true;
+  } catch (x) { console.error(x); toast('Could not save the company file: ' + (x.message || x), true); return false; }
+}
+async function companyFileLooksValid(bytes) {
+  try { const JZ = await ensureJSZip(); const zip = await JZ.loadAsync(bytes); return Object.keys(zip.files).some(n => /company_data\.json$/i.test(n)); }
+  catch (x) { return false; }
+}
+async function haveCompanyFile() { return !!(_companyBytesCache || (await readCompanyFileBytes())); }
+/* Load / replace the company file from the website; it is saved into ShareFile ("dingus data")
+   and pushed to any open estimator right away. */
+function loadCompanyFilePick() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.arctic,.zip,.json';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    stickyToast('Reading ' + f.name + '…');
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      if (!(await companyFileLooksValid(bytes))) { toast('That doesn’t look like the Arctic company file (no company_data.json inside).', true); return; }
+      if (!(await saveCompanyFileBytes(bytes))) return;
+      if (_estHost && _estHost.win) { const ab = bytes.buffer.slice(0); const reopen = _estHost.pending ? Object.assign({ __dingus: true }, _estHost.pending, { xlsm: (_estHost.xlsm ? copyAb(_estHost.xlsm) : null) }) : null; try { _estHost.win.postMessage({ __dingus: true, type: 'dingus-company', company: ab, reopen }, location.origin, reopen && reopen.xlsm ? [ab, reopen.xlsm] : [ab]); } catch (x) {} }
+      toast('Company file saved to ShareFile — the estimator will use it on this and other computers.');
+      if (view === 'job' && jobTab === 'estimates') renderEstimates();
+    } catch (x) { console.error(x); toast('Could not read that file: ' + (x.message || x), true); }
+  };
+  inp.click();
+}
+function copyAb(u8) { return u8 ? u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) : null; }
+
+// ---- the estimator page (full-screen iframe) + postMessage host ----
+let _estHost = null;          // { el, win, estId, name, xlsm, companyBytes, pending }
+let _estMsgWired = false;
+function closeEstimator() {
+  if (_estHost) { if (_estHost.closeTimer) clearTimeout(_estHost.closeTimer); if (_estHost.el) { try { _estHost.el.remove(); } catch (x) {} } }
+  _estHost = null;
+}
 async function openEstimateInEstimator(id, bytesOverride) {
   const e = estById(id); if (!e || !job) return;
-  stickyToast('Preparing the estimator…');
+  stickyToast('Opening the estimator…');
+  let bytes = bytesOverride || null;
   try {
-    let bytes = bytesOverride || null;
-    // Re-open an estimator-built estimate from its exact stored spreadsheet (keeps full detail);
-    // otherwise build one from the model (a legacy form estimate migrates on first open).
     if (!bytes && e.src === 'estimator' && jobFolder && e.file && e.file.file) {
       try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(e.file.file); bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer()); } catch (x) {}
     }
-    if (!bytes) {
-      try { const ctx = { jobName: job.name || '', date: csvDate(today()) }; bytes = e.wbMode ? await buildEstWorkbookXlsm(e) : await buildEstXlsm(e, ctx); }
-      catch (x) { console.warn('estimator handoff: could not build spreadsheet, opening blank:', x && x.message || x); }
-    }
-    const token = uid('tok');
-    const handoff = { token, jobId: job.id, estId: e.id, name: e.name || 'Estimate', returnUrl: location.href, xlsmB64: bytes ? bytesToB64(bytes) : '', ts: Date.now() };
-    try { localStorage.setItem('dingus.est.handoff', JSON.stringify(handoff)); }
-    catch (x) { toast('Browser storage is full — clear some space and try again.', true); return; }
-    estimatorWatch(e.id);
-    const w = window.open(estimatorUrl() + '?dingus=' + encodeURIComponent(token), 'dingusEstimator');
-    if (!w) { toast('Allow pop-ups for this site, then click Open estimator again.', true); return; }
-    toast('Opened “' + (e.name || 'estimate') + '” in the estimator — edit there; it saves back here automatically.');
-  } catch (x) { console.error(x); toast('Could not open the estimator: ' + (x.message || x), true); }
+    if (!bytes) { try { const ctx = { jobName: job.name || '', date: csvDate(today()) }; bytes = e.wbMode ? await buildEstWorkbookXlsm(e) : await buildEstXlsm(e, ctx); } catch (x) { console.warn('estimator: no spreadsheet to hand over, opening blank:', x && x.message || x); } }
+  } catch (x) {}
+  const companyBytes = await readCompanyFileBytes();
+  mountEstimator(e.id, e.name || 'Estimate', bytes ? new Uint8Array(bytes) : null, companyBytes);
 }
-/* Start a brand-new estimate in the estimator, then file whatever comes back. */
 async function newEstimateInEstimator() {
   if (!job) return;
   const e = Object.assign(defaultEstimate(), { name: 'New estimate', src: 'estimator' });
@@ -5968,49 +6013,77 @@ async function newEstimateInEstimator() {
   renderEstimates();
   await openEstimateInEstimator(e.id);
 }
-let _estimatorBC = null; const _estimatorApplied = {};   // estId -> last result ts applied
-function estimatorWatch(estId) {
-  if (estId && !(estId in _estimatorApplied)) _estimatorApplied[estId] = 0;
-  if (!_estimatorBC && typeof BroadcastChannel !== 'undefined') {
-    try {
-      _estimatorBC = new BroadcastChannel('dingus-estimator');
-      _estimatorBC.onmessage = ev => { const d = (ev && ev.data) || {}; if (d.type === 'saved' && d.estId) applyEstimatorResult(d.estId).catch(() => {}); };
-    } catch (x) {}
-  }
+function mountEstimator(estId, name, xlsmU8, companyU8) {
+  closeEstimator();
+  const host = document.createElement('div');
+  host.className = 'estimator-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;display:flex;flex-direction:column';
+  host.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#0b5;color:#fff;font:600 14px system-ui">'
+    + '<b>Estimator</b><span style="opacity:.85;font-weight:400;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(name) + '</span><div style="flex:1"></div>'
+    + '<button class="btn sm" onclick="loadCompanyFilePick()" title="Load or replace the company rates file (saved in ShareFile)">Company file…</button>'
+    + '<button class="btn sm" style="background:#fff;color:#0a4" onclick="finishEstimator()" title="Save and close">✓ Done</button>'
+    + '</div>'
+    + '<iframe class="estimator-frame" style="flex:1;border:0;width:100%" src="' + esc(estimatorUrl()) + '?dingus=1"></iframe>';
+  document.body.appendChild(host);
+  const iframe = host.querySelector('iframe');
+  _estHost = { el: host, win: null, estId, name, xlsm: xlsmU8, companyBytes: companyU8 || null, pending: { type: 'dingus-open', estId, name } };
+  iframe.addEventListener('load', () => { _estHost && (_estHost.win = iframe.contentWindow); });
+  wireEstimatorMessages();
 }
-/* Sweep every result the estimator may have left in localStorage (called on focus/return). */
-async function applyPendingEstimatorResults() {
-  let keys = [];
-  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('dingus.est.result.') === 0) keys.push(k); } } catch (x) { return; }
-  for (const k of keys) await applyEstimatorResult(k.slice('dingus.est.result.'.length)).catch(() => {});
+function wireEstimatorMessages() {
+  if (_estMsgWired) return; _estMsgWired = true;
+  window.addEventListener('message', async (ev) => {
+    if (ev.origin !== location.origin) return;
+    const d = ev.data; if (!d || !d.__dingus) return;
+    if (d.type === 'dingus-saved') { await fileEstimatorSave(d); if (d.final && _estHost) closeEstimator(); return; }
+    if (!_estHost) return;
+    if (d.type === 'dingus-ready') {
+      _estHost.win = ev.source;
+      const msg = Object.assign({ __dingus: true }, _estHost.pending);
+      const transfer = [];
+      if (_estHost.xlsm) { msg.xlsm = copyAb(_estHost.xlsm); transfer.push(msg.xlsm); }
+      if (!d.hasCompany && _estHost.companyBytes) { msg.company = copyAb(_estHost.companyBytes); transfer.push(msg.company); }
+      try { ev.source.postMessage(msg, location.origin, transfer); } catch (x) { try { ev.source.postMessage(msg, location.origin); } catch (_) {} }
+    } else if (d.type === 'dingus-need-company') {
+      const cb = _estHost.companyBytes || await readCompanyFileBytes();
+      if (cb && cb.byteLength) {
+        _estHost.companyBytes = cb;
+        const ab = copyAb(cb); const reopen = Object.assign({ __dingus: true }, _estHost.pending); const t = [ab];
+        if (_estHost.xlsm) { reopen.xlsm = copyAb(_estHost.xlsm); t.push(reopen.xlsm); }
+        try { ev.source.postMessage({ __dingus: true, type: 'dingus-company', company: ab, reopen }, location.origin, t); } catch (x) {}
+      } else { toast('The estimator needs the Arctic company file — click “Company file…” to load it once.', true); }
+    } else if (d.type === 'dingus-error') {
+      toast('Estimator: ' + (d.message || 'error'), true);
+    }
+  });
 }
-async function applyEstimatorResult(estId) {
-  if (!job) return;
-  let raw = null; try { raw = localStorage.getItem('dingus.est.result.' + estId); } catch (x) { return; }
-  if (!raw) return;
-  let r; try { r = JSON.parse(raw); } catch (x) { return; }
-  if (!r || !r.xlsmB64 || !r.ts) return;
-  if ((_estimatorApplied[estId] || 0) >= r.ts) return;          // already filed this version
-  const e = estById(estId); if (!e) { _estimatorApplied[estId] = r.ts; return; }   // estimate was deleted meanwhile
+function finishEstimator() {
+  if (_estHost && _estHost.win) { try { _estHost.win.postMessage({ __dingus: true, type: 'dingus-request-save' }, location.origin); } catch (x) {} _estHost.closeTimer = setTimeout(() => closeEstimator(), 8000); }
+  else closeEstimator();
+}
+/* File the spreadsheet the estimator sent back as this estimate's mirror (ShareFile). */
+async function fileEstimatorSave(d) {
+  if (!job || !d || !d.estId || !d.xlsm) return;
+  const e = estById(d.estId); if (!e) return;
   try {
-    const bytes = b64ToBytes(r.xlsmB64);
+    const bytes = new Uint8Array(d.xlsm);
     const XL = await loadSheetJS();
     const wb = XL.read(bytes, { type: 'array' });
     if (estWorkbookLooksLikeOurs(wb)) {
       const parsed = parseEstimateWorkbook(wb);   // coarse summary for the card / compare view
       ['info', 'scheduleType', 'trades', 'rates', 'adders', 'material', 'ocipDeduct', 'subMarkupPct', 'supervision', 'smallToolsPct', 'equipMarkup', 'oANDpPct', 'emoReduce', 'marketRecovery', 'misc', 'permits', 'bond', 'taxType', 'levelerRound', 'levelerAddDeduct', 'subs', 'gcs', 'equipment'].forEach(kk => { if (parsed[kk] !== undefined) e[kk] = parsed[kk]; });
     }
-    if (r.name && r.name.trim()) e.name = r.name.trim();
+    if (d.name && String(d.name).trim()) e.name = String(d.name).trim();
     e.src = 'estimator'; e.wbMode = false;
-    e.estimatorTotal = (r.total != null && isFinite(r.total)) ? round2(r.total) : e.estimatorTotal;
+    e.estimatorTotal = (d.total != null && isFinite(d.total)) ? round2(d.total) : e.estimatorTotal;
     e.updated = Date.now();
-    _estimatorApplied[estId] = r.ts;
     await FB.setDoc(estimateRef(job.id, e.id), clean(e));
     if (jobFolder) await writeEstimateBytes(e, bytes);          // file the estimator's exact spreadsheet as this estimate's mirror
     if (view === 'job' && jobTab === 'estimates') renderEstimates();
-    toast('Estimator saved “' + (e.name || 'estimate') + '” — ' + (fmtMoney(e.estimatorTotal) || '$0'));
-  } catch (x) { console.error('applyEstimatorResult:', x); }
+  } catch (x) { console.error('fileEstimatorSave:', x); }
 }
+
 /* Write exact spreadsheet bytes (from the estimator) as the estimate's mirror in the folder. */
 async function writeEstimateBytes(e, bytes) {
   if (!jobFolder || !e) return;

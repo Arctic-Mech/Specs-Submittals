@@ -6275,111 +6275,81 @@ document.addEventListener('DOMContentLoaded', boot);
 
 <!-- ============================================================
      DINGUS HOST BRIDGE  (added by Specs-Submittals; not part of upstream arctic-mech/bids)
-     When this estimator is opened from The Dingus with ?dingus=<token>, it loads the
-     handed-off estimate spreadsheet as the active bid and writes the edited spreadsheet
-     back so The Dingus can file it. Same-origin localStorage + BroadcastChannel are the
-     channel. With no ?dingus param this whole block is inert — the page is the normal tool.
+     When this estimator is embedded by The Dingus as a page (iframe, ?dingus=1), it talks to
+     the parent over postMessage: the parent hands over the estimate spreadsheet (and, the first
+     time, the company file) as transferable ArrayBuffers, and the estimator hands the edited
+     spreadsheet back for The Dingus to file in ShareFile. No localStorage payloads (too small),
+     no new tab. With no ?dingus param this whole block is inert — the page is the normal tool.
      ============================================================ -->
 <script>
 (function () {
   'use strict';
-  var HANDOFF_KEY = 'dingus.est.handoff';
-  var RESULT_KEY  = function (estId) { return 'dingus.est.result.' + estId; };
   var params = new URLSearchParams(location.search);
-  if (!params.has('dingus')) return;                 // not launched from The Dingus → normal tool
-  var token = params.get('dingus');
+  if (!params.has('dingus')) return;                 // only when embedded by The Dingus
+  var PARENT = window.parent;
+  if (PARENT === window) return;                      // not in an iframe → normal tool
+  function post(msg, transfer) {
+    try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), location.origin, transfer || []); }
+    catch (e) { try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), '*', transfer || []); } catch (_) {} }
+  }
+  var CUR = null;               // { estId, name }
+  var _mirrorTimer = null, _saving = false;
 
-  function b64FromBytes(bytes) {                     // chunked (avoids call-stack overflow on big files)
-    var bin = '', CH = 0x8000;
-    for (var i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-    return btoa(bin);
-  }
-  function bytesFromB64(b64) {
-    var bin = atob(b64), out = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-  function readHandoff() {
-    try { var h = JSON.parse(localStorage.getItem(HANDOFF_KEY) || 'null'); return (h && h.token === token) ? h : null; }
-    catch (e) { return null; }
-  }
-  // Build the .xlsm bytes for the current bid (same steps exportXlsm() uses, minus the download).
-  async function buildXlsmBytes() {
+  async function buildXlsmBytes() {                   // same steps exportXlsm() uses, minus the download
     var parts = await templateParts();
     var doc = new XlsmDoc(parts.map(function (p) { return { name: p.name, bytes: p.bytes }; }));
     xlsmInject(doc, app.bid);
     doc.forceRecalc();
-    return await doc.build();
+    return await doc.build();                          // Uint8Array
   }
-  var HELLO = null, banner = null, lastResultTs = 0;
-  function writeResult(reason) {
-    if (!HELLO || !app.bid || (app.bid.meta && app.bid.meta.dingusEstId !== HELLO.estId)) return Promise.resolve(false);
-    return buildXlsmBytes().then(function (bytes) {
-      var total = (app.computed && app.computed.recap) ? app.computed.recap.totalBid : (app.bid.meta.lastTotal || 0);
-      var payload = { estId: HELLO.estId, jobId: HELLO.jobId, name: HELLO.name, total: total, xlsmB64: b64FromBytes(bytes), ts: Date.now(), reason: reason || '' };
-      try { localStorage.setItem(RESULT_KEY(HELLO.estId), JSON.stringify(payload)); } catch (e) { toast('Could not hand the estimate back — browser storage is full.', true); return false; }
-      lastResultTs = payload.ts;
-      try { var bc = new BroadcastChannel('dingus-estimator'); bc.postMessage({ type: 'saved', estId: HELLO.estId, ts: payload.ts }); bc.close(); } catch (e) {}
-      return true;
-    }).catch(function (e) { console.error('dingus writeResult:', e); return false; });
-  }
-  function showBanner() {
-    if (banner) return;
-    banner = el('div', { class: 'dingus-bar', style: 'position:sticky;top:0;z-index:50;display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 14px;background:#0b5;color:#fff;font:600 13px system-ui' },
-      el('span', {}, 'Editing “' + (HELLO.name || 'estimate') + '” from The Dingus — changes save back automatically.'),
-      el('button', { class: 'btn sm', style: 'background:#fff;color:#0a4', onclick: doneAndReturn }, '✓ Done — back to The Dingus'));
-    document.body.insertBefore(banner, document.body.firstChild);
-  }
-  async function doneAndReturn() {
-    try { app.saveNow(true); } catch (e) {}
-    await writeResult('done');
-    toast('Saved back to The Dingus.');
-    setTimeout(function () {
-      try { window.close(); } catch (e) {}
-      if (HELLO && HELLO.returnUrl && !window.closed) location.href = HELLO.returnUrl;
-    }, 250);
-  }
-  // Persist a result whenever the user leaves the tab, so The Dingus (which reconciles on
-  // focus) always sees the latest even if they never click the button.
-  window.addEventListener('pagehide', function () { writeResult('pagehide'); });
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') writeResult('hidden'); });
-  // Debounced mirror on every edit: pigg-back on the app's own save timer cadence.
-  var _mirrorTimer = null;
-  function scheduleMirror() { clearTimeout(_mirrorTimer); _mirrorTimer = setTimeout(function () { writeResult('autosave'); }, 1500); }
-
-  async function activate() {
-    // wait for the app to finish booting + the company file to be present
-    for (var i = 0; i < 200 && (typeof app === 'undefined' || typeof COMPANY === 'undefined'); i++) await new Promise(function (r) { setTimeout(r, 50); });
-    if (typeof COMPANY === 'undefined' || !COMPANY) {           // needs the one-time company file first
-      var t = setInterval(function () { if (typeof COMPANY !== 'undefined' && COMPANY) { clearInterval(t); activate(); } }, 500);
-      return;
-    }
-    var h = readHandoff();
-    if (!h) { toast('Could not find the estimate handed over from The Dingus — open it again from there.', true); return; }
-    HELLO = h;
+  async function sendSaved(final) {
+    if (!CUR || !app.bid || _saving) return;
+    _saving = true;
     try {
-      var pr = (typeof progressStart === 'function') ? progressStart('Opening estimate from The Dingus') : null;
-      if (pr) await pr.step(0.3, 'Reading the spreadsheet');
-      var bid;
-      if (h.xlsmB64) { bid = await importXlsmFile(bytesFromB64(h.xlsmB64), pr); }
-      else { bid = makeNewBid(effectiveSettings()); }
-      // Stable id so reopening the same Dingus estimate reuses one bid instead of piling up copies.
-      bid.meta.id = 'dingus-' + h.estId;
-      bid.meta.dingusEstId = h.estId; bid.meta.dingusJobId = h.jobId;
-      if (h.name && !bid.info.jobName) bid.info.jobName = h.name;
-      store.saveBid(bid);
-      if (pr) pr.done();
-      openBid(bid.meta.id);
-      showBanner();
-      // hook the app's touch()/save cadence to mirror results back
-      var origTouch = app.touch.bind(app);
-      app.touch = function () { origTouch(); scheduleMirror(); };
-      writeResult('opened');
-      toast('Loaded “' + (h.name || bid.info.jobName || 'estimate') + '” from The Dingus.');
-    } catch (e) { console.error('dingus activate:', e); toast('Could not open the estimate: ' + (e.message || e), true); }
+      try { app.saveNow(true); } catch (e) {}
+      var bytes = await buildXlsmBytes();
+      var total = (app.computed && app.computed.recap) ? app.computed.recap.totalBid : ((app.bid.meta && app.bid.meta.lastTotal) || 0);
+      var ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);   // detachable copy
+      post({ type: 'dingus-saved', estId: CUR.estId, name: CUR.name, total: total, xlsm: ab, final: !!final }, [ab]);
+    } catch (e) { console.error('estimator sendSaved:', e); post({ type: 'dingus-error', message: String(e && e.message || e) }); }
+    finally { _saving = false; }
   }
-  if (document.readyState === 'complete') activate();
-  else window.addEventListener('load', activate);
+  function scheduleMirror() { clearTimeout(_mirrorTimer); _mirrorTimer = setTimeout(function () { sendSaved(false); }, 1500); }
+
+  async function ensureCompany(companyBytes) {
+    if (typeof COMPANY !== 'undefined' && COMPANY) return true;
+    if (companyBytes && companyBytes.byteLength) {
+      try { await companyInstall(new Uint8Array(companyBytes)); return (typeof COMPANY !== 'undefined' && !!COMPANY); }
+      catch (e) { console.error('estimator company install:', e); return false; }
+    }
+    return false;
+  }
+  async function openFromDingus(d) {
+    if (!(await ensureCompany(d.company))) { post({ type: 'dingus-need-company' }); toast('Waiting for the company file from The Dingus…'); return; }
+    CUR = { estId: d.estId, name: d.name || 'Estimate' };
+    try {
+      var bid = (d.xlsm && d.xlsm.byteLength) ? await importXlsmFile(new Uint8Array(d.xlsm)) : makeNewBid(effectiveSettings());
+      bid.meta.id = 'dingus-' + d.estId; bid.meta.dingusEstId = d.estId;
+      if (d.name && !bid.info.jobName) bid.info.jobName = d.name;
+      store.saveBid(bid);
+      openBid(bid.meta.id);
+      var t = app.touch.bind(app); app.touch = function () { t(); scheduleMirror(); };   // mirror back on every edit
+      post({ type: 'dingus-opened', estId: d.estId });
+      sendSaved(false);
+      toast('Loaded “' + (d.name || bid.info.jobName || 'estimate') + '” from The Dingus');
+    } catch (e) { console.error('estimator open:', e); post({ type: 'dingus-error', message: String(e && e.message || e) }); toast('Could not open the estimate: ' + (e && e.message || e), true); }
+  }
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== PARENT) return;
+    var d = ev.data; if (!d || !d.__dingus) return;
+    if (d.type === 'dingus-open') openFromDingus(d);
+    else if (d.type === 'dingus-company') { ensureCompany(d.company).then(function (ok) { if (ok && d.reopen) openFromDingus(d.reopen); }); }
+    else if (d.type === 'dingus-request-save') sendSaved(true);
+  });
+  window.addEventListener('pagehide', function () { sendSaved(true); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') sendSaved(false); });
+  function announce() { post({ type: 'dingus-ready', hasCompany: (typeof COMPANY !== 'undefined' && !!COMPANY) }); }
+  if (document.readyState === 'complete') announce(); else window.addEventListener('load', announce);
 })();
 </script>
 </body>
