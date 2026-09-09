@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.19';
+const APP_VERSION = 'v7.20';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6884,8 +6884,16 @@ async function writeCoFile(c, opts) {
     const otherName = fname === CO_PROPOSAL_NAME ? CO_PROPOSAL_OLD : CO_PROPOSAL_NAME;
     removeNamedSibling(coDocDir(c), otherName).catch(() => {}); removeNumberedSiblings(coDocDir(c), otherName).catch(() => {});  // remove the other-format mirror so only one remains
     const existing = coProposalDoc(c);
+    const oldDir = existing && existing.dir;
     if (existing) { existing.dir = dir; existing.file = file; existing.name = fname; existing.added = Date.now(); }
     else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
+    // If the CO was renamed (number/description changed → new folder), the mirror we just
+    // wrote lives in the new folder but a stale copy is left behind in the old one. Remove it
+    // so the folder tree doesn't grow a second "CO 3" — syncCoFolders then prunes the empty dir.
+    if (oldDir && oldDir !== dir) {
+      removeNamedSibling(oldDir, CO_PROPOSAL_NAME).catch(() => {}); removeNamedSibling(oldDir, CO_PROPOSAL_OLD).catch(() => {});
+      removeNumberedSiblings(oldDir, CO_PROPOSAL_NAME).catch(() => {}); removeNumberedSiblings(oldDir, CO_PROPOSAL_OLD).catch(() => {});
+    }
     c.coFileSyncedAt = await coFileMtime(c);
     c.coFileSig = coInputSig(c);
     await FB.setDoc(coRef(job.id, c.id), clean(c));
@@ -10317,12 +10325,28 @@ async function syncCoFolders() {
       try {
         for await (const e of coRoot.values()) {   // clear the empty legacy Emails bucket + empty renamed/deleted CO folders (leave loose CO PDFs for refileAll)
           if (e.kind !== 'directory' || wantNames.has(e.name)) continue;
-          if (await isDirEmptyDeep(e)) { try { await coRoot.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
+          // Empty leftovers, or a folder orphaned by a rename that holds nothing but the
+          // auto-generated Change Proposal mirror (its record moved to the new folder), get pruned.
+          if (await isDirEmptyDeep(e) || await coFolderIsOnlyMirror(e)) { try { await coRoot.removeEntry(e.name, { recursive: true }); } catch (e2) {} }
         }
       } catch (e) {}
     } while (_syncCoAgain);
   } catch (e) { console.error(e); }
   finally { _syncingCo = false; }
+}
+/* True when a CO folder holds nothing but the auto-generated Change Proposal mirror
+   (any format / numbered duplicate) and, at most, empty subfolders. Such a folder is an
+   orphan left when a CO was renamed — safe to delete, since the live mirror is elsewhere. */
+async function coFolderIsOnlyMirror(dh) {
+  let sawMirror = false;
+  try {
+    for await (const e of dh.values()) {
+      if (e.kind === 'directory') { if (!(await isDirEmptyDeep(e))) return false; continue; }
+      if (/^Change Proposal(?: \(\d+\))?\.xls[xm]$/i.test(e.name)) { sawMirror = true; continue; }
+      return false;   // some other real file lives here — leave the folder alone
+    }
+  } catch (e) { return false; }
+  return sawMirror;
 }
 /* Any doc still sitting in an old flat folder? (cheap, no disk access) */
 function needsOrganize() {
