@@ -6292,7 +6292,7 @@ document.addEventListener('DOMContentLoaded', boot);
     try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), location.origin, transfer || []); }
     catch (e) { try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), '*', transfer || []); } catch (_) {} }
   }
-  var CUR = null;               // { estId, name }
+  var CUR = null;               // { estId, name, kind }
   var _mirrorTimer = null, _saving = false;
 
   async function buildXlsmBytes() {                   // same steps exportXlsm() uses, minus the download
@@ -6310,7 +6310,7 @@ document.addEventListener('DOMContentLoaded', boot);
       var bytes = await buildXlsmBytes();
       var total = (app.computed && app.computed.recap) ? app.computed.recap.totalBid : ((app.bid.meta && app.bid.meta.lastTotal) || 0);
       var ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);   // detachable copy
-      post({ type: 'dingus-saved', estId: CUR.estId, name: CUR.name, total: total, xlsm: ab, final: !!final }, [ab]);
+      post({ type: 'dingus-saved', estId: CUR.estId, kind: CUR.kind || 'est', name: CUR.name, total: total, xlsm: ab, final: !!final }, [ab]);
     } catch (e) { console.error('estimator sendSaved:', e); post({ type: 'dingus-error', message: String(e && e.message || e) }); }
     finally { _saving = false; }
   }
@@ -6326,7 +6326,7 @@ document.addEventListener('DOMContentLoaded', boot);
   }
   async function openFromDingus(d) {
     if (!(await ensureCompany(d.company))) { post({ type: 'dingus-need-company' }); toast('Waiting for the company file from The Dingus…'); return; }
-    CUR = { estId: d.estId, name: d.name || 'Estimate' };
+    CUR = { estId: d.estId, name: d.name || 'Estimate', kind: d.kind || 'est' };
     try {
       var bid = (d.xlsm && d.xlsm.byteLength) ? await importXlsmFile(new Uint8Array(d.xlsm)) : makeNewBid(effectiveSettings());
       bid.meta.id = 'dingus-' + d.estId; bid.meta.dingusEstId = d.estId;

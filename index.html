@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.22';
+const APP_VERSION = 'v7.23';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4224,17 +4224,20 @@ function renderCoDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Estimate / Change Proposal ${c.est ? coSyncStatusHtml(c) : ''}</h4>
-        ${coEstSummaryHtml(c)}
+        <h4>Change Proposal ${c.src === 'estimator' ? '<span class="est-sync ok" title="Built in the web estimator; the spreadsheet is filed in this CO’s folder">⧉ Estimator</span>' : (c.est ? coSyncStatusHtml(c) : '')}</h4>
+        ${c.src === 'estimator'
+          ? `<div class="est-mini">Built in the web estimator. Total <b>${esc(fmtMoney(c.estimatorTotal != null ? c.estimatorTotal : c.amount) || '$0')}</b> — filed in this CO’s folder as <b>Change Proposal.xlsm</b>.</div>`
+          : coEstSummaryHtml(c)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <button class="btn primary sm" onclick="openCoEstimator('${c.id}')">${c.est ? '✎ Edit change proposal' : '+ Build change proposal'}</button>
-          ${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>` : ''}
-          ${c.est ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>` : ''}
-          ${c.est ? `<button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
-          <button class="btn sm" onclick="importCoFilePick('${c.id}')" title="Already started this change proposal in Excel? Bring its numbers in — the CO keeps its number and stays synced to Excel.">⤒ Upload started proposal</button>
+          <button class="btn primary sm" onclick="openCoInEstimator('${c.id}')" title="Build this change order in the web estimator — the same bid tool as estimates">${(c.src === 'estimator' || c.est) ? '✎ Edit in estimator' : '+ Build in estimator'}</button>
+          ${c.src === 'estimator'
+            ? `<button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the change-proposal spreadsheet from the ShareFile folder">Open spreadsheet</button>`
+            : `${c.est ? `<button class="btn sm" onclick="exportChangeProposal('${c.id}')">⭳ PDF</button>
+          <button class="btn sm ghost" onclick="openCoExcel('${c.id}')" title="Open the Excel change proposal from the ShareFile folder">Excel</button>
+          <button class="btn sm ghost" onclick="importCoFromFile(coById('${c.id}'),{force:true}).then(x=>{if(!x)toast('No newer Excel changes found')})" title="Pull in edits saved in the CO's Excel file">↻ From Excel</button>` : ''}
+          <button class="btn sm" onclick="importCoFilePick('${c.id}')" title="Already started this change proposal in Excel? Bring its numbers in.">⤒ Upload started proposal</button>`}
           <button class="btn ghost sm" onclick="openLaborRates()" title="Set the labor rates used by estimates (upload your rate PDF)">Labor rates</button>
         </div>
-        ${c.est ? `<div class="est-mini" style="margin-top:6px">Mirrored to this CO’s folder as <b>Change Proposal.xlsm</b> — a copy of your real workbook with this CO’s numbers filled in. Edit here or in Excel, newest save wins.</div>` : ''}
       </div>
 
       <div class="sec">
@@ -4996,16 +4999,20 @@ function newEstimate() {
   saveEstimate(e);
   openEstimateEditor(e.id);
 }
-function duplicateEstimate(id) {
+async function duplicateEstimate(id) {
   const src = estById(id); if (!src) return;
   const copy = JSON.parse(JSON.stringify(src));
   copy.id = uid('est'); copy.name = (src.name || 'Estimate') + ' (copy)';
-  copy.locked = false; copy.lockedAt = 0; copy.created = Date.now(); copy.updated = Date.now(); copy.docs = [];
+  copy.locked = false; copy.lockedAt = 0; copy.created = Date.now(); copy.updated = Date.now(); copy.docs = []; copy.file = null; copy.fileSig = '';
   estimates = estimates.concat([copy]);
+  // an estimator-built estimate: copy its exact spreadsheet as the copy's own mirror
+  if (src.src === 'estimator' && jobFolder && src.file && src.file.file) {
+    try { const dir = await estDirHandle(false); const fh = await dir.getFileHandle(src.file.file); const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer()); await writeEstimateBytes(copy, bytes); }
+    catch (x) { try { await FB.setDoc(estimateRef(job.id, copy.id), clean(copy)); } catch (e) {} }
+  } else { saveEstimate(copy); }
   renderEstimates();
-  saveEstimate(copy);
   toast('Estimate duplicated');
-  openEstimateEditor(copy.id);
+  if (copy.src === 'estimator') openEstimateInEstimator(copy.id); else openEstimateEditor(copy.id);
 }
 function toggleLockEstimate(id) {
   const e = estById(id); if (!e) return;
@@ -6003,7 +6010,7 @@ async function openEstimateInEstimator(id, bytesOverride) {
     if (!bytes) { try { const ctx = { jobName: job.name || '', date: csvDate(today()) }; bytes = e.wbMode ? await buildEstWorkbookXlsm(e) : await buildEstXlsm(e, ctx); } catch (x) { console.warn('estimator: no spreadsheet to hand over, opening blank:', x && x.message || x); } }
   } catch (x) {}
   const companyBytes = await readCompanyFileBytes();
-  mountEstimator(e.id, e.name || 'Estimate', bytes ? new Uint8Array(bytes) : null, companyBytes);
+  mountEstimator('est', e.id, e.name || 'Estimate', bytes ? new Uint8Array(bytes) : null, companyBytes);
 }
 async function newEstimateInEstimator() {
   if (!job) return;
@@ -6013,7 +6020,22 @@ async function newEstimateInEstimator() {
   renderEstimates();
   await openEstimateInEstimator(e.id);
 }
-function mountEstimator(estId, name, xlsmU8, companyU8) {
+/* A change order is now built in the same estimator (the bid tool). Reopen from its stored
+   bid spreadsheet if it has one; otherwise start a fresh bid (the old CP-format estimate, if
+   any, is left in the folder untouched). */
+async function openCoInEstimator(id) {
+  const c = coById(id); if (!c || !job) return;
+  stickyToast('Opening the estimator…');
+  let bytes = null;
+  if (c.src === 'estimator' && jobFolder) {
+    const d = coProposalDoc(c);
+    if (d && d.file) { try { const fh = await coFileHandleGet(c); bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer()); } catch (x) {} }
+  }
+  const companyBytes = await readCompanyFileBytes();
+  const label = 'CO ' + (c.number || '') + (c.description ? ' — ' + c.description : '');
+  mountEstimator('co', c.id, label.trim(), bytes ? new Uint8Array(bytes) : null, companyBytes);
+}
+function mountEstimator(kind, entId, name, xlsmU8, companyU8) {
   closeEstimator();
   const host = document.createElement('div');
   host.className = 'estimator-host';
@@ -6027,7 +6049,7 @@ function mountEstimator(estId, name, xlsmU8, companyU8) {
     + '<iframe class="estimator-frame" style="flex:1;border:0;width:100%" src="' + esc(estimatorUrl()) + '?dingus=1"></iframe>';
   document.body.appendChild(host);
   const iframe = host.querySelector('iframe');
-  _estHost = { el: host, win: null, estId, name, xlsm: xlsmU8, companyBytes: companyU8 || null, pending: { type: 'dingus-open', estId, name } };
+  _estHost = { el: host, win: null, kind: kind, estId: entId, name, xlsm: xlsmU8, companyBytes: companyU8 || null, pending: { type: 'dingus-open', kind: kind, estId: entId, name } };
   iframe.addEventListener('load', () => { _estHost && (_estHost.win = iframe.contentWindow); });
   wireEstimatorMessages();
 }
@@ -6062,9 +6084,10 @@ function finishEstimator() {
   if (_estHost && _estHost.win) { try { _estHost.win.postMessage({ __dingus: true, type: 'dingus-request-save' }, location.origin); } catch (x) {} _estHost.closeTimer = setTimeout(() => closeEstimator(), 8000); }
   else closeEstimator();
 }
-/* File the spreadsheet the estimator sent back as this estimate's mirror (ShareFile). */
+/* File the spreadsheet the estimator sent back (ShareFile) — estimate or change order. */
 async function fileEstimatorSave(d) {
   if (!job || !d || !d.estId || !d.xlsm) return;
+  if (d.kind === 'co') return fileCoEstimatorSave(d);
   const e = estById(d.estId); if (!e) return;
   try {
     const bytes = new Uint8Array(d.xlsm);
@@ -6082,6 +6105,39 @@ async function fileEstimatorSave(d) {
     if (jobFolder) await writeEstimateBytes(e, bytes);          // file the estimator's exact spreadsheet as this estimate's mirror
     if (view === 'job' && jobTab === 'estimates') renderEstimates();
   } catch (x) { console.error('fileEstimatorSave:', x); }
+}
+/* Change-order version: the estimator's bid spreadsheet becomes the CO's proposal file. */
+async function fileCoEstimatorSave(d) {
+  const c = coById(d.estId); if (!c) return;
+  try {
+    const bytes = new Uint8Array(d.xlsm);
+    c.src = 'estimator';
+    c.estimatorTotal = (d.total != null && isFinite(d.total)) ? round2(d.total) : c.estimatorTotal;
+    if (c.estimatorTotal != null) c.amount = String(c.estimatorTotal);
+    c.updated = Date.now();
+    await saveCo(c);                                            // saveCo skips the CP mirror for estimator-managed COs
+    if (jobFolder) await writeCoBytes(c, bytes);               // file the bid spreadsheet as this CO's proposal
+    if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
+  } catch (x) { console.error('fileCoEstimatorSave:', x); }
+}
+/* Write the estimator's bid spreadsheet as the CO's Change Proposal file in the CO folder. */
+async function writeCoBytes(c, bytes) {
+  if (!jobFolder || !c) return;
+  try {
+    const fname = CO_PROPOSAL_NAME;   // Change Proposal.xlsm (now a bid-format workbook)
+    const f = new File([bytes], fname, { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
+    const { dir, file } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
+    removeNumberedSiblings(coDocDir(c), fname).catch(() => {});
+    removeNamedSibling(coDocDir(c), CO_PROPOSAL_OLD).catch(() => {});
+    const existing = coProposalDoc(c);
+    const oldDir = existing && existing.dir;
+    if (existing) { existing.dir = dir; existing.file = file; existing.name = fname; existing.added = Date.now(); }
+    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
+    if (oldDir && oldDir !== dir) { removeNamedSibling(oldDir, CO_PROPOSAL_NAME).catch(() => {}); removeNamedSibling(oldDir, CO_PROPOSAL_OLD).catch(() => {}); }
+    c.coFileSyncedAt = await coFileMtime(c);
+    await FB.setDoc(coRef(job.id, c.id), clean(c));
+    noteFolderChanged();
+  } catch (x) { console.error('writeCoBytes:', x); }
 }
 
 /* Write exact spreadsheet bytes (from the estimator) as the estimate's mirror in the folder. */
@@ -7032,6 +7088,7 @@ let _coFlushT = {};
 function scheduleCoFileFlush(c) { if (!jobFolder || !c || !c.est) return; clearTimeout(_coFlushT[c.id]); _coFlushT[c.id] = setTimeout(() => { writeCoFile(c).catch(() => {}); }, 2500); }
 async function writeCoFile(c, opts) {
   opts = opts || {};
+  if (c && c.src === 'estimator') return;   // built in the web estimator (see writeCoBytes) — never rebuild from the CP model
   if (!jobFolder || !c || (!c.est && !c.wbMode)) return;
   if (!c.wbMode && coProposalDoc(c) && coInputSig(c) === c.coFileSig && !opts.force) return;
   try {
@@ -7104,6 +7161,7 @@ async function reconcileCoFiles(opts) {
   const now = Date.now(); if (!opts.force && now - _coReconcileAt < 2500) return; _coReconcileAt = now;
   for (const c of cos) {
     try {
+      if (c.src === 'estimator') continue;                                                       // built in the estimator — it owns the proposal file
       if (c.wbMode) { if (openCo !== c.id) await reconcileWorkbookFile('co', c); continue; }   // workbook-mode: Excel⇄website via cell diff
       if (!c.est) continue;
       const d = coProposalDoc(c);
