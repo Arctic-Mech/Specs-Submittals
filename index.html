@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.23';
+const APP_VERSION = 'v7.24';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5994,10 +5994,20 @@ function copyAb(u8) { return u8 ? u8.buffer.slice(u8.byteOffset, u8.byteOffset +
 
 // ---- the estimator page (full-screen iframe) + postMessage host ----
 let _estHost = null;          // { el, win, estId, name, xlsm, companyBytes, pending }
-let _estMsgWired = false;
-function closeEstimator() {
+let _estMsgWired = false, _estPopWired = false;
+function closeEstimator() {   // remove the overlay; does NOT touch history (popstate/back handle that)
   if (_estHost) { if (_estHost.closeTimer) clearTimeout(_estHost.closeTimer); if (_estHost.el) { try { _estHost.el.remove(); } catch (x) {} } }
   _estHost = null;
+}
+/* Close via the Back button / Done / ✕ — consume the history entry we pushed on open so the
+   browser lands back on The Dingus (not the page before it). */
+function requestCloseEstimator() {
+  if (_estHost && _estHost.pushed) { _estHost.pushed = false; try { history.back(); return; } catch (x) {} }
+  closeEstimator();
+}
+function wireEstimatorPop() {
+  if (_estPopWired) return; _estPopWired = true;
+  window.addEventListener('popstate', () => { if (_estHost) { _estHost.pushed = false; closeEstimator(); } });   // browser Back while open → close the overlay
 }
 async function openEstimateInEstimator(id, bytesOverride) {
   const e = estById(id); if (!e || !job) return;
@@ -6050,6 +6060,8 @@ function mountEstimator(kind, entId, name, xlsmU8, companyU8) {
   document.body.appendChild(host);
   const iframe = host.querySelector('iframe');
   _estHost = { el: host, win: null, kind: kind, estId: entId, name, xlsm: xlsmU8, companyBytes: companyU8 || null, pending: { type: 'dingus-open', kind: kind, estId: entId, name } };
+  wireEstimatorPop();
+  try { history.pushState({ __dingusEstimator: true }, ''); _estHost.pushed = true; } catch (x) {}   // so Back closes the estimator, returning to The Dingus
   iframe.addEventListener('load', () => { _estHost && (_estHost.win = iframe.contentWindow); });
   wireEstimatorMessages();
 }
@@ -6058,7 +6070,7 @@ function wireEstimatorMessages() {
   window.addEventListener('message', async (ev) => {
     if (ev.origin !== location.origin) return;
     const d = ev.data; if (!d || !d.__dingus) return;
-    if (d.type === 'dingus-saved') { await fileEstimatorSave(d); if (d.final && _estHost) closeEstimator(); return; }
+    if (d.type === 'dingus-saved') { await fileEstimatorSave(d); if (d.final && _estHost) requestCloseEstimator(); return; }
     if (!_estHost) return;
     if (d.type === 'dingus-ready') {
       _estHost.win = ev.source;
@@ -6081,8 +6093,8 @@ function wireEstimatorMessages() {
   });
 }
 function finishEstimator() {
-  if (_estHost && _estHost.win) { try { _estHost.win.postMessage({ __dingus: true, type: 'dingus-request-save' }, location.origin); } catch (x) {} _estHost.closeTimer = setTimeout(() => closeEstimator(), 8000); }
-  else closeEstimator();
+  if (_estHost && _estHost.win) { try { _estHost.win.postMessage({ __dingus: true, type: 'dingus-request-save' }, location.origin); } catch (x) {} _estHost.closeTimer = setTimeout(() => requestCloseEstimator(), 8000); }
+  else requestCloseEstimator();
 }
 /* File the spreadsheet the estimator sent back (ShareFile) — estimate or change order. */
 async function fileEstimatorSave(d) {

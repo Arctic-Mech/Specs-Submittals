@@ -6288,12 +6288,21 @@ document.addEventListener('DOMContentLoaded', boot);
   if (!params.has('dingus')) return;                 // only when embedded by The Dingus
   var PARENT = window.parent;
   if (PARENT === window) return;                      // not in an iframe → normal tool
+  // Dingus mode is transient: the estimate lives only in this window and is mirrored back to
+  // The Dingus. Never write the Bids "Home" library — localStorage here is shared with the live
+  // Bids site, so writing it would pollute the real bid list. And navigate with replace (never
+  // push) so the browser Back button returns to The Dingus instead of walking estimator pages.
+  try { store.saveBid = function () {}; store.saveIndex = function () {}; } catch (e) {}
+  try {
+    router.go = function (name) { var target = '#/' + name; if (location.hash !== target) { try { location.replace(target); } catch (e) { location.hash = target; } } else { router.render(); } };
+  } catch (e) {}
+  try { var _st = document.createElement('style'); _st.textContent = '#sidebar nav a[data-page="home"]{display:none!important}'; (document.head || document.documentElement).appendChild(_st); } catch (e) {}
   function post(msg, transfer) {
     try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), location.origin, transfer || []); }
     catch (e) { try { PARENT.postMessage(Object.assign({ __dingus: true }, msg), '*', transfer || []); } catch (_) {} }
   }
   var CUR = null;               // { estId, name, kind }
-  var _mirrorTimer = null, _saving = false;
+  var _mirrorTimer = null, _saving = false, _rerun = false, _rerunFinal = false;
 
   async function buildXlsmBytes() {                   // same steps exportXlsm() uses, minus the download
     var parts = await templateParts();
@@ -6303,7 +6312,8 @@ document.addEventListener('DOMContentLoaded', boot);
     return await doc.build();                          // Uint8Array
   }
   async function sendSaved(final) {
-    if (!CUR || !app.bid || _saving) return;
+    if (!CUR || !app.bid) return;
+    if (_saving) { _rerun = true; if (final) _rerunFinal = true; return; }   // coalesce — never drop a requested save (esp. a final/Done)
     _saving = true;
     try {
       try { app.saveNow(true); } catch (e) {}
@@ -6312,7 +6322,7 @@ document.addEventListener('DOMContentLoaded', boot);
       var ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);   // detachable copy
       post({ type: 'dingus-saved', estId: CUR.estId, kind: CUR.kind || 'est', name: CUR.name, total: total, xlsm: ab, final: !!final }, [ab]);
     } catch (e) { console.error('estimator sendSaved:', e); post({ type: 'dingus-error', message: String(e && e.message || e) }); }
-    finally { _saving = false; }
+    finally { _saving = false; if (_rerun) { _rerun = false; var f = _rerunFinal; _rerunFinal = false; sendSaved(f); } }
   }
   function scheduleMirror() { clearTimeout(_mirrorTimer); _mirrorTimer = setTimeout(function () { sendSaved(false); }, 1500); }
 
@@ -6331,8 +6341,11 @@ document.addEventListener('DOMContentLoaded', boot);
       var bid = (d.xlsm && d.xlsm.byteLength) ? await importXlsmFile(new Uint8Array(d.xlsm)) : makeNewBid(effectiveSettings());
       bid.meta.id = 'dingus-' + d.estId; bid.meta.dingusEstId = d.estId;
       if (d.name && !bid.info.jobName) bid.info.jobName = d.name;
-      store.saveBid(bid);
-      openBid(bid.meta.id);
+      // open it directly (no store round-trip, no KEY_ACTIVE) so nothing lands in the Bids Home
+      app.bid = bid; app.dirty = false; app.baseSavedAt = null;
+      if (typeof app.resetHistory === 'function') app.resetHistory();
+      app.recalc();
+      router.go('recap');
       var t = app.touch.bind(app); app.touch = function () { t(); scheduleMirror(); };   // mirror back on every edit
       post({ type: 'dingus-opened', estId: d.estId });
       sendSaved(false);
