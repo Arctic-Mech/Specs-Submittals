@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.24';
+const APP_VERSION = 'v7.25';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6033,11 +6033,11 @@ async function newEstimateInEstimator() {
 /* A change order is now built in the same estimator (the bid tool). Reopen from its stored
    bid spreadsheet if it has one; otherwise start a fresh bid (the old CP-format estimate, if
    any, is left in the folder untouched). */
-async function openCoInEstimator(id) {
+async function openCoInEstimator(id, bytesOverride) {
   const c = coById(id); if (!c || !job) return;
   stickyToast('Opening the estimator…');
-  let bytes = null;
-  if (c.src === 'estimator' && jobFolder) {
+  let bytes = bytesOverride || null;
+  if (!bytes && c.src === 'estimator' && jobFolder) {
     const d = coProposalDoc(c);
     if (d && d.file) { try { const fh = await coFileHandleGet(c); bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer()); } catch (x) {} }
   }
@@ -6201,19 +6201,25 @@ function importCoFilePick(id) {
   pickXlsxFile(async file => {
     stickyToast('Reading ' + file.name + '…');
     try {
-      const wb = await readPickedWorkbook(file);
-      if (!coWorkbookLooksLikeOurs(wb)) { toast('That isn’t a Dingus change-proposal spreadsheet — its numbers can’t be read automatically.', true); return; }
-      const parsed = parseCoWorkbook(wb);
-      c.est = parsed.est;
-      // importing pulls in the estimate numbers — it must NOT rename the CO. Keep the CO's
-      // own number/description; only fill them from the file when this CO has none yet.
-      if (parsed.number && !c.number) c.number = parsed.number; if (parsed.description && !c.description) c.description = parsed.description;
-      if (parsed.mod && !c.mod) c.mod = parsed.mod; if (parsed.rfiCcdAsi && !c.rfiCcdAsi) c.rfiCcdAsi = parsed.rfiCcdAsi;
-      c.amount = String(round2(computeEstimate(c.est, jobLaborRates()).totalBid));
-      c.coFileSig = '';
-      await saveCo(c);
-      renderCos(); if (openCo === c.id) renderCoDrawer();
-      toast('Imported the proposal — ' + (fmtMoney(computeEstimate(c.est, jobLaborRates()).totalBid) || '$0'));
+      const buf = await file.arrayBuffer(); const bytes = new Uint8Array(buf);
+      const XL = await loadSheetJS(); const wb = XL.read(bytes, { type: 'array' });
+      // Change orders now build in the estimator (bid format), same as estimates. A bid-format
+      // upload becomes this CO's proposal and opens in the estimator.
+      if (estWorkbookLooksLikeOurs(wb)) {
+        const ws = wb.Sheets['MCAA RECAP'];
+        const tot = (ws && ws['H70'] && ws['H70'].v != null) ? round2(estNum(ws['H70'].v))
+          : round2(computeProjectEstimate(Object.assign(defaultEstimate(), parseEstimateWorkbook(wb))).totalBid);
+        c.src = 'estimator'; c.estimatorTotal = tot; c.amount = String(tot); c.updated = Date.now();
+        await saveCo(c);
+        if (jobFolder) await writeCoBytes(c, bytes);                 // file the exact uploaded spreadsheet as this CO's proposal
+        renderCos(); if (openCo === c.id) renderCoDrawer();
+        toast('Imported change order — opening in the estimator…');
+        openCoInEstimator(c.id, bytes);                             // open it there with its exact bytes
+      } else if (typeof coWorkbookLooksLikeOurs === 'function' && coWorkbookLooksLikeOurs(wb)) {
+        toast('That’s the older change-proposal workbook (CP) format. Change orders now build in the estimator — click “Edit in estimator” to build it there, or upload a bid-format estimate spreadsheet.', true);
+      } else {
+        toast('That isn’t a recognized estimate/change-order spreadsheet.', true);
+      }
     } catch (x) { console.error(x); toast('Could not read that file: ' + (x.message || x), true); }
   });
 }
