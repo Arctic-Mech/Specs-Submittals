@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.17';
+const APP_VERSION = 'v7.18';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5856,6 +5856,7 @@ async function reconcileEstimateFiles(opts) {
   const now = Date.now(); if (!opts.force && now - _estReconcileAt < 2500) return; _estReconcileAt = now;
   for (const e of estimates) {
     try {
+      if (e.wbMode) { if (!e.locked) await reconcileWorkbookFile('est', e); continue; }   // workbook-mode: Excel⇄website via cell diff
       if (e.file && e.file.file) removeNumberedSiblings(ESTIMATE_DIR, estFileDesiredName(e), estFileKeepSet()).catch(() => {});   // sweep leftover numbered duplicates
       if (!e.file || !e.file.file) { if (!e.locked && estInputSig(e) !== (e.fileSig || null)) await writeEstimateFile(e); continue; }
       const fm = await estFileMtime(e);
@@ -6591,6 +6592,56 @@ function wbResetWorkbook() {
   cfg.rerender();
 }
 
+/* ── Excel → website read-back for workbook mode ──
+   Diff the mirror .xlsm against the pristine template: any non-formula cell whose
+   value differs (or a formula the user typed over) is an edited input. */
+const _wbPristine = {}, WB_MARK = { co: { sheet: 'CP Backup', cells: ['T1', 'T2', 'T4', 'T5'] }, est: { sheet: 'MCAA RECAP', cells: ['AB1', 'AB2'] } };
+function wbInputsSig(o) { o = o || {}; return JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]])); }
+async function wbPristineWb(kind) { if (_wbPristine[kind]) return _wbPristine[kind]; const XL = await loadSheetJS(); _wbPristine[kind] = XL.read(new Uint8Array(await WB_KINDS[kind].tpl()), { type: 'array', cellFormula: true }); return _wbPristine[kind]; }
+function readWorkbookInputsDiff(mirror, pristine, markerSheet, markerCells) {
+  const inputs = {};
+  const eq = (a, b) => { if (a == null && b == null) return true; if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-9; return String(a == null ? '' : a) === String(b == null ? '' : b); };
+  (mirror.SheetNames || []).forEach(sh => {
+    const mws = mirror.Sheets[sh]; if (!mws) return; const pws = pristine.Sheets[sh] || {};
+    for (const addr in mws) {
+      if (addr[0] === '!') continue;
+      if (sh === markerSheet && markerCells.indexOf(addr) >= 0) continue;
+      const m = mws[addr]; if (m.f != null) continue;                   // still a formula → not an override
+      const p = pws[addr]; const mv = (m.v == null ? '' : m.v);
+      if (p && p.f != null) { inputs[sh + '!' + addr] = mv; }           // user replaced a formula with a value
+      else { const pv = p ? p.v : undefined; if (!eq(m.v, pv)) inputs[sh + '!' + addr] = mv; }
+    }
+  });
+  return inputs;
+}
+async function reconcileWorkbookFile(kind, e) {
+  const cfg = WB_KINDS[kind]; if (!e.wbMode) return false;
+  let mtime = 0, bytes = null;
+  try {
+    if (kind === 'co') { if (!coProposalDoc(e)) return false; mtime = await coFileMtime(e); if (mtime) bytes = await (await (await coFileHandleGet(e)).getFile()).arrayBuffer(); }
+    else { if (!e.file || !e.file.file) return false; mtime = await estFileMtime(e); if (mtime) { const dir = await estDirHandle(false); bytes = await (await (await dir.getFileHandle(e.file.file)).getFile()).arrayBuffer(); } }
+  } catch (x) { return false; }
+  if (!mtime || !bytes) return false;
+  const syncedAt = kind === 'co' ? (e.coFileSyncedAt || 0) : (e.fileSyncedAt || 0);
+  if (mtime <= syncedAt + 2000) return false;                                          // unchanged since our last sync
+  if (mtime < (e.updated || 0)) { await cfg.save(e, { force: true }); return false; }   // website is newer → rewrite the mirror
+  try {
+    const XL = await loadSheetJS();
+    const mirror = XL.read(new Uint8Array(bytes), { type: 'array', cellFormula: true });
+    const mk = WB_MARK[kind];
+    const newInputs = readWorkbookInputsDiff(mirror, await wbPristineWb(kind), mk.sheet, mk.cells);
+    if (wbInputsSig(newInputs) === wbInputsSig(e.wbInputs)) { if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; return false; }
+    e.wbInputs = newInputs; e.wbMode = true;
+    const eng = makeWbEngine(mirror);
+    e.wbTotal = round2(eng.get(cfg.total.sheet, cfg.total.cell)); if (cfg.hasAmount) e.amount = String(e.wbTotal);
+    if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; e.updated = Date.now();
+    await FB.setDoc(cfg.ref(e), clean(e));
+    cfg.rerender();
+    toast((kind === 'co' ? 'CO ' + (e.number || '') : '“' + (e.name || 'Estimate') + '”') + ' updated from the Excel workbook');
+    return true;
+  } catch (x) { console.error(x); return false; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    6d1e. CHANGE-PROPOSAL ⇄ EXCEL SYNC  —  same as estimates, for change orders.
    A CO with an estimate is mirrored to "Change Proposal.xlsm" (a byte-identical
@@ -6832,6 +6883,7 @@ async function reconcileCoFiles(opts) {
   const now = Date.now(); if (!opts.force && now - _coReconcileAt < 2500) return; _coReconcileAt = now;
   for (const c of cos) {
     try {
+      if (c.wbMode) { if (openCo !== c.id) await reconcileWorkbookFile('co', c); continue; }   // workbook-mode: Excel⇄website via cell diff
       if (!c.est) continue;
       const d = coProposalDoc(c);
       if (d) { removeNumberedSiblings(coDocDir(c), CO_PROPOSAL_NAME).catch(() => {}); removeNumberedSiblings(coDocDir(c), CO_PROPOSAL_OLD).catch(() => {}); }   // sweep leftover numbered duplicates
