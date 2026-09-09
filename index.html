@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.27';
+const APP_VERSION = 'v7.28';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6773,7 +6773,95 @@ function makeWbEngine(wb) {
 }
 
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
-let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null;
+let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbPage = 0;
+/* ── Config-driven page layouts (our own, not hardwired) ──
+   A layout maps a workbook's input/computed cells into labeled pages, so the same editor
+   renders a form-style view for ANY workbook. Add a layout per workbook; the engine
+   (makeWbEngine) does the math and buildWorkbookMirror writes it back out. */
+const WB_LAYOUTS = {
+  co: {
+    sheet: 'CP Backup',
+    intro: 'Change-order proposal — cream fields are yours to fill in; grey values calculate live and save back into the Change Proposal spreadsheet.',
+    pages: [
+      { name: 'Proposal', sections: [
+        { title: 'Change order', fields: [
+          { label: 'Job name', cell: 'D2', fmt: 'text', in: true },
+          { label: 'Job #', cell: 'D3', fmt: 'text', in: true },
+          { label: 'Customer', cell: 'D4', fmt: 'text', in: true },
+          { label: 'CO / MOD #', cell: 'B5', fmt: 'text', in: true },
+          { label: 'Description', cell: 'B7', fmt: 'text', in: true, wide: true } ] },
+        { title: 'Bottom line', fields: [
+          { label: 'Total cost', cell: 'D118', fmt: 'money' },
+          { label: 'Total markup', cell: 'D119', fmt: 'money' },
+          { label: 'Tax', cell: 'D123', fmt: 'money' },
+          { label: 'Rounding', cell: 'D124', fmt: 'money' },
+          { label: 'TOTAL BID', cell: 'D125', fmt: 'money', big: true } ] } ] },
+      { name: 'Material', sections: [
+        { title: 'Material', fields: [ { label: 'Takeoff $', cell: 'D24', fmt: 'money', in: true } ] },
+        { title: 'Additional material', lines: { descCol: 'A', costCol: 'D', rows: CO_TPL_MAT_ROWS } },
+        { title: 'Markup & totals', fields: [
+          { label: 'Markup %', cell: 'B32', fmt: 'pct', in: true },
+          { label: 'Material subtotal', cell: 'D31', fmt: 'money' },
+          { label: 'Markup', cell: 'D32', fmt: 'money' },
+          { label: 'Material total', cell: 'D33', fmt: 'money' } ] } ] },
+      { name: 'Equipment', sections: [
+        { title: 'Equipment (deducts are negative)', lines: { descCol: 'A', costCol: 'D', rows: CO_TPL_EQ_ROWS } },
+        { title: 'Markup & totals', fields: [
+          { label: 'Markup %', cell: 'B44', fmt: 'pct', in: true },
+          { label: 'Equipment subtotal', cell: 'D43', fmt: 'money' },
+          { label: 'Markup', cell: 'D44', fmt: 'money' },
+          { label: 'Equipment total', cell: 'D45', fmt: 'money' } ] } ] },
+      { name: 'Labor', sections: [
+        { title: 'Labor hours by class', labor: true },
+        { title: 'Per diem & markup', fields: [
+          { label: 'Per diem $/day', cell: 'B93', fmt: 'money', in: true },
+          { label: 'Labor markup %', cell: 'B94', fmt: 'pct', in: true },
+          { label: 'Field hours', cell: 'H86', fmt: 'num' },
+          { label: 'Field cost', cell: 'H87', fmt: 'money' },
+          { label: 'Labor subtotal', cell: 'D92', fmt: 'money' },
+          { label: 'Per diem', cell: 'D93', fmt: 'money' },
+          { label: 'Labor markup', cell: 'D94', fmt: 'money' },
+          { label: 'Labor total', cell: 'D95', fmt: 'money' } ] } ] },
+      { name: 'Subs', sections: [
+        { title: 'Subcontractors', lines: { descCol: 'A', costCol: 'D', rows: CO_TPL_SUB_ROWS } },
+        { title: 'Markup & totals', fields: [
+          { label: 'Markup %', cell: 'B105', fmt: 'pct', in: true },
+          { label: 'Subs subtotal', cell: 'D104', fmt: 'money' },
+          { label: 'Markup', cell: 'D105', fmt: 'money' },
+          { label: 'Subs total', cell: 'D106', fmt: 'money' } ] } ] },
+      { name: 'Indirects', sections: [
+        { title: 'Tools, consumables & site', fields: [
+          { label: 'Small tools %', cell: 'H108', fmt: 'pct', in: true },
+          { label: 'Consumables %', cell: 'H109', fmt: 'pct', in: true },
+          { label: 'Site indirects %', cell: 'H110', fmt: 'pct', in: true },
+          { label: 'Safety %', cell: 'H113', fmt: 'pct', in: true },
+          { label: 'Rentals $', cell: 'D109', fmt: 'money', in: true },
+          { label: 'Delivery cost $', cell: 'B111', fmt: 'money', in: true },
+          { label: 'Delivery qty', cell: 'C111', fmt: 'num', in: true },
+          { label: 'Permits $', cell: 'D113', fmt: 'money', in: true },
+          { label: 'Markup %', cell: 'B115', fmt: 'pct', in: true } ] },
+        { title: 'Totals', fields: [
+          { label: 'Site subtotal', cell: 'D114', fmt: 'money' },
+          { label: 'Markup', cell: 'D115', fmt: 'money' },
+          { label: 'Site total', cell: 'D116', fmt: 'money' } ] } ] },
+      { name: 'Markup & tax', sections: [
+        { title: 'Overall markup, adders & tax', fields: [
+          { label: 'Total markup %', cell: 'B119', fmt: 'pct', in: true },
+          { label: 'Bond $', cell: 'D120', fmt: 'money', in: true },
+          { label: 'OCIP $', cell: 'D121', fmt: 'money', in: true },
+          { label: 'Contingency $', cell: 'D122', fmt: 'money', in: true },
+          { label: 'Tax label', cell: 'A123', fmt: 'text', in: true },
+          { label: 'Tax rate %', cell: 'C123', fmt: 'pct', in: true },
+          { label: 'Round to $', cell: 'H125', fmt: 'num', in: true } ] },
+        { title: 'Bottom line', fields: [
+          { label: 'Total cost', cell: 'D118', fmt: 'money' },
+          { label: 'Total markup', cell: 'D119', fmt: 'money' },
+          { label: 'Tax', cell: 'D123', fmt: 'money' },
+          { label: 'Rounding adj', cell: 'D124', fmt: 'money' },
+          { label: 'TOTAL BID', cell: 'D125', fmt: 'money', big: true } ] } ] } ],
+  },
+};
+function wbLayout() { return _wb ? WB_LAYOUTS[_wb.kind] : null; }
 const WB_ROW_CAP = 200, WB_ROW_STEP = 200;   // initial rows rendered per sheet + "show more" step
 const WB_KINDS = {
   co: {
@@ -6815,7 +6903,8 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {};
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbPage = 0;
+  _wbView = WB_LAYOUTS[kind] ? 'pages' : 'grid';    // page (form) view by default when a layout exists
   renderWbModal();                                  // loading state
   try {
     const XL = await loadSheetJS();
@@ -6830,6 +6919,7 @@ async function openWorkbook(kind, id) {
 }
 function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; $('modalHost').innerHTML = ''; }
 function wbSetSheet(name) { _wbSheet = name; renderWbModal(); }
+function wbSetView(v) { _wbView = v; renderWbModal(); }
 function wbMoreRows() { _wbRows[_wbSheet] = (_wbRows[_wbSheet] != null ? _wbRows[_wbSheet] : WB_ROW_CAP) + WB_ROW_STEP; renderWbGridOnly(); }
 function wbEdit(sheet, addr, val) {
   if (!_wbEng) return;
@@ -6843,9 +6933,21 @@ function wbEdit(sheet, addr, val) {
   else stored = val;
   _wbEng.setInput(sheet, addr, stored);
   e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
-  renderWbGridOnly();
+  renderWbBody();
   scheduleWbSave();
 }
+/* percentage inputs display as whole percents but store the workbook's fraction (0.1 = 10%) */
+function wbEditPct(sheet, addr, val) {
+  const s = String(val).replace('%', '').trim();
+  wbEdit(sheet, addr, s === '' ? '' : (parseFloat(s.replace(/[$,\s]/g, '')) / 100));
+}
+/* re-render whichever workbook view is active (pages or grid) + the header total */
+function renderWbBody() {
+  const g = document.getElementById('wbGridWrap');
+  if (g) g.innerHTML = (_wbView === 'pages' && wbLayout()) ? wbPagesHtml() : wbGridHtml();
+  const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
+}
+function wbGoPage(i) { _wbPage = i; renderWbBody(); }
 function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistWbInputs().catch(() => {}); }, 1200); }
 function wbHasEdits(e) { return !!(e && e.wbInputs && Object.keys(e.wbInputs).length); }
 function wbApplyTotals(e, cfg) { const t = round2(wbTotalVal()); e.wbTotal = t; if (cfg.hasAmount) e.amount = String(t); }
@@ -6910,23 +7012,59 @@ function renderWbGridOnly() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = wbGridHtml();
   const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
 }
+/* Page (form) view driven by WB_LAYOUTS — our own, workbook-agnostic layout over the engine. */
+function wbPagesHtml() {
+  const eng = _wbEng, lay = wbLayout(); if (!eng || !lay) return '';
+  const sheet = lay.sheet, pages = lay.pages, pi = Math.min(_wbPage, pages.length - 1);
+  const esch = s => String(s).replace(/'/g, "\\'");
+  const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+  const val = a => eng.get(sheet, a);
+  const disp = (a, fmt) => { const v = val(a); if (fmt === 'money') return (v === '' || v == null) ? '$0' : (fmtMoney(round2(num(v))) || '$0'); if (fmt === 'pct') return (v === '' || v == null) ? '0%' : (Math.round(num(v) * 10000) / 100) + '%'; if (fmt === 'num') return wbFmtNum(v); return v == null ? '' : String(v); };
+  const txtVal = a => { const v = val(a); return esc(v == null ? '' : String(v)); };
+  const inputFor = f => {
+    const a = f.cell;
+    if (f.fmt === 'pct') { const cur = val(a); const pv = (cur === '' || cur == null) ? '' : (Math.round(num(cur) * 10000) / 100); return `<span class="wbfin pct"><input class="wbpin" value="${esc(pv)}" onchange="wbEditPct('${esch(sheet)}','${a}',this.value)"><i>%</i></span>`; }
+    if (f.fmt === 'money') return `<span class="wbfin money"><i>$</i><input class="wbpin" value="${esc(wbInputRaw(val(a)))}" onchange="wbEdit('${esch(sheet)}','${a}',this.value)"></span>`;
+    if (f.fmt === 'text') return `<input class="wbpin wbptext${f.wide ? ' wide' : ''}" value="${txtVal(a)}" onchange="wbEdit('${esch(sheet)}','${a}',this.value)">`;
+    return `<input class="wbpin" value="${esc(wbInputRaw(val(a)))}" onchange="wbEdit('${esch(sheet)}','${a}',this.value)">`;
+  };
+  const fieldRow = f => `<div class="wbfrow${f.big ? ' big' : ''}"><label>${esc(f.label)}</label>${f.in ? inputFor(f) : `<span class="wbfval">${esc(disp(f.cell, f.fmt))}</span>`}</div>`;
+  const linesTable = ln => '<div class="wblines">' + ln.rows.map(row =>
+    `<div class="wblrow"><input class="wbpin wbptext wide" placeholder="Description" value="${txtVal(ln.descCol + row)}" onchange="wbEdit('${esch(sheet)}','${ln.descCol}${row}',this.value)"><span class="wbfin money"><i>$</i><input class="wbpin" value="${esc(wbInputRaw(val(ln.costCol + row)))}" onchange="wbEdit('${esch(sheet)}','${ln.costCol}${row}',this.value)"></span></div>`).join('') + '</div>';
+  const laborTable = () => '<div class="wblabor"><div class="wblhead"><span>Class</span><span>ST</span><span>OT</span><span>DT</span><span>Shift</span><span>Cost</span></div>' +
+    estLaborRows().map(rr => { const hrow = CO_LABOR_ROW[rr.key]; if (!hrow) return ''; const cost = val('F' + (hrow + 1));
+      return `<div class="wblrow2"><span class="wbllbl">${esc(rr.label || rr.name || rr.key)}</span>` +
+        ['B', 'C', 'D', 'E'].map(col => `<input class="wbpin" value="${esc(wbInputRaw(val(col + hrow)))}" onchange="wbEdit('${esch(sheet)}','${col}${hrow}',this.value)">`).join('') +
+        `<span class="wbfval">${esc((cost === '' || cost == null) ? '' : (fmtMoney(round2(num(cost))) || ''))}</span></div>`; }).join('') + '</div>';
+  const nav = pages.map((p, i) => `<button class="wbpnav${i === pi ? ' on' : ''}" onclick="wbGoPage(${i})">${esc(p.name)}</button>`).join('');
+  const body = pages[pi].sections.map(sec => {
+    const inner = sec.labor ? laborTable() : sec.lines ? linesTable(sec.lines) : '<div class="wbfields">' + sec.fields.map(fieldRow).join('') + '</div>';
+    return `<div class="wbsec"><h4>${esc(sec.title)}</h4>${inner}</div>`;
+  }).join('');
+  return `<div class="wbpages"><div class="wbpnavbar">${nav}</div><div class="wbpbody">${body}</div></div>`;
+}
 function renderWbModal() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { $('modalHost').innerHTML = ''; return; }
   const loading = !_wbEng;
-  const tabs = loading ? '' : _wbEng.visibleSheets.map(s => `<button class="wbtab${s === _wbSheet ? ' on' : ''}" onclick="wbSetSheet('${esc(s).replace(/'/g, "\\'")}')">${esc(s)}</button>`).join('');
+  const lay = wbLayout(); const pageView = !loading && _wbView === 'pages' && lay;
+  const toggle = (loading || !lay) ? '' : `<div class="wbviewtog"><button class="${pageView ? 'on' : ''}" onclick="wbSetView('pages')">Pages</button><button class="${pageView ? '' : 'on'}" onclick="wbSetView('grid')">All sheets</button></div>`;
+  const tabs = (loading || pageView) ? '' : _wbEng.visibleSheets.map(s => `<button class="wbtab${s === _wbSheet ? ' on' : ''}" onclick="wbSetSheet('${esc(s).replace(/'/g, "\\'")}')">${esc(s)}</button>`).join('');
+  const bodyHtml = loading ? '' : (pageView ? wbPagesHtml() : wbGridHtml());
+  const noteHtml = pageView ? (lay.intro || '') : `White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the spreadsheet — no Excel needed.${!wbHasEdits(e) ? (cfg.note ? cfg.note(e) : '') : ''}`;
   $('modalHost').innerHTML = `<div class="modal-scrim wbscrim" onclick="if(event.target===this)closeWb()"><div class="wbmodal">
     <div class="wbhead">
-      <div class="wbtitle">${esc(cfg.title(e))} — Workbook${loading ? '' : ` &nbsp;·&nbsp; <span class="wbtotwrap">Total bid <b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>`}</div>
+      <div class="wbtitle">${esc(cfg.title(e))}${loading ? '' : ` &nbsp;·&nbsp; <span class="wbtotwrap">Total bid <b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>`}</div>
       <div style="display:flex;gap:8px;align-items:center">
+        ${toggle}
         ${loading ? '' : `<button class="btn sm ghost" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
         <button class="btn sm primary" onclick="saveWorkbook(true)">Save &amp; close</button>
         <button class="icon-btn" onclick="closeWb()">✕</button>
       </div>
     </div>
     ${loading ? '<div class="wbloading">Loading the workbook…</div>' : `
-      <div class="wbtabs">${tabs}</div>
-      <div class="wbgridwrap" id="wbGridWrap">${wbGridHtml()}</div>
-      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the .xlsm — no Excel needed.${!wbHasEdits(e) ? cfg.note(e) : ''}</div>`}
+      ${pageView ? '' : `<div class="wbtabs">${tabs}</div>`}
+      <div class="wbgridwrap${pageView ? ' pageview' : ''}" id="wbGridWrap">${bodyHtml}</div>
+      <div class="wbnote">${noteHtml}</div>`}
   </div></div>
   <style>
     .wbscrim{align-items:stretch;justify-content:center}
@@ -6948,6 +7086,34 @@ function renderWbModal() {
     .wbin:focus{outline:2px solid var(--accent,#2563eb);background:#fff}
     .wbin.wbedited{background:rgba(37,99,235,.10);font-weight:600}
     .wbnote{padding:8px 14px;font-size:11px;color:var(--muted,#889);border-top:1px solid var(--line,#e3e6ea)}
+    .wbviewtog{display:inline-flex;border:1px solid var(--line,#d7dbe0);border-radius:7px;overflow:hidden}
+    .wbviewtog button{border:none;background:var(--bg,#f4f6f8);color:var(--muted,#667);font:600 12px system-ui;padding:5px 12px;cursor:pointer}
+    .wbviewtog button.on{background:var(--accent,#2563eb);color:#fff}
+    .wbgridwrap.pageview{background:var(--bg,#f4f6f8);padding:0}
+    .wbpages{display:flex;min-height:100%}
+    .wbpnavbar{display:flex;flex-direction:column;gap:2px;padding:12px 8px;min-width:150px;border-right:1px solid var(--line,#e3e6ea);background:var(--card,#fff)}
+    .wbpnav{text-align:left;border:none;background:transparent;padding:8px 12px;border-radius:7px;font:500 13px system-ui;color:var(--fg,#333);cursor:pointer}
+    .wbpnav:hover{background:var(--bg,#eef1f4)} .wbpnav.on{background:var(--accent,#2563eb);color:#fff;font-weight:600}
+    .wbpbody{flex:1;padding:16px 20px;overflow:auto}
+    .wbsec{margin-bottom:20px} .wbsec h4{margin:0 0 8px;font-size:13px;color:var(--muted,#667);text-transform:uppercase;letter-spacing:.03em}
+    .wbfields{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 18px}
+    .wbfrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;border-radius:6px;background:var(--card,#fff);border:1px solid var(--line,#eef1f4)}
+    .wbfrow label{color:var(--fg,#333);font-size:13px}
+    .wbfrow.big{grid-column:1/-1;background:var(--accent,#2563eb);color:#fff;padding:10px 12px}
+    .wbfrow.big label{color:#fff;font-weight:700} .wbfrow.big .wbfval{color:#fff;font-size:18px;font-weight:700}
+    .wbfval{font-variant-numeric:tabular-nums;font-weight:600;color:var(--fg,#111)}
+    .wbfin{display:inline-flex;align-items:center;border:1px solid var(--line,#cfd6dd);border-radius:6px;background:#fffdf5;overflow:hidden}
+    .wbfin i{padding:0 6px;color:var(--muted,#889);font-style:normal;font-size:12px;background:var(--bg,#f1f3f6)}
+    .wbpin{border:1px solid var(--line,#cfd6dd);border-radius:6px;background:#fffdf5;padding:5px 8px;font:inherit;font-size:13px;text-align:right;width:120px;color:var(--fg,#111)}
+    .wbfin .wbpin{border:none;background:#fffdf5;width:110px}
+    .wbpin.wbptext{text-align:left;width:180px} .wbpin.wbptext.wide{width:100%;min-width:220px}
+    .wbpin:focus{outline:2px solid var(--accent,#2563eb);background:#fff}
+    .wblines{display:flex;flex-direction:column;gap:6px;max-width:640px}
+    .wblrow{display:flex;gap:8px;align-items:center} .wblrow .wbptext{flex:1}
+    .wblabor{display:flex;flex-direction:column;gap:3px;max-width:720px}
+    .wblhead,.wblrow2{display:grid;grid-template-columns:1.6fr .8fr .8fr .8fr .8fr 1fr;gap:6px;align-items:center}
+    .wblhead{font-size:11px;color:var(--muted,#889);text-transform:uppercase;padding:0 2px} .wblhead span:not(:first-child){text-align:right}
+    .wblrow2 .wbpin{width:100%} .wbllbl{font-size:13px;color:var(--fg,#333)} .wblrow2 .wbfval{text-align:right}
   </style>`;
 }
 function wbResetWorkbook() {
