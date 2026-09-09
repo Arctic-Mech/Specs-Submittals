@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.15';
+const APP_VERSION = 'v7.16';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6259,8 +6259,12 @@ function makeWbEngine(wb) {
   ((wb.Workbook && wb.Workbook.Sheets) || []).forEach((s, i) => { hiddenOf[wb.SheetNames[i]] = s && s.Hidden || 0; });
   let cache = {}; const stackSet = {}; const overrides = {};
   const okey = (s, a) => s + '!' + a;
+  const WBTODAY = Math.floor(Date.now() / 86400000) + 25569;
+  const EMPTY = { __empty: true };   // a blank cell — equals both "" and 0 in Excel comparisons
+  const isEmpty = v => v === EMPTY || (v && v.__empty);
+  function wbDateParts(serial) { const dt = new Date((serial - 25569) * 86400000); return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() }; }
   function cellRaw(sheet, addr) { const ws = wb.Sheets[sheet]; return ws ? ws[addr] : undefined; }
-  function num(v) { if (v === true) return 1; if (v === false) return 0; if (v == null || v === '') return 0; const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; }
+  function num(v) { if (isEmpty(v)) return 0; if (v === true) return 1; if (v === false) return 0; if (v == null || v === '') return 0; const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; }
   function getCell(sheet, addr) {
     const key = okey(sheet, addr);
     if (key in overrides) return overrides[key];
@@ -6268,9 +6272,9 @@ function makeWbEngine(wb) {
     if (stackSet[key]) { const c = cellRaw(sheet, addr); return c ? (c.v != null ? c.v : 0) : 0; }
     stackSet[key] = 1;
     const c = cellRaw(sheet, addr); let out;
-    if (!c) out = 0;
+    if (!c) out = EMPTY;
     else if (c.f != null) { try { out = evalFormula(c.f, sheet); if (typeof out === 'number' && !isFinite(out)) out = (c.v != null ? c.v : 0); } catch (e) { out = (c.v != null ? c.v : 0); } }
-    else out = (c.v != null ? c.v : (c.w != null ? c.w : 0));
+    else out = (c.v != null ? c.v : (c.w != null ? c.w : EMPTY));
     delete stackSet[key]; cache[key] = out; return out;
   }
   function tokenize(f) {
@@ -6308,10 +6312,10 @@ function makeWbEngine(wb) {
     function parseExpr() { return parseCmp(); }
     function parseCmp() { let l = parseConcat(); while (peek() && peek().t === 'op' && ['=', '<', '>', '<=', '>=', '<>'].indexOf(peek().v) >= 0) { const op = next().v; const r = parseConcat(); l = cmp(op, l, r); } return l; }
     function parseConcat() { let l = parseAdd(); while (peek() && peek().t === 'op' && peek().v === '&') { next(); const r = parseAdd(); l = ('' + toStr(l)) + toStr(r); } return l; }
-    function parseAdd() { let l = parseMul(); while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) { const op = next().v; const r = parseMul(); l = op === '+' ? nv(l) + nv(r) : nv(l) - nv(r); } return l; }
-    function parseMul() { let l = parsePow(); while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/')) { const op = next().v; const r = parsePow(); l = op === '*' ? nv(l) * nv(r) : nv(l) / nv(r); } return l; }
-    function parsePow() { let l = parseUnary(); while (peek() && peek().t === 'op' && peek().v === '^') { next(); const r = parseUnary(); l = Math.pow(nv(l), nv(r)); } return l; }
-    function parseUnary() { if (peek() && peek().t === 'op' && peek().v === '-') { next(); return -nv(parseUnary()); } if (peek() && peek().t === 'op' && peek().v === '+') { next(); return parseUnary(); } return parsePrimary(); }
+    function parseAdd() { let l = parseMul(); while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) { const op = next().v; const r = parseMul(); l = ewise((a, b) => op === '+' ? num(a) + num(b) : num(a) - num(b), l, r); } return l; }
+    function parseMul() { let l = parsePow(); while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/')) { const op = next().v; const r = parsePow(); l = ewise((a, b) => op === '*' ? num(a) * num(b) : num(a) / num(b), l, r); } return l; }
+    function parsePow() { let l = parseUnary(); while (peek() && peek().t === 'op' && peek().v === '^') { next(); const r = parseUnary(); l = ewise((a, b) => Math.pow(num(a), num(b)), l, r); } return l; }
+    function parseUnary() { if (peek() && peek().t === 'op' && peek().v === '-') { next(); const d = deref(parseUnary()); return Array.isArray(d) ? d.map(x => -num(x)) : -num(d); } if (peek() && peek().t === 'op' && peek().v === '+') { next(); return parseUnary(); } return parsePrimary(); }
     function parsePrimary() { let v = parseAtom(); while (peek() && peek().t === 'op' && peek().v === ':') { next(); const r = parseAtom(); v = mergeRange(v, r); } return v; }
     function mergeRange(a, b) { const sa = (a && a.__ref) ? a.sheet : sheet; const ba = (a && a.__ref) ? a.body : String(a); const bb = (b && b.__ref) ? b.body : String(b); return { __ref: true, sheet: sa, body: ba + ':' + bb }; }
     function parseAtom() {
@@ -6320,14 +6324,16 @@ function makeWbEngine(wb) {
       if (tk.t === 'str') { next(); return tk.v; }
       if (tk.t === 'ref') { next(); return { __ref: true, sheet: tk.sheet, body: tk.body }; }
       if (tk.t === 'op' && tk.v === '(') { next(); const v = parseExpr(); if (peek() && peek().v === ')') next(); return v; }
-      if (tk.t === 'id') { next(); if (peek() && peek().t === 'op' && peek().v === '(') { next(); const args = []; if (!(peek() && peek().v === ')')) { do { args.push(parseExpr()); } while (peek() && peek().v === ',' && next()); } if (peek() && peek().v === ')') next(); return callFn(tk.v.toUpperCase(), args, sheet); } return { __ref: true, sheet, body: tk.v }; }
+      if (tk.t === 'id') { next(); if (peek() && peek().t === 'op' && peek().v === '(') { next(); const args = []; if (!(peek() && peek().v === ')')) { do { args.push(parseExpr()); } while (peek() && peek().v === ',' && next()); } if (peek() && peek().v === ')') next(); return callFn(tk.v.toUpperCase(), args, sheet); } const U = tk.v.toUpperCase(); if (U === 'TRUE') return true; if (U === 'FALSE') return false; return { __ref: true, sheet, body: tk.v }; }
       next(); return 0;
     }
-    function deref(v) { if (v && v.__ref) return refValue(v.sheet, v.body); return v; }
+    function deref(v) { if (v && v.__ref) { const r = refToCells(v.sheet, v.body); if (r.kind === 'cell') return getCell(r.sheet, r.addr); return r.cells.map(x => getCell(x[0], x[1])); } return v; }
     const nv = v => num(deref(v));
-    function toStr(v) { v = deref(v); if (v == null) return ''; return String(v); }
-    function cmp(op, l, r) { l = deref(l); r = deref(r); if (typeof l === 'string' || typeof r === 'string') { const ls = String(l), rs = String(r); if (op === '=') return ls === rs; if (op === '<>') return ls !== rs; l = num(l); r = num(r); } else { l = num(l); r = num(r); } if (op === '=') return l === r; if (op === '<>') return l !== r; if (op === '<') return l < r; if (op === '>') return l > r; if (op === '<=') return l <= r; return l >= r; }
-    function argVals(v) { if (v && v.__ref) return rangeValues(v.sheet, v.body); return [deref(v)]; }
+    const ewise = (f, l, r) => { l = deref(l); r = deref(r); const la = Array.isArray(l), ra = Array.isArray(r); if (!la && !ra) return f(l, r); const n = Math.max(la ? l.length : 0, ra ? r.length : 0); const out = []; for (let i = 0; i < n; i++) out.push(f(la ? l[i] : l, ra ? r[i] : r)); return out; };
+    function toStr(v) { v = deref(v); if (v == null || isEmpty(v)) return ''; return String(v); }
+    function cmpS(op, l, r) { const le = isEmpty(l), re = isEmpty(r); if (le && re) { l = 0; r = 0; } else if (le) { l = (typeof r === 'string') ? '' : 0; } else if (re) { r = (typeof l === 'string') ? '' : 0; } if (typeof l === 'string' || typeof r === 'string') { const ls = String(l), rs = String(r); if (op === '=') return ls === rs; if (op === '<>') return ls !== rs; l = num(l); r = num(r); } else { l = num(l); r = num(r); } if (op === '=') return l === r; if (op === '<>') return l !== r; if (op === '<') return l < r; if (op === '>') return l > r; if (op === '<=') return l <= r; return l >= r; }
+    function cmp(op, l, r) { return ewise((a, b) => cmpS(op, a, b), l, r); }
+    function argVals(v) { const d = deref(v); return Array.isArray(d) ? d : [d]; }
     function callFn(name, args, sheet) {
       const A = i => deref(args[i]);
       if (name === 'SUM') { let s = 0; args.forEach(a => argVals(a).forEach(x => s += num(x))); return s; }
@@ -6345,7 +6351,7 @@ function makeWbEngine(wb) {
       if (name === 'OR') { let r = false; args.forEach(a => argVals(a).forEach(x => { if (x === true || num(x) !== 0) r = true; })); return r; }
       if (name === 'NOT') { const c = A(0); return !((typeof c === 'boolean') ? c : num(c) !== 0); }
       if (name === 'ISNUMBER') { return typeof A(0) === 'number'; }
-      if (name === 'ISBLANK') { const v = A(0); return v == null || v === ''; }
+      if (name === 'ISBLANK') { const v = A(0); return isEmpty(v) || v == null || v === ''; }
       if (name === 'LEFT') { const s = String(A(0) == null ? '' : A(0)); const n = args.length > 1 ? num(A(1)) : 1; return s.slice(0, n); }
       if (name === 'RIGHT') { const s = String(A(0) == null ? '' : A(0)); const n = args.length > 1 ? num(A(1)) : 1; return s.slice(s.length - n); }
       if (name === 'LEN') { return String(A(0) == null ? '' : A(0)).length; }
@@ -6354,17 +6360,35 @@ function makeWbEngine(wb) {
       if (name === 'SUMIF') { const rng = argVals(args[0]); const crit = A(1); const sumr = args.length > 2 ? argVals(args[2]) : rng; let s = 0; for (let i = 0; i < rng.length; i++) if (matchCrit(rng[i], crit)) s += num(sumr[i]); return s; }
       if (name === 'SUMIFS') { const sumr = argVals(args[0]); let idxs = sumr.map((_, i) => i); for (let a = 1; a + 1 < args.length; a += 2) { const rng = argVals(args[a]); const crit = A(a + 1); idxs = idxs.filter(i => matchCrit(rng[i], crit)); } let s = 0; idxs.forEach(i => s += num(sumr[i])); return s; }
       if (name === 'COUNTIF') { const rng = argVals(args[0]); const crit = A(1); let n = 0; rng.forEach(x => { if (matchCrit(x, crit)) n++; }); return n; }
+      if (name === 'COUNTIFS') { const first = argVals(args[0]); let idxs = first.map((_, i) => i); for (let a = 0; a + 1 < args.length; a += 2) { const rng = argVals(args[a]); const crit = A(a + 1); idxs = idxs.filter(i => matchCrit(rng[i], crit)); } return idxs.length; }
+      if (name === 'SUMPRODUCT') { const arrs = args.map(a => argVals(a).map(num)); const n = Math.max.apply(null, arrs.map(x => x.length)); let s = 0; for (let i = 0; i < n; i++) { let p = 1; for (let k = 0; k < arrs.length; k++) p *= (arrs[k][i] != null ? arrs[k][i] : 0); s += p; } return s; }
+      if (name === 'AVERAGE') { const a = []; args.forEach(x => argVals(x).forEach(y => { if (typeof y === 'number') a.push(y); })); return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0; }
+      if (name === 'COUNT') { let n = 0; args.forEach(x => argVals(x).forEach(y => { if (typeof y === 'number') n++; })); return n; }
+      if (name === 'COUNTA') { let n = 0; args.forEach(x => argVals(x).forEach(y => { if (y !== '' && y != null) n++; })); return n; }
+      if (name === 'SUBTOTAL') { const fn = num(A(0)) % 100; const vals = []; for (let k = 1; k < args.length; k++) argVals(args[k]).forEach(y => vals.push(y)); const nums = vals.filter(y => typeof y === 'number'); const sum = nums.reduce((s, v) => s + v, 0); if (fn === 1) return nums.length ? sum / nums.length : 0; if (fn === 2) return nums.length; if (fn === 3) return vals.filter(y => y !== '' && y != null).length; if (fn === 4) return nums.length ? Math.max.apply(null, nums) : 0; if (fn === 5) return nums.length ? Math.min.apply(null, nums) : 0; return sum; }
+      if (name === 'TODAY' || name === 'NOW') { return WBTODAY; }
+      if (name === 'DATE') { const ms = Date.UTC(num(A(0)), num(A(1)) - 1, num(A(2))); return Math.round(ms / 86400000) + 25569; }
+      if (name === 'YEAR') { return wbDateParts(num(A(0))).y; }
+      if (name === 'MONTH') { return wbDateParts(num(A(0))).m; }
+      if (name === 'DAY') { return wbDateParts(num(A(0))).d; }
+      if (name === 'WEEKDAY') { const p = wbDateParts(num(A(0))); return new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay() + 1; }
+      if (name === 'CONCATENATE') { return args.map(a => { const d = deref(a); return d == null ? '' : String(d); }).join(''); }
+      if (name === 'TRIM') { return String(A(0) == null ? '' : A(0)).replace(/\s+/g, ' ').trim(); }
+      if (name === 'UPPER') { return String(A(0) == null ? '' : A(0)).toUpperCase(); }
+      if (name === 'LOWER') { return String(A(0) == null ? '' : A(0)).toLowerCase(); }
       if (name === 'VLOOKUP') { const lv = A(0); if (!args[1] || !args[1].__ref) return 0; const tbl = refToCells(args[1].sheet, args[1].body); const col = num(A(2)); const approx = args.length > 3 ? (A(3) === true || num(A(3)) !== 0) : true; if (tbl.kind !== 'range') return 0; const rows = {}; tbl.cells.forEach(x => { const dc = XL.utils.decode_cell(x[1]); (rows[dc.r] = rows[dc.r] || {})[dc.c] = getCell(x[0], x[1]); }); const rkeys = Object.keys(rows).map(Number).sort((a, b) => a - b); const cols = tbl.cells.map(x => XL.utils.decode_cell(x[1]).c); const c0 = Math.min.apply(null, cols); let best = 0; for (let k = 0; k < rkeys.length; k++) { const rk = rkeys[k]; const first = rows[rk][c0]; if (approx) { if (num(first) <= num(lv)) best = rows[rk][c0 + col - 1]; else break; } else { if (String(first) === String(lv)) return rows[rk][c0 + col - 1]; } } return best != null ? best : 0; }
       return 0;
     }
-    function matchCrit(val, crit) { crit = deref(crit); if (typeof crit === 'string') { const m = crit.match(/^(<=|>=|<>|<|>|=)(.*)$/); if (m) { const op = m[1], rhs = m[2], rn = num(rhs), vn = num(val); if (op === '=') return String(val) === rhs || vn === rn; if (op === '<>') return String(val) !== rhs; if (op === '<') return vn < rn; if (op === '>') return vn > rn; if (op === '<=') return vn <= rn; return vn >= rn; } if (/[*?]/.test(crit)) { const re = new RegExp('^' + crit.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); return re.test(String(val)); } return String(val) === crit; } return num(val) === num(crit); }
-    const result = parseExpr();
-    return (result && result.__ref) ? refValue(result.sheet, result.body) : result;
+    function matchCrit(val, crit) { crit = deref(crit); if (isEmpty(val)) val = ''; if (typeof crit === 'string') { const m = crit.match(/^(<=|>=|<>|<|>|=)(.*)$/); if (m) { const op = m[1], rhs = m[2], rn = num(rhs), vn = num(val); if (op === '=') return String(val) === rhs || vn === rn; if (op === '<>') return String(val) !== rhs; if (op === '<') return vn < rn; if (op === '>') return vn > rn; if (op === '<=') return vn <= rn; return vn >= rn; } if (/[*?]/.test(crit)) { const re = new RegExp('^' + crit.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); return re.test(String(val)); } return String(val) === crit; } return num(val) === num(crit); }
+    let result = parseExpr();
+    if (result && result.__ref) result = refValue(result.sheet, result.body);
+    if (Array.isArray(result)) result = result.length ? result[0] : 0;   // implicit intersection for a non-array cell
+    return result;
   }
   return {
     sheetNames: wb.SheetNames.slice(),
     visibleSheets: wb.SheetNames.filter(s => (hiddenOf[s] || 0) !== 2),
-    get: getCell,
+    get(sheet, addr) { const v = getCell(sheet, addr); return isEmpty(v) ? '' : v; },
     raw: cellRaw,
     isInput(sheet, addr) { const c = cellRaw(sheet, addr); return !c || (c.f == null); },
     setInput(sheet, addr, val) { overrides[okey(sheet, addr)] = val; cache = {}; },
