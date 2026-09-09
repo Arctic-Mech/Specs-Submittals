@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.16';
+const APP_VERSION = 'v7.17';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5012,17 +5012,19 @@ function renderEstimates() {
   }
   const cards = estimates.map(e => {
     const r = computeProjectEstimate(e);
+    const total = (e.wbMode && e.wbTotal != null) ? e.wbTotal : r.totalBid;   // workbook mode → live workbook total
     const on = estCompare.includes(e.id);
     return `<div class="est-card ${e.locked ? 'locked' : ''}">
       <label class="est-card-pick" title="Tick to compare"><input type="checkbox" ${on ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleEstCompare('${e.id}')"></label>
       <div class="est-card-main" onclick="openEstimateEditor('${e.id}')">
-        <div class="est-card-name">${esc(e.name || 'Untitled estimate')} ${e.locked ? '<span class="lock-badge">🔒 Locked</span>' : ''}</div>
-        <div class="est-card-total">${esc(fmtMoney(r.totalBid) || '$0')}</div>
-        <div class="est-card-meta">${esc(fmtMoney(r.directCosts) || '$0')} direct · ${esc(fmtMoney(round2(r.totalBid - r.directCosts)) || '$0')} markup/tax · ${r.totalFieldHours ? Math.round(r.totalFieldHours) + ' fld hrs' : 'no hours'}${e.updated ? ' · ' + esc(estShortDate(e.updated)) : ''}</div>
+        <div class="est-card-name">${esc(e.name || 'Untitled estimate')} ${e.locked ? '<span class="lock-badge">🔒 Locked</span>' : ''}${e.wbMode ? ' <span class="lock-badge" title="Built from the full workbook">⊞ Workbook</span>' : ''}</div>
+        <div class="est-card-total">${esc(fmtMoney(total) || '$0')}</div>
+        <div class="est-card-meta">${e.wbMode ? 'built from the full workbook' : esc(fmtMoney(r.directCosts) || '$0') + ' direct · ' + esc(fmtMoney(round2(r.totalBid - r.directCosts)) || '$0') + ' markup/tax · ' + (r.totalFieldHours ? Math.round(r.totalFieldHours) + ' fld hrs' : 'no hours')}${e.updated ? ' · ' + esc(estShortDate(e.updated)) : ''}</div>
         <div class="est-card-meta">${estSyncStatusHtml(e)}</div>
       </div>
       <div class="est-card-actions">
         <button class="btn sm" onclick="openEstimateEditor('${e.id}')">${e.locked ? 'View' : 'Open'}</button>
+        <button class="btn sm" onclick="openEstimateWorkbook('${e.id}')" title="Open, view and edit all sheets of the estimate workbook with live totals">⊞ Workbook</button>
         <button class="btn sm ghost" onclick="openEstimateExcel('${e.id}')" title="Open the Excel copy from the ShareFile folder">Excel</button>
         <button class="btn sm ghost" onclick="duplicateEstimate('${e.id}')" title="Duplicate">⿻</button>
         <button class="btn sm ghost" onclick="toggleLockEstimate('${e.id}')" title="${e.locked ? 'Unlock' : 'Lock so it can’t change'}">${e.locked ? '🔓' : '🔒'}</button>
@@ -5793,16 +5795,17 @@ function scheduleEstFileFlush(e) {
 async function writeEstimateFile(e, opts) {
   opts = opts || {};
   if (!jobFolder || !e) return;
-  if (e.file && e.file.file && estInputSig(e) === e.fileSig && !opts.force) return;   // nothing changed
+  if (!e.wbMode && e.file && e.file.file && estInputSig(e) === e.fileSig && !opts.force) return;   // nothing changed
   try {
     const ctx = { jobName: job.name || '', date: csvDate(today()) };
     let out, desired, mime;
     try {
-      // preferred: inject the estimate into the user's REAL ENFRA workbook (every sheet identical)
-      out = await buildEstXlsm(e, ctx);
+      // workbook mode: mirror the estimate's live-workbook edits; otherwise inject the estimate form
+      out = e.wbMode ? await buildEstWorkbookXlsm(e) : await buildEstXlsm(e, ctx);
       desired = estFileDesiredName(e);   // .xlsm
       mime = 'application/vnd.ms-excel.sheet.macroEnabled.12';
     } catch (tplErr) {
+      if (e.wbMode) throw tplErr;   // no legacy fallback for workbook mode
       console.warn('estimate template unavailable, using legacy workbook:', tplErr && tplErr.message || tplErr);
       const XL = await loadSheetJS();
       out = XL.write(buildEstimateWorkbook(e, ctx), { bookType: 'xlsx', type: 'array' });
@@ -6167,25 +6170,19 @@ async function zipSheetFileMap(zip) {
 /* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
    value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
    recomputes, drop the calc chain, and stamp the Dingus marker. */
-async function buildCoWorkbookXlsm(c) {
+async function buildWorkbookMirror(templateBytes, wbInputs, marker) {
   const JZ = await ensureJSZip();
-  const zip = await JZ.loadAsync(await coTemplateBytes());
+  const zip = await JZ.loadAsync(templateBytes);
   const fmap = await zipSheetFileMap(zip);
   const bySheet = {};
-  for (const k in (c.wbInputs || {})) { const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue; (bySheet[mm[1]] = bySheet[mm[1]] || []).push([mm[2], c.wbInputs[k]]); }
+  for (const k in (wbInputs || {})) { const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue; (bySheet[mm[1]] = bySheet[mm[1]] || []).push([mm[2], wbInputs[k]]); }
   for (const sh in bySheet) {
     const f = fmap[sh]; if (!f || !zip.file(f)) continue;
     let xml = await zip.file(f).async('string');
     bySheet[sh].forEach(pair => { const addr = pair[0], val = pair[1]; xml = (typeof val === 'number') ? xlSetCell(xml, addr, { num: val }) : xlSetCell(xml, addr, { str: String(val == null ? '' : val) }); });
     zip.file(f, xml);
   }
-  const cpFile = fmap['CP Backup'];
-  if (cpFile && zip.file(cpFile)) {
-    let cp = await zip.file(cpFile).async('string');
-    cp = xlSetCell(cp, 'T1', { str: CO_TPL_MARKER }); cp = xlSetCell(cp, 'T2', { str: c.id || '' });
-    cp = xlSetCell(cp, 'T4', { str: c.mod || '' }); cp = xlSetCell(cp, 'T5', { str: c.rfiCcdAsi || '' });
-    zip.file(cpFile, cp);
-  }
+  if (marker) { const mf = fmap[marker.sheet]; if (mf && zip.file(mf)) { let xml = await zip.file(mf).async('string'); for (const a in marker.cells) xml = xlSetCell(xml, a, { str: String(marker.cells[a] == null ? '' : marker.cells[a]) }); zip.file(mf, xml); } }
   let wbx = await zip.file('xl/workbook.xml').async('string');
   wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
   zip.file('xl/workbook.xml', wbx);
@@ -6195,6 +6192,12 @@ async function buildCoWorkbookXlsm(c) {
     try { let rels = await zip.file('xl/_rels/workbook.xml.rels').async('string'); rels = rels.replace(/<Relationship[^>]*calcChain\.xml"[^>]*\/>/, ''); zip.file('xl/_rels/workbook.xml.rels', rels); } catch (x) {}
   }
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
+}
+async function buildCoWorkbookXlsm(c) {
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } });
+}
+async function buildEstWorkbookXlsm(e) {
+  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } });
 }
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
@@ -6402,8 +6405,35 @@ function makeWbEngine(wb) {
 }
 
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
-let _wbCo = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null;
+let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null;
 const WB_ROW_CAP = 200, WB_ROW_STEP = 200;   // initial rows rendered per sheet + "show more" step
+const WB_KINDS = {
+  co: {
+    entity: id => (typeof coById === 'function' ? coById(id) : null),
+    tpl: () => coTemplateBytes(),
+    total: { sheet: 'CP Backup', cell: 'D125' }, prefer: 'CP Backup',
+    title: e => 'Change Order ' + (e.number || ''),
+    ref: e => coRef(job.id, e.id),
+    save: (e, opts) => writeCoFile(e, opts),
+    rerender: () => { if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo) renderCoDrawer(); } },
+    sigKey: 'coFileSig', hasAmount: true,
+    note: e => (e.est ? ' <b>This opens the standard change-order workbook</b> (a separate way to build this CO from the actual sheets); it doesn’t import your form estimate, and it only takes over once you edit a cell here.' : ''),
+  },
+  est: {
+    entity: id => (typeof estById === 'function' ? estById(id) : null),
+    tpl: () => estTemplateBytes(),
+    total: { sheet: 'MCAA RECAP', cell: 'H70' }, prefer: 'MCAA RECAP',
+    title: e => 'Estimate — ' + (e.name || ''),
+    ref: e => estimateRef(job.id, e.id),
+    save: (e, opts) => writeEstimateFile(e, opts),
+    rerender: () => { if (view === 'job' && jobTab === 'estimates') { if (openEstimate) renderEstimateEditor(); else renderEstimates(); } },
+    sigKey: 'fileSig', hasAmount: false, locked: e => !!e.locked,
+    note: () => ' <b>This opens the standard ENFRA/MCAA estimate workbook</b> — build the estimate from the actual takeoff sheets. It only takes over once you edit a cell here.',
+  },
+};
+function wbCfg() { return _wb ? WB_KINDS[_wb.kind] : null; }
+function wbEntity() { const cfg = wbCfg(); return cfg ? cfg.entity(_wb.id) : null; }
+function wbTotalVal() { try { const cfg = wbCfg(); return (_wbEng && cfg) ? _wbEng.get(cfg.total.sheet, cfg.total.cell) : 0; } catch (e) { return 0; } }
 function wbFmtNum(v) {
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   if (typeof v !== 'number' || !isFinite(v)) return String(v == null ? '' : v);
@@ -6413,27 +6443,30 @@ function wbFmtNum(v) {
   return r.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 function wbInputRaw(v) { if (v == null || v === '' || v === 0) return ''; return String(v); }
-function coWbTotal() { try { return _wbEng ? _wbEng.get('CP Backup', 'D125') : 0; } catch (e) { return 0; } }
-async function openCoWorkbook(id) {
-  const c = coById(id); if (!c) return;
-  _wbCo = id; _wbEng = null; _wbSheet = null; _wbRows = {};
+function openCoWorkbook(id) { return openWorkbook('co', id); }
+function openEstimateWorkbook(id) { return openWorkbook('est', id); }
+async function openWorkbook(kind, id) {
+  const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {};
   renderWbModal();                                  // loading state
   try {
     const XL = await loadSheetJS();
-    const wb = XL.read(new Uint8Array(await coTemplateBytes()), { type: 'array', cellFormula: true });
+    const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true });
     const eng = makeWbEngine(wb);
-    const ov = c.wbInputs || {};
+    const ov = e.wbInputs || {};
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
     _wbEng = eng;
-    _wbSheet = eng.visibleSheets.indexOf('CP Backup') >= 0 ? 'CP Backup' : eng.visibleSheets[0];
+    _wbSheet = eng.visibleSheets.indexOf(cfg.prefer) >= 0 ? cfg.prefer : eng.visibleSheets[0];
     renderWbModal();
-  } catch (e) { console.error(e); closeWb(); toast('Could not open the workbook: ' + (e.message || e), true); }
+  } catch (err) { console.error(err); closeWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wbCo = null; _wbEng = null; _wbSheet = null; _wbRows = {}; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; $('modalHost').innerHTML = ''; }
 function wbSetSheet(name) { _wbSheet = name; renderWbModal(); }
 function wbMoreRows() { _wbRows[_wbSheet] = (_wbRows[_wbSheet] != null ? _wbRows[_wbSheet] : WB_ROW_CAP) + WB_ROW_STEP; renderWbGridOnly(); }
 function wbEdit(sheet, addr, val) {
   if (!_wbEng) return;
+  const cfg = wbCfg(), e = wbEntity(); if (!e) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to edit', true); renderWbGridOnly(); return; }
   const s = String(val).trim();
   const numish = s !== '' && /^[-+]?[$,\s]*\d[\d,]*(\.\d+)?\s*%?$/.test(s);
   let stored;
@@ -6441,28 +6474,29 @@ function wbEdit(sheet, addr, val) {
   else if (numish) { let n = parseFloat(s.replace(/[$,\s]/g, '').replace('%', '')); if (/%\s*$/.test(s)) n = n / 100; stored = n; }
   else stored = val;
   _wbEng.setInput(sheet, addr, stored);
-  const c = coById(_wbCo); if (c) { c.wbInputs = c.wbInputs || {}; c.wbInputs[sheet + '!' + addr] = stored; c.wbMode = true; }
+  e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
   renderWbGridOnly();
   scheduleWbSave();
 }
-function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistCoWbInputs().catch(() => {}); }, 1200); }
-function wbHasEdits(c) { return !!(c && c.wbInputs && Object.keys(c.wbInputs).length); }
-async function persistCoWbInputs() {
-  const c = coById(_wbCo); if (!c || !job || !wbHasEdits(c)) return;   // only engage workbook mode once something is actually edited
-  c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now();
-  try { await FB.setDoc(coRef(job.id, c.id), clean(c)); } catch (e) { console.error(e); }
-  if (view === 'job' && jobTab === 'changeorders') renderCos();
+function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistWbInputs().catch(() => {}); }, 1200); }
+function wbHasEdits(e) { return !!(e && e.wbInputs && Object.keys(e.wbInputs).length); }
+function wbApplyTotals(e, cfg) { const t = round2(wbTotalVal()); e.wbTotal = t; if (cfg.hasAmount) e.amount = String(t); }
+async function persistWbInputs() {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !job || !cfg || !wbHasEdits(e)) return;   // only engage workbook mode once something is actually edited
+  e.wbMode = true; wbApplyTotals(e, cfg); e.updated = Date.now();
+  try { await FB.setDoc(cfg.ref(e), clean(e)); } catch (x) { console.error(x); }
+  cfg.rerender();
 }
-async function saveCoWorkbook(closeAfter) {
+async function saveWorkbook(closeAfter) {
   clearTimeout(_wbSaveT);
-  const c = coById(_wbCo); if (!c) { if (closeAfter) closeWb(); return; }
-  if (!wbHasEdits(c) && !c.wbMode) { if (closeAfter) closeWb(); else toast('No edits to save'); return; }   // viewing only — don't switch the CO to workbook mode
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { if (closeAfter) closeWb(); return; }
+  if (!wbHasEdits(e) && !e.wbMode) { if (closeAfter) closeWb(); else toast('No edits to save'); return; }   // viewing only — don't switch to workbook mode
   try {
-    c.wbMode = true; c.amount = String(round2(coWbTotal())); c.updated = Date.now(); c.coFileSig = '';   // force mirror rewrite
-    await FB.setDoc(coRef(job.id, c.id), clean(c));
-    if (jobFolder) await writeCoFile(c, { force: true, toast: !closeAfter });
-    if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
-  } catch (e) { console.error(e); toast('Could not save the workbook: ' + (e.message || e), true); }
+    e.wbMode = true; wbApplyTotals(e, cfg); e.updated = Date.now(); e[cfg.sigKey] = '';   // force mirror rewrite
+    await FB.setDoc(cfg.ref(e), clean(e));
+    if (jobFolder) await cfg.save(e, { force: true, toast: !closeAfter });
+    cfg.rerender();
+  } catch (x) { console.error(x); toast('Could not save the workbook: ' + (x.message || x), true); }
   if (closeAfter) closeWb();
 }
 function wbGridHtml() {
@@ -6506,25 +6540,25 @@ function wbGridHtml() {
 }
 function renderWbGridOnly() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = wbGridHtml();
-  const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(coWbTotal()) || '$0';
+  const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
 }
 function renderWbModal() {
-  const c = coById(_wbCo); if (!c) { $('modalHost').innerHTML = ''; return; }
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { $('modalHost').innerHTML = ''; return; }
   const loading = !_wbEng;
   const tabs = loading ? '' : _wbEng.visibleSheets.map(s => `<button class="wbtab${s === _wbSheet ? ' on' : ''}" onclick="wbSetSheet('${esc(s).replace(/'/g, "\\'")}')">${esc(s)}</button>`).join('');
   $('modalHost').innerHTML = `<div class="modal-scrim wbscrim" onclick="if(event.target===this)closeWb()"><div class="wbmodal">
     <div class="wbhead">
-      <div class="wbtitle">Change Order ${esc(c.number || '')} — Workbook${loading ? '' : ` &nbsp;·&nbsp; <span class="wbtotwrap">Total bid <b id="wbTotal">${esc(fmtMoney(coWbTotal()) || '$0')}</b></span>`}</div>
+      <div class="wbtitle">${esc(cfg.title(e))} — Workbook${loading ? '' : ` &nbsp;·&nbsp; <span class="wbtotwrap">Total bid <b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>`}</div>
       <div style="display:flex;gap:8px;align-items:center">
-        ${loading ? '' : `<button class="btn sm ghost" onclick="wbResetSheet()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
-        <button class="btn sm primary" onclick="saveCoWorkbook(true)">Save &amp; close</button>
+        ${loading ? '' : `<button class="btn sm ghost" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
+        <button class="btn sm primary" onclick="saveWorkbook(true)">Save &amp; close</button>
         <button class="icon-btn" onclick="closeWb()">✕</button>
       </div>
     </div>
     ${loading ? '<div class="wbloading">Loading the workbook…</div>' : `
       <div class="wbtabs">${tabs}</div>
       <div class="wbgridwrap" id="wbGridWrap">${wbGridHtml()}</div>
-      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the Change&nbsp;Proposal.xlsm — no Excel needed.${(c.est && !wbHasEdits(c)) ? ' <b>This opens the standard change-order workbook</b> (a separate way to build this CO from the actual sheets); it doesn’t import your form estimate, and it only takes over once you edit a cell here.' : ''}</div>`}
+      <div class="wbnote">White cells are inputs you can type into (blue once edited); grey cells are calculated live. Everything recalculates as you go and saves into the .xlsm — no Excel needed.${!wbHasEdits(e) ? cfg.note(e) : ''}</div>`}
   </div></div>
   <style>
     .wbscrim{align-items:stretch;justify-content:center}
@@ -6548,12 +6582,13 @@ function renderWbModal() {
     .wbnote{padding:8px 14px;font-size:11px;color:var(--muted,#889);border-top:1px solid var(--line,#e3e6ea)}
   </style>`;
 }
-function wbResetSheet() {
-  const c = coById(_wbCo); if (!c) return;
-  if (!confirm('Clear all your workbook edits for this change order and return to the original workbook?')) return;
-  c.wbInputs = {}; c.wbMode = false;
-  openCoWorkbook(_wbCo);
-  scheduleWbSave();
+function wbResetWorkbook() {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) return;
+  if (!confirm('Clear all your workbook edits and return to the original workbook?')) return;
+  e.wbInputs = {}; e.wbMode = false; delete e.wbTotal;
+  try { FB.setDoc(cfg.ref(e), clean(e)); } catch (x) {}
+  openWorkbook(_wb.kind, _wb.id);
+  cfg.rerender();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
