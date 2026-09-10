@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.36';
+const APP_VERSION = 'v7.37';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6819,6 +6819,21 @@ let _wbPushed = false, _wbPopWired = false;    // so the browser Back button clo
    rendered in the same visual language as the estimating pages. Nothing here is tied to one
    workbook — the engine reads whatever workbook we hand it, so the same editor opens the
    change-order proposal and the estimate workbook alike. */
+/* Cells you type outside the sheet's original used range are real content too — the workbook
+   only knows the range it was saved with, so we widen it by whatever has been entered since,
+   or the value would be written to the spreadsheet while being invisible here. */
+function wbTypedExtent(sheet) {
+  const e = wbEntity(), out = { r: -1, cols: {} };
+  const ov = (e && e.wbInputs) || {};
+  for (const k in ov) {
+    const m = k.match(/^(.+)!([A-Z]+)(\d+)$/); if (!m || m[1] !== sheet) continue;
+    if (ov[k] === '' || ov[k] == null) continue;
+    const r = (+m[3]) - 1, c = XLSX.utils.decode_col(m[2]);
+    if (r > out.r) out.r = r;
+    out.cols[c] = 1;
+  }
+  return out;
+}
 function wbSheetBounds(sheet) {                       // the sheet's real content: used rows + the columns that carry anything
   if (_wbBounds[sheet]) return _wbBounds[sheet];
   const eng = _wbEng, rg = eng.range(sheet);
@@ -6838,6 +6853,9 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
     if (m.s.r <= r1 && m.e.r > r1) r1 = m.e.r;
     if (live[m.s.c]) for (let c = m.s.c; c <= m.e.c; c++) live[c] = 1;   // a merged cell needs the columns it spans
   });
+  const typed = wbTypedExtent(sheet);                                    // ...plus anything typed past that range
+  if (typed.r > r1) r1 = typed.r;
+  for (const c in typed.cols) live[c] = 1;
   const cols = Object.keys(live).map(Number).sort((x, y) => x - y);      // drop columns that hold nothing at all
   return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
 }
@@ -7019,7 +7037,9 @@ function wbSectionsOf(sheet) {
     for (let i = 0; i < cols.length; i++) {
       const raw = eng.raw(sheet, XLSX.utils.encode_cell({ r, c: cols[i] }));
       if (!raw || raw.f == null) continue;
-      const refs = String(raw.f).match(/\$?[A-Z]{1,3}\$?\d{1,7}/g); if (!refs) continue;
+      // strip cross-sheet references first — 'CP Backup'!H5 must not be read as this sheet's H5
+      const refs = String(raw.f).replace(/(?:'[^']*'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d{1,7}/g, ' ').match(/\$?[A-Z]{1,3}\$?\d{1,7}/g);
+      if (!refs) continue;
       for (let k = 0; k < refs.length; k++) {
         const s = byAddr[refs[k].replace(/\$/g, '')];
         if (s) { if (r < s.min) s.min = r; if (r > s.max) s.max = r; }
@@ -7183,6 +7203,7 @@ function wbApplyFx(e) {
     ws[m[2]] = { t: 'n', v: 0, f: fx[k] };
   }
   _wbEng.recalc();
+  _wbBounds = {}; _wbSecs = {}; _wbFills = {};        // the overlay can create cells outside the old bounds
   if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
@@ -7269,6 +7290,66 @@ function wbSumRaw(sheet, sec, label) {
     if (typeof v === 'number' && isFinite(v)) return v;
   }
   return 0;
+}
+/* ── "Copy what I'm seeing" ──
+   A snapshot of the sheet as the editor understands it: what it kept, what it dropped, how it
+   classified every cell, and what the engine computed. Paste it into a message when something
+   looks wrong on screen and it says exactly what this page did with each cell. */
+const WB_SNAP_CELLS = 400;
+function wbSheetSnapshot() {
+  const eng = _wbEng, sheet = _wbSheet, e = wbEntity(), cfg = wbCfg();
+  if (!eng || !sheet) return '';
+  const b = wbSheetBounds(sheet), rg = eng.range(sheet);
+  const kept = {}; b.cols.forEach(c => kept[c] = 1);
+  const dropped = [];
+  for (let c = rg.s.c; c <= rg.e.c; c++) if (!kept[c]) dropped.push(XLSX.utils.encode_col(c));
+  const secs = wbSectionsOf(sheet).map(s => s.n + ':' + s.sw + ' rows ' + (s.min + 1) + '-' + (s.max + 1) +
+    (wbSectionExcluded(sheet, s.sw) ? ' EXCLUDED' : '') + (wbIsDeducted(sheet, s) ? ' DEDUCTED' : ''));
+  const L = [];
+  L.push('DINGUS ' + APP_VERSION + ' — sheet snapshot');
+  L.push('workbook: ' + (cfg ? cfg.docLabel : '?') + '   sheet: ' + sheet + '   view: ' + (_wbView || 'sheet'));
+  L.push('saved range ' + (rg.s.r + 1) + '-' + (rg.e.r + 1) + ' x ' + XLSX.utils.encode_col(rg.s.c) + '-' + XLSX.utils.encode_col(rg.e.c) +
+    '   shown rows ' + (b.r0 + 1) + '-' + (b.r1 + 1) + '   columns kept ' + b.cols.length + (dropped.length ? ('   dropped: ' + dropped.join(',')) : ''));
+  L.push('sections: ' + (secs.length ? secs.join(' | ') : 'none'));
+  L.push('total: ' + (fmtMoney(wbTotalVal()) || '0') + '   edits: ' + Object.keys((e && e.wbInputs) || {}).length +
+    '   subs: ' + wbSubList(e).length + '   formula overlay: ' + Object.keys((e && e.wbFx) || {}).length);
+  L.push('addr | how it renders | stored | shown');
+  const merges = {};
+  eng.mergesOf(sheet).forEach(mg => { for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) merges[r + ',' + c] = 1; });
+  const mk = _wb && WB_MARK[_wb.kind], skip = (mk && mk.sheet === sheet) ? mk.cells : [];
+  let n = 0, more = 0;
+  for (let r = rg.s.r; r <= Math.max(rg.e.r, b.r1); r++) {
+    for (let c = rg.s.c; c <= Math.max(rg.e.c, b.cols[b.cols.length - 1] || 0); c++) {
+      const a = XLSX.utils.encode_cell({ r, c });
+      const raw = eng.raw(sheet, a), ov = eng.getOverride(sheet, a);
+      const has = (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) || (ov !== undefined && ov !== '');
+      if (!has) continue;
+      if (n >= WB_SNAP_CELLS) { more++; continue; }
+      n++;
+      let how;
+      if (skip.indexOf(a) >= 0) how = 'marker (hidden)';
+      else if (!kept[c]) how = 'COLUMN DROPPED';
+      else if (r > b.r1) how = 'BELOW LAST SHOWN ROW';
+      else if (merges[r + ',' + c]) how = 'merged into another cell';
+      else if (raw && raw.f != null && ov == null) how = 'calculated';
+      else if (wbDvFor(sheet, a)) how = 'dropdown [' + (wbDvFor(sheet, a) || []).join('/') + ']';
+      else { const v = ov !== undefined ? ov : eng.get(sheet, a); how = (typeof v === 'string' && v !== '' && ov == null && !wbIsInputCell(sheet, raw)) ? 'heading (read-only)' : 'field'; }
+      const val = eng.get(sheet, a);
+      L.push(a + ' | ' + how + ' | ' + JSON.stringify(raw && raw.f != null ? ('=' + raw.f) : (ov !== undefined ? ov : (raw ? raw.v : ''))).slice(0, 80) +
+        ' | ' + JSON.stringify(typeof val === 'number' ? wbCellFmt(val, raw && raw.z) : val).slice(0, 60));
+    }
+  }
+  if (more) L.push('… and ' + more + ' more cells not listed');
+  return L.join('\n');
+}
+function wbCopySnapshot() {
+  const txt = wbSheetSnapshot();
+  if (!txt) { toast('Open a sheet first', true); return; }
+  const done = () => toast('Copied what this page sees on “' + _wbSheet + '” — paste it into a message');
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt).then(done, () => { console.log(txt); toast('Couldn’t reach the clipboard — it’s in the browser console instead', true); }); return; }
+  } catch (x) {}
+  console.log(txt); toast('It’s in the browser console — copy it from there', true);
 }
 function wbSecKey(sheet, s) { return sheet + '!' + s.sw; }
 function wbSecOpenSet(key, on) { if (on) _wbSecOpen[key] = 1; else delete _wbSecOpen[key]; }
@@ -7362,11 +7443,20 @@ function wbEdit(sheet, addr, val) {
   else stored = val;
   wbSetCell(sheet, addr, stored);
 }
+/* typing outside what the sheet used to cover widens it — otherwise the value goes into the
+   spreadsheet but never shows up again in either view */
+function wbNoteOutsideBounds(sheet, addr) {
+  const b = _wbBounds[sheet]; if (!b) return;
+  let cell; try { cell = XLSX.utils.decode_cell(addr); } catch (x) { return; }
+  if (cell.r <= b.r1 && b.pos[cell.c] != null) return;
+  delete _wbBounds[sheet]; delete _wbSecs[sheet]; delete _wbFills[sheet];
+}
 /* store a value exactly as given (no typing rules) — how a section switch is flipped */
 function wbSetCell(sheet, addr, stored) {
   const e = wbEntity(); if (!e || !_wbEng) return;
   _wbEng.setInput(sheet, addr, stored);
   e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
+  wbNoteOutsideBounds(sheet, addr);
   renderWbBody();
   scheduleWbSave();
 }
@@ -7498,6 +7588,7 @@ function wbStoreCell(sheet, addr, val) {
   else stored = val;
   _wbEng.setInput(sheet, addr, stored);
   e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored;
+  wbNoteOutsideBounds(sheet, addr);                  // a paste can land past the sheet's old range too
 }
 function wireWbClipboard() {
   if (_wbClipWired || typeof document.addEventListener !== 'function') return; _wbClipWired = true;
@@ -7520,9 +7611,11 @@ function wireWbClipboard() {
 function wbGridHtml() {
   const eng = _wbEng, sheet = _wbSheet; if (!eng) return '';
   const rg = eng.range(sheet);
+  const b = wbSheetBounds(sheet);                                       // includes anything typed past the saved range
+  const lastR = Math.max(rg.e.r, b.r1), lastC = Math.max(rg.e.c, b.cols.length ? b.cols[b.cols.length - 1] : rg.e.c);
   const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;   // hard initial cap so huge sheets stay fast
-  const endR = Math.min(rg.e.r, shown);
-  const endC = rg.e.c;
+  const endR = Math.min(lastR, shown);
+  const endC = lastC;
   // merges: map "r,c" of covered (non-anchor) cells to skip; anchors get span
   const merges = {}; const covered = {};
   eng.mergesOf(sheet).forEach(mg => {
@@ -7554,7 +7647,7 @@ function wbGridHtml() {
     html += '</tr>';
   }
   html += '</tbody></table>';
-  if (endR < rg.e.r) html += `<div style="padding:8px"><button class="btn sm ghost" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, rg.e.r - endR)} more rows (of ${rg.e.r + 1})</button></div>`;
+  if (endR < lastR) html += `<div style="padding:8px"><button class="btn sm ghost" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, lastR - endR)} more rows (of ${lastR + 1})</button></div>`;
   return html;
 }
 function renderWbGridOnly() { renderWbBody(); }
@@ -7628,10 +7721,11 @@ function wbRowsHtml(sheet, r0, r1, sec) {
   for (let r = r0; r <= r1; r++) {
     let any = false;
     for (let i = 0; i < cols.length && !any; i++) {
-      const c = cols[i];
+      const c = cols[i], ad = XLSX.utils.encode_cell({ r, c });
       if (covered[r + ',' + c]) { any = true; break; }
-      const raw = eng.raw(sheet, XLSX.utils.encode_cell({ r, c }));
+      const raw = eng.raw(sheet, ad);
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
+      else { const ov2 = eng.getOverride(sheet, ad); if (ov2 !== undefined && ov2 !== '') any = true; }   // typed into an empty cell
     }
     if (!any) { gap++; continue; }                                   // collapse blank runs into one thin gap
     if (gap && any0) html += `<tr class="gap"><td colspan="${cols.length + (subCol ? 1 : 0)}"></td></tr>`;
@@ -7659,9 +7753,11 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       else {
         const dv = wbDvFor(sheet, a);
         if (dv) { html += `<td${span} class="inp">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
-        const pct = wbIsPctCell(z), dat = !pct && wbIsDateCell(z);
-        const sv = pct ? ((val === '' || val == null) ? '' : (Math.round(Number(val) * 10000) / 100))
-          : dat ? wbDateStr(val) : wbInputRaw(val);
+        // a percent/date-formatted cell can hold plain text ("TBD", "Upon approval") — show it as
+        // typed rather than an empty box, and let it be edited as text
+        const numeric = typeof val === 'number' && isFinite(val);
+        const pct = numeric && wbIsPctCell(z), dat = numeric && !pct && wbIsDateCell(z);
+        const sv = pct ? (Math.round(Number(val) * 10000) / 100) : dat ? wbDateStr(val) : wbInputRaw(val);
         const fn = pct ? 'wbEditPct' : dat ? 'wbEditDate' : 'wbEdit';
         html += `<td${span} class="inp"><input class="wbi${pct ? ' pct' : ''}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
       }
@@ -7681,7 +7777,8 @@ function renderWbModal() {
     <aside class="wbside">
       <div class="wbbrand"><b>${esc(cfg.title(e))}</b><span>${esc(cfg.docLabel || 'Workbook')}</span></div>
       <nav class="wbnav">${nav}</nav>
-      <div class="wbsfoot">Every sheet of the workbook — edit here, it saves back to the spreadsheet.</div>
+      <div class="wbsfoot">Every sheet of the workbook — edit here, it saves back to the spreadsheet.
+        <button class="wbsnap" onclick="wbCopySnapshot()" title="Copy what this page sees on this sheet — every cell, how it was classified, what was dropped — so it can be pasted into a message">⧉ copy what I see</button></div>
     </aside>
     <div class="wbmain">
       <div class="wbtop">
@@ -7709,6 +7806,8 @@ function renderWbModal() {
     .wbnav a:hover{background:#1a2354;color:#fff}
     .wbnav a.on{background:#1d2f9e;color:#fff;border-left-color:#7e8ef0;font-weight:600}
     .wbsfoot{padding:10px 14px;font-size:11px;color:#77809f;border-top:1px solid #2a3468}
+    .wbsnap{display:block;margin-top:6px;background:transparent;border:1px solid #2a3468;color:#77809f;border-radius:5px;padding:3px 7px;font:inherit;font-size:10.5px;cursor:pointer}
+    .wbsnap:hover{background:#1a2354;color:#c3c9ea}
     .wbmain{flex:1;min-width:0;display:flex;flex-direction:column}
     .wbtop{background:#fff;border-bottom:1px solid #d7dbe3;display:flex;align-items:center;gap:12px;padding:8px 16px;flex-wrap:wrap;flex:0 0 auto}
     .wbtop h1{font-size:17px;margin:0;flex:1;min-width:120px;color:#16181d}
