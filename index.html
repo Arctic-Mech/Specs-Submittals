@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.38';
+const APP_VERSION = 'v7.39';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6655,6 +6655,47 @@ function coTemplateLooksLikeOurs(wb) {
    ranges, and the function set these workbooks use. Per-instance cache + input
    overrides; verified to reproduce the workbook's own numbers to the cent.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* The workbook's SpellNumber VBA — the contract amount in words on the Proposal. Excel only has
+   it when macros are enabled, so the saved file usually shows #NAME? there; the website computes
+   it. Faithful port, quirks included ("No Cents", the trailing-space wording). */
+function wbSpellNumber(amount) {
+  const getDigit = (d) => ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'][Number(d) || 0] || '';
+  const getTens = (txt) => {
+    const s = String(txt);
+    if (Number(s[0]) === 1) {                     // 10..19
+      return ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'][Number(s.slice(0, 2)) - 10] || '';
+    }
+    const t = ['', '', 'Twenty ', 'Thirty ', 'Forty ', 'Fifty ', 'Sixty ', 'Seventy ', 'Eighty ', 'Ninety '][Number(s[0]) || 0] || '';
+    return t + getDigit(s.slice(-1));             // trailing space survives when ones = 0
+  };
+  const getHundreds = (num) => {
+    if (!Number(num)) return '';
+    const s = ('000' + num).slice(-3);
+    let out = '';
+    if (s[0] !== '0') out = getDigit(s[0]) + ' Hundred ';
+    out += s[1] !== '0' ? getTens(s.slice(1)) : getDigit(s[2]);
+    return out;
+  };
+  const place = ['', '', ' Thousand ', ' Million ', ' Billion ', ' Trillion '];
+  // VBA: MyNumber = Trim(Str(MyNumber)) — Str() prints no trailing zeros
+  let my = String(Math.abs(Number(amount) || 0));
+  let cents = '';
+  const dot = my.indexOf('.');
+  if (dot >= 0) {
+    cents = getTens((my.slice(dot + 1) + '00').slice(0, 2));
+    my = my.slice(0, dot);
+  }
+  let dollars = '', count = 1;
+  while (my !== '') {
+    const temp = getHundreds(my.slice(-3));
+    if (temp !== '') dollars = temp + (place[count] || '') + dollars;
+    my = my.length > 3 ? my.slice(0, -3) : '';
+    count++;
+  }
+  dollars = dollars === '' ? 'No Dollars' : dollars === 'One' ? 'One Dollar' : dollars + ' Dollars';
+  cents = cents === '' ? ' and No Cents' : cents === 'One' ? ' and One Cent' : ' and ' + cents + ' Cents';
+  return dollars + cents;
+}
 function makeWbEngine(wb) {
   const XL = window.XLSX;
   const NAMED = {};
@@ -6670,6 +6711,9 @@ function makeWbEngine(wb) {
   const isEmpty = v => v === EMPTY || (v && v.__empty);
   function wbDateParts(serial) { const dt = new Date((serial - 25569) * 86400000); return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() }; }
   function cellRaw(sheet, addr) { const ws = wb.Sheets[sheet]; return ws ? ws[addr] : undefined; }
+  /* Anything this evaluator doesn't implement would otherwise come out as a silent 0 — the one
+     way the website could disagree with Excel without saying so. Record it instead. */
+  let curCell = ''; const unknownFns = {}, unknownAt = {};
   function num(v) { if (isEmpty(v)) return 0; if (v === true) return 1; if (v === false) return 0; if (v == null || v === '') return 0; const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : 0; }
   function getCell(sheet, addr) {
     const key = okey(sheet, addr);
@@ -6679,7 +6723,7 @@ function makeWbEngine(wb) {
     stackSet[key] = 1;
     const c = cellRaw(sheet, addr); let out;
     if (!c) out = EMPTY;
-    else if (c.f != null) { try { out = evalFormula(c.f, sheet); if (typeof out === 'number' && !isFinite(out)) out = (c.v != null ? c.v : 0); } catch (e) { out = (c.v != null ? c.v : 0); } }
+    else if (c.f != null) { const prevCell = curCell; curCell = key; try { out = evalFormula(c.f, sheet); if (typeof out === 'number' && !isFinite(out)) out = (c.v != null ? c.v : 0); } catch (e) { out = (c.v != null ? c.v : 0); } finally { curCell = prevCell; } }
     else out = (c.v != null ? c.v : (c.w != null ? c.w : EMPTY));
     delete stackSet[key]; cache[key] = out; return out;
   }
@@ -6783,6 +6827,9 @@ function makeWbEngine(wb) {
       if (name === 'UPPER') { return String(A(0) == null ? '' : A(0)).toUpperCase(); }
       if (name === 'LOWER') { return String(A(0) == null ? '' : A(0)).toLowerCase(); }
       if (name === 'VLOOKUP') { const lv = A(0); if (!args[1] || !args[1].__ref) return 0; const tbl = refToCells(args[1].sheet, args[1].body); const col = num(A(2)); const approx = args.length > 3 ? (A(3) === true || num(A(3)) !== 0) : true; if (tbl.kind !== 'range') return 0; const rows = {}; tbl.cells.forEach(x => { const dc = XL.utils.decode_cell(x[1]); (rows[dc.r] = rows[dc.r] || {})[dc.c] = getCell(x[0], x[1]); }); const rkeys = Object.keys(rows).map(Number).sort((a, b) => a - b); const cols = tbl.cells.map(x => XL.utils.decode_cell(x[1]).c); const c0 = Math.min.apply(null, cols); let best = 0; for (let k = 0; k < rkeys.length; k++) { const rk = rkeys[k]; const first = rows[rk][c0]; if (approx) { if (num(first) <= num(lv)) best = rows[rk][c0 + col - 1]; else break; } else { if (String(first) === String(lv)) return rows[rk][c0 + col - 1]; } } return best != null ? best : 0; }
+      if (name === 'SPELLNUMBER') return wbSpellNumber(A(0));  // the workbook's own VBA amount-in-words
+      unknownFns[name] = (unknownFns[name] || 0) + 1;          // anything else we genuinely cannot compute
+      if (curCell && !unknownAt[curCell]) unknownAt[curCell] = name;
       return 0;
     }
     function matchCrit(val, crit) { crit = deref(crit); if (isEmpty(val)) val = ''; if (typeof crit === 'string') { const m = crit.match(/^(<=|>=|<>|<|>|=)(.*)$/); if (m) { const op = m[1], rhs = m[2], rn = num(rhs), vn = num(val); if (op === '=') return String(val) === rhs || vn === rn; if (op === '<>') return String(val) !== rhs; if (op === '<') return vn < rn; if (op === '>') return vn > rn; if (op === '<=') return vn <= rn; return vn >= rn; } if (/[*?]/.test(crit)) { const re = new RegExp('^' + crit.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); return re.test(String(val)); } return String(val) === crit; } return num(val) === num(crit); }
@@ -6802,6 +6849,7 @@ function makeWbEngine(wb) {
     getOverride(sheet, addr) { const k = okey(sheet, addr); return k in overrides ? overrides[k] : undefined; },
     overrides,
     sheetObj(s) { return wb.Sheets[s]; },
+    unknown() { return { fns: unknownFns, cells: unknownAt }; },
     range(s) { const ws = wb.Sheets[s]; return (ws && ws['!ref']) ? XL.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }; },
     mergesOf(s) { const ws = wb.Sheets[s]; return (ws && ws['!merges']) || []; },
     recalc() { cache = {}; },
@@ -6813,6 +6861,7 @@ let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _
 let _wbDV = {}, _wbSecOpen = {};        // the workbook's dropdown lists + which sections you've opened
 let _wbFxOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a deduct) + the compare panel
 let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected block in cell view
+let _wbChk = null;                       // the last check against the filed spreadsheet
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -7356,6 +7405,68 @@ function wbCopySnapshot() {
   } catch (x) {}
   console.log(txt); toast('It’s in the browser console — copy it from there', true);
 }
+/* ── Checking the website against the spreadsheet ──
+   People will keep working in Excel, so the two must never disagree. This recomputes every
+   formula in a workbook with our own engine and compares it against the values Excel itself
+   saved in the file, split into: agreement, cells Excel is erroring on, blanks-vs-zero (the
+   same number either way), and genuine disagreements — which should always be none. */
+function wbCompareToCached(wb) {
+  const eng = makeWbEngine(wb);
+  const out = { checked: 0, agree: 0, excelErrors: {}, blankZero: 0, diffs: [], unknown: {} };
+  (wb.SheetNames || []).forEach(sn => {
+    const ws = wb.Sheets[sn]; if (!ws || !ws['!ref']) return;
+    for (const a in ws) {
+      if (a[0] === '!') continue;
+      const c = ws[a];
+      if (c.f == null || c.v === undefined) continue;
+      if (c.t === 'e') { const k = String(c.w || c.v); out.excelErrors[k] = (out.excelErrors[k] || 0) + 1; continue; }
+      if (typeof c.v === 'string') continue;                       // text results compare by eye, not by cent
+      out.checked++;
+      let got; try { got = eng.get(sn, a); } catch (x) { got = null; }
+      const g = (typeof got === 'number' && isFinite(got)) ? got : NaN;
+      if (Math.abs(g - c.v) < 0.005) { out.agree++; continue; }
+      if ((got === '' || got == null) && c.v === 0) { out.blankZero++; continue; }
+      if (out.diffs.length < 40) out.diffs.push({ at: sn + '!' + a, excel: c.v, site: got, f: String(c.f).slice(0, 90) });
+      else out.diffs.push(null);
+    }
+  });
+  out.unknown = eng.unknown().fns;
+  return out;
+}
+async function wbCheckAgainstExcel() {
+  const cfg = wbCfg(), e = wbEntity(); if (!cfg || !e) return;
+  stickyToast('Reading the filed spreadsheet…');
+  let bytes = null, from = '';
+  try {
+    if (_wb.kind === 'co') { const fh = await coFileHandleGet(e); if (fh) { bytes = await (await fh.getFile()).arrayBuffer(); from = coProposalDoc(e) ? coProposalDoc(e).file : 'Change Proposal.xlsm'; } }
+    else if (e.file && e.file.file) { const dir = await estDirHandle(false); bytes = await (await (await dir.getFileHandle(e.file.file)).getFile()).arrayBuffer(); from = e.file.file; }
+  } catch (x) { bytes = null; }
+  if (!bytes) { toast('No filed spreadsheet to check against yet — save this one first, or open it in Excel and save.', true); return; }
+  try {
+    const XL = await loadSheetJS();
+    const wb = XL.read(new Uint8Array(bytes), { type: 'array', cellFormula: true });
+    _wbChk = wbCompareToCached(wb);
+    _wbChk.from = from;
+    toast(_wbChk.diffs.filter(Boolean).length ? 'Checked — see the differences' : 'Checked — the website and the spreadsheet agree');
+  } catch (x) { console.error(x); toast('Could not read that spreadsheet: ' + (x.message || x), true); return; }
+  renderWbBody();
+}
+function wbChkHtml() {
+  const k = _wbChk; if (!k) return '';
+  const diffs = k.diffs.filter(Boolean), hidden = k.diffs.length - diffs.length;
+  const errs = Object.keys(k.excelErrors).map(x => x + ' × ' + k.excelErrors[x]).join(', ');
+  const unk = Object.keys(k.unknown || {});
+  const ok = !diffs.length;
+  return `<div class="wbchk${ok ? ' ok' : ' bad'}">
+    <div class="wbchkhead"><b>${ok ? '✓ The website and the spreadsheet agree' : '⚠ ' + diffs.length + ' cell' + (diffs.length === 1 ? '' : 's') + ' disagree'}</b>
+      <span>${esc(String(k.agree))} of ${esc(String(k.checked))} calculated cells match ${k.from ? 'in ' + esc(k.from) : ''}</span>
+      <button class="wbchipb" title="Close" onclick="_wbChk = null; renderWbBody()">✕</button></div>
+    <div class="wbchknote">${k.blankZero ? esc(String(k.blankZero)) + ' empty cells read as blank here and zero in Excel — the same number either way. ' : ''}${errs ? 'Excel itself is showing an error in ' + esc(errs) + ' — those are in your spreadsheet, not the website. ' : ''}${unk.length ? '<b>The website cannot calculate ' + esc(unk.join(', ')) + ' — those cells are not trustworthy here.</b>' : ''}</div>
+    ${diffs.length ? `<table class="wbcmptbl"><tr><th>Cell</th><th>Excel</th><th>Website</th><th>Formula</th></tr>
+      ${diffs.map(d => `<tr><td class="label">${esc(d.at)}</td><td class="calc">${esc(wbFmtNum(d.excel))}</td><td class="calc">${esc(typeof d.site === 'number' ? wbFmtNum(d.site) : String(d.site))}</td><td class="label">${esc(d.f)}</td></tr>`).join('')}
+      </table>${hidden > 0 ? '<div class="wbchknote">… and ' + hidden + ' more</div>' : ''}` : ''}
+  </div>`;
+}
 function wbSecKey(sheet, s) { return sheet + '!' + s.sw; }
 function wbSecOpenSet(key, on) { if (on) _wbSecOpen[key] = 1; else delete _wbSecOpen[key]; }
 /* what the section totals — read off its own subtotal row, labelled by its own column headings */
@@ -7402,7 +7513,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7422,7 +7533,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7482,7 +7593,7 @@ function wbEditDate(sheet, addr, val) {
   wbEdit(sheet, addr, Math.round(ms / 86400000) + 25569);
 }
 /* the active sheet page (clean) or the raw cell view, + the header total */
-function renderWbBodyHtml() { return wbCmpHtml() + ((_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet)); }
+function renderWbBodyHtml() { return wbChkHtml() + wbCmpHtml() + ((_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet)); }
 function renderWbBody() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = renderWbBodyHtml();
   const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
@@ -7758,7 +7869,8 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       const isF = !!(raw && raw.f != null) && ov == null;             // a formula you typed over becomes your input again
       const z = raw && raw.z;
       const val = eng.get(sheet, a);
-      if (isF) html += `<td${span} class="calc${fil}" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
+      if (isF) { const bad = (eng.unknown().cells || {})[sheet + '!' + a];
+        html += `<td${span} class="calc${fil}${bad ? ' nocalc' : ''}" title="${bad ? esc(bad) + ' is a macro function the website cannot calculate — check this one in Excel. ' : ''}=${esc(String(raw.f))}">${esc(bad ? '?' : wbCellFmt(val, z))}</td>`; }
       else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label${val.length <= 40 ? ' short' : ''}${fil}">${esc(val)}</td>`;
       else {
         if (marksEntries && ov == null && (val === '' || val == null) && !wbIsInputCell(sheet, raw)) { html += `<td${span} class="pad${fil}"></td>`; continue; }
@@ -7798,6 +7910,7 @@ function renderWbModal() {
         ${loading ? '' : `<span class="wbtot"><small>Total bid</small><b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>
         <button class="wbbtn sec" onclick="wbSetView('${cells ? 'sheet' : 'cells'}')" title="${cells ? 'Back to the clean sheet view' : 'Show spreadsheet row/column references'}">${cells ? '▤ Sheet view' : '⌗ Cell view'}</button>
         <button class="wbbtn sec" onclick="wbCmpToggle()" title="Compare two sections and charge only the difference">⇄ Compare sections</button>
+        <button class="wbbtn sec" onclick="wbCheckAgainstExcel()" title="Recalculate every formula and compare against the filed spreadsheet — proof the website and Excel agree">✓ Check vs Excel</button>
         <button class="wbbtn sec" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
         <button class="wbbtn" onclick="saveWorkbook(true)">Save &amp; close</button>
         <button class="wbx" onclick="requestCloseWb()" title="Close">✕</button>
@@ -7893,6 +8006,16 @@ function renderWbModal() {
     table.wbcmptbl td.wbcmpd{font-weight:700;color:#14206e}
     .wbcmpact{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     .wbcmpon{font-size:12px;color:#8a5a00;font-weight:600}
+    .wbapp table.wbsheet td.calc.nocalc{background:#fdeaea;color:#b02a37;font-weight:700}
+    .wbchk{border-radius:8px;padding:10px 12px;margin-bottom:12px;background:#fff;border:1px solid #d7dbe3}
+    .wbchk.ok{border-color:#3f9c5a;background:#f1faf3}
+    .wbchk.bad{border-color:#b02a37;background:#fdf1f2}
+    .wbchkhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .wbchkhead b{font-size:14px}
+    .wbchk.ok .wbchkhead b{color:#276b3b}
+    .wbchk.bad .wbchkhead b{color:#b02a37}
+    .wbchkhead span{font-size:12.5px;color:#5c6470}
+    .wbchknote{font-size:12.5px;color:#5c6470;margin-top:5px}
     .wbapp details.togroup>table.wbsheet{display:block;overflow-x:auto;max-width:100%}
     .wbapp table.wbgrid{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;background:#fff}
     .wbapp .wbgrid th.wbh{position:sticky;top:0;background:#e9ecf3;border:1px solid #d7dbe3;color:#5c6470;font-weight:600;padding:2px 6px;z-index:1;text-align:center;min-width:28px}
