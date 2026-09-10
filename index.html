@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.30';
+const APP_VERSION = 'v7.31';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6788,6 +6788,7 @@ function makeWbEngine(wb) {
 
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
 let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {};
+let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
    rendered in the same visual language as the estimating pages. Nothing here is tied to one
@@ -6971,14 +6972,30 @@ function wbToggleSection(sheet, sw, bool) {
   const now = wbSectionExcluded(sheet, sw);
   wbSetCell(sheet, sw, bool ? !now : (now ? 'No' : 'Yes'));
 }
+/* Bump when a template workbook file itself is replaced. A workbook-mode change order stores
+   only the cells that DIFFER from the template, so if the template changes underneath it that
+   diff no longer means the same thing — re-read the filed spreadsheet, which holds the real
+   values, and take a fresh diff. Left unstamped when the folder isn't connected, so it retries. */
+const WB_TPL_V = { co: 2, est: 1 };
+async function wbMigrateTemplate(kind, e, cfg) {
+  if (!e.wbMode || (e.wbTplV || 0) >= WB_TPL_V[kind]) return;
+  let ok = false;
+  try { ok = await reconcileWorkbookFile(kind, e, { force: true }); } catch (x) { console.warn('template migration:', x && x.message || x); }
+  if (!ok && !jobFolder) return;                     // no ShareFile folder yet — try again next time
+  e.wbTplV = WB_TPL_V[kind];
+  try { await FB.setDoc(cfg.ref(e), clean(e)); } catch (x) {}
+}
 function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
   _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {};
   _wbView = 'sheet';                                // the clean sheet pages are the default view
+  wireWbPop();
+  if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
   renderWbModal();                                  // loading state
   try {
+    await wbMigrateTemplate(kind, e, cfg);
     const XL = await loadSheetJS();
     const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true, cellNF: true });
     const eng = makeWbEngine(wb);
@@ -6987,9 +7004,19 @@ async function openWorkbook(kind, id) {
     _wbEng = eng;
     _wbSheet = eng.visibleSheets.indexOf(cfg.prefer) >= 0 ? cfg.prefer : eng.visibleSheets[0];
     renderWbModal();
-  } catch (err) { console.error(err); closeWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
+  } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
 function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbView = null; $('modalHost').innerHTML = ''; }
+/* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
+   on The Dingus instead of whatever page came before it. */
+function wireWbPop() {
+  if (_wbPopWired || typeof window.addEventListener !== 'function') return; _wbPopWired = true;
+  window.addEventListener('popstate', () => { if (_wb) { _wbPushed = false; closeWb(); } });   // Back while the editor is open → just close it
+}
+function requestCloseWb() {
+  if (_wbPushed) { _wbPushed = false; try { history.back(); return; } catch (x) {} }
+  closeWb();
+}
 function wbSetSheet(name) { _wbSheet = name; renderWbModal(); }
 function wbSetView(v) { _wbView = v; renderWbModal(); }
 function wbMoreRows() { _wbRows[_wbSheet] = (_wbRows[_wbSheet] != null ? _wbRows[_wbSheet] : WB_ROW_CAP) + WB_ROW_STEP; renderWbGridOnly(); }
@@ -7046,15 +7073,15 @@ async function persistWbInputs() {
 }
 async function saveWorkbook(closeAfter) {
   clearTimeout(_wbSaveT);
-  const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { if (closeAfter) closeWb(); return; }
-  if (!wbHasEdits(e) && !e.wbMode) { if (closeAfter) closeWb(); else toast('No edits to save'); return; }   // viewing only — don't switch to workbook mode
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { if (closeAfter) requestCloseWb(); return; }
+  if (!wbHasEdits(e) && !e.wbMode) { if (closeAfter) requestCloseWb(); else toast('No edits to save'); return; }   // viewing only — don't switch to workbook mode
   try {
     e.wbMode = true; wbApplyTotals(e, cfg); e.updated = Date.now(); e[cfg.sigKey] = '';   // force mirror rewrite
     await FB.setDoc(cfg.ref(e), clean(e));
     if (jobFolder) await cfg.save(e, { force: true, toast: !closeAfter });
     cfg.rerender();
   } catch (x) { console.error(x); toast('Could not save the workbook: ' + (x.message || x), true); }
-  if (closeAfter) closeWb();
+  if (closeAfter) requestCloseWb();
 }
 function wbGridHtml() {
   const eng = _wbEng, sheet = _wbSheet; if (!eng) return '';
@@ -7210,7 +7237,7 @@ function renderWbModal() {
         <button class="wbbtn sec" onclick="wbSetView('${cells ? 'sheet' : 'cells'}')" title="${cells ? 'Back to the clean sheet view' : 'Show spreadsheet row/column references'}">${cells ? '▤ Sheet view' : '⌗ Cell view'}</button>
         <button class="wbbtn sec" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
         <button class="wbbtn" onclick="saveWorkbook(true)">Save &amp; close</button>
-        <button class="wbx" onclick="closeWb()" title="Close">✕</button>
+        <button class="wbx" onclick="requestCloseWb()" title="Close">✕</button>
       </div>
       <div class="wbview" id="wbGridWrap">${loading ? '<div class="wbloading">Loading the workbook…</div>' : renderWbBodyHtml()}</div>
     </div>
@@ -7310,7 +7337,8 @@ function readWorkbookInputsDiff(mirror, pristine, markerSheet, markerCells) {
   });
   return inputs;
 }
-async function reconcileWorkbookFile(kind, e) {
+async function reconcileWorkbookFile(kind, e, opts) {
+  opts = opts || {};
   const cfg = WB_KINDS[kind]; if (!e.wbMode) return false;
   let mtime = 0, bytes = null;
   try {
@@ -7319,8 +7347,10 @@ async function reconcileWorkbookFile(kind, e) {
   } catch (x) { return false; }
   if (!mtime || !bytes) return false;
   const syncedAt = kind === 'co' ? (e.coFileSyncedAt || 0) : (e.fileSyncedAt || 0);
-  if (mtime <= syncedAt + 2000) return false;                                          // unchanged since our last sync
-  if (mtime < (e.updated || 0)) { await cfg.save(e, { force: true }); return false; }   // website is newer → rewrite the mirror
+  if (!opts.force) {
+    if (mtime <= syncedAt + 2000) return false;                                        // unchanged since our last sync
+    if (mtime < (e.updated || 0)) { await cfg.save(e, { force: true }); return false; }  // website is newer → rewrite the mirror
+  }
   try {
     const XL = await loadSheetJS();
     const mirror = XL.read(new Uint8Array(bytes), { type: 'array', cellFormula: true });
