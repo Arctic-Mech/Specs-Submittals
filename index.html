@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.29';
+const APP_VERSION = 'v7.30';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4231,7 +4231,7 @@ function renderCoDrawer() {
         ${c.src === 'estimator'
           ? `<div class="est-mini">Built in the web <b>estimator</b> (bid format). Total <b>${esc(fmtMoney(c.estimatorTotal != null ? c.estimatorTotal : c.amount) || '$0')}</b>.</div>`
           : c.wbMode
-            ? `<div class="est-mini">Change-order proposal (CP workbook, all sheets). Total <b>${esc(fmtMoney(c.wbTotal != null ? c.wbTotal : c.amount) || '$0')}</b> — filed as <b>Change Proposal.xlsm</b>.</div>`
+            ? `<div class="est-mini">Change-order proposal (CP workbook, all sheets). Total <b>${esc(fmtMoney(c.wbTotal != null ? c.wbTotal : c.amount) || '$0')}</b> — filed as <b>Change Proposal.xlsm</b>.${wbScenSummary(c) ? ' <b>' + esc(wbScenSummary(c)) + '</b> — only the switched-on ones are priced.' : ''}</div>`
             : coEstSummaryHtml(c)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
           ${c.src === 'estimator'
@@ -5094,7 +5094,8 @@ function uploadCoProposal() {
 function coProposalsSectionHtml() {
   const list = cos || [];
   const cards = list.map(c => {
-    const kind = c.src === 'estimator' ? 'estimator (bid)' : c.wbMode ? 'CP workbook' : c.est ? 'CP (form)' : 'not started';
+    const scen = c.wbMode ? wbScenSummary(c) : '';
+    const kind = (c.src === 'estimator' ? 'estimator (bid)' : c.wbMode ? 'CP workbook' : c.est ? 'CP (form)' : 'not started') + (scen ? ' · ' + scen : '');
     const stLabel = c.status ? ((csOf(c) || {}).label || c.status) : '';
     return `<div class="est-card">
       <div class="est-card-main" onclick="coProposalOpen('${c.id}')">
@@ -6306,7 +6307,7 @@ async function importCoAsWorkbook(c, bytes) {
   const mk = WB_MARK.co;
   const diff = readWorkbookInputsDiff(wbF, pristine, mk.sheet, mk.cells);
   delete c.est; if (c.src === 'estimator') delete c.src;
-  c.wbMode = true; c.wbInputs = diff;
+  c.wbMode = true; wbAbsorbInputs(c, diff);          // keeps any scenarios this CO already had
   const ws = wbF.Sheets['CP Backup'] || {};
   if (!c.number && ws['B5'] && ws['B5'].v != null && String(ws['B5'].v).trim()) c.number = String(ws['B5'].v);
   if (!c.description && ws['B7'] && ws['B7'].v != null && String(ws['B7'].v).trim()) c.description = String(ws['B7'].v);
@@ -6575,10 +6576,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } });
+  return buildWorkbookMirror(await coTemplateBytes(), wbEffectiveInputs(c), { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } });
 }
 async function buildEstWorkbookXlsm(e) {
-  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } });
+  return buildWorkbookMirror(await estTemplateBytes(), wbEffectiveInputs(e), { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } });
 }
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
@@ -6872,26 +6873,144 @@ function wbFmtNum(v) {
   return r.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 function wbInputRaw(v) { if (v == null || v === '' || v === 0) return ''; return String(v); }
+/* ── Scenarios (row groups you can switch on and off) ──
+   A scenario is a named set of rows on one sheet — an option you priced. Its own cell values
+   live on the group, not in wbInputs, so switching it off takes it out of the workbook
+   entirely: the formulas fall back to the workbook's own values and the total drops. Switch it
+   back on and it comes back exactly as you left it. (Same idea as the estimator's takeoff
+   group Exclude checkbox, which zeroes a group in the totals.) */
+let _wbSel = null;                                   // { sheet, rows:{} } while picking rows for a new scenario
+function wbGroups(e) { return (e && Array.isArray(e.wbGroups)) ? e.wbGroups : []; }
+function wbGroupOn(g) { return !!g && g.on !== false; }
+function wbCellRow(addr) { const m = /^[A-Z]+(\d+)$/.exec(addr || ''); return m ? (+m[1] - 1) : -1; }   // 0-based
+function wbSplitKey(k) { const m = String(k).match(/^(.+)!([A-Z]+\d+)$/); return m ? { sheet: m[1], addr: m[2] } : null; }
+function wbGroupOf(e, sheet, row) {
+  const gs = wbGroups(e);
+  for (let i = 0; i < gs.length; i++) if (gs[i].sheet === sheet && (gs[i].rows || []).indexOf(row) >= 0) return gs[i];
+  return null;
+}
+function wbGroupById(e, id) { const gs = wbGroups(e); for (let i = 0; i < gs.length; i++) if (gs[i].id === id) return gs[i]; return null; }
+function wbGroupCellCount(g) { return Object.keys((g && g.cells) || {}).length; }
+/* everything that actually goes into the workbook: the ungrouped inputs + the switched-on scenarios */
+function wbEffectiveInputs(e) {
+  const out = {}, ov = (e && e.wbInputs) || {};
+  for (const k in ov) out[k] = ov[k];
+  wbGroups(e).forEach(g => { if (wbGroupOn(g)) { const c = g.cells || {}; for (const k in c) out[k] = c[k]; } });
+  return out;
+}
+/* push a scenario's cells into the live engine, or pull them back out when it's switched off */
+function wbApplyGroup(g) {
+  if (!_wbEng || !g) return;
+  const c = g.cells || {};
+  for (const k in c) { const s = wbSplitKey(k); if (!s) continue; if (wbGroupOn(g)) _wbEng.setInput(s.sheet, s.addr, c[k]); else _wbEng.clearInput(s.sheet, s.addr); }
+}
+/* what this scenario is worth: the total with it, minus the total without it */
+function wbGroupDelta(g) {
+  if (!_wbEng || !g || !wbGroupCellCount(g)) return 0;
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
+  const was = wbGroupOn(g);
+  let now = 0, other = 0;
+  try { now = num(wbTotalVal()); g.on = !was; wbApplyGroup(g); other = num(wbTotalVal()); }
+  finally { g.on = was; wbApplyGroup(g); }                 // always put the workbook back as it was
+  return round2(was ? (now - other) : (other - now));
+}
+/* Split a full set of inputs read back out of Excel into the ungrouped ones and each
+   scenario's own cells. A scenario owns its rows outright. A switched-off one isn't in the
+   spreadsheet at all, so its stored cells are kept and only merged into. */
+function wbAbsorbInputs(e, inputs) {
+  const gs = wbGroups(e);
+  gs.forEach(g => { if (wbGroupOn(g)) g.cells = {}; else g.cells = g.cells || {}; });
+  const rest = {};
+  for (const k in inputs) {
+    const s = wbSplitKey(k);
+    const g = s ? wbGroupOf(e, s.sheet, wbCellRow(s.addr)) : null;
+    if (g) g.cells[k] = inputs[k]; else rest[k] = inputs[k];
+  }
+  e.wbInputs = rest;
+}
+function wbScenLocked() { const cfg = wbCfg(), e = wbEntity(); return !!(cfg && cfg.locked && e && cfg.locked(e)); }
+function wbToggleGroup(id) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  if (wbScenLocked()) { toast('This estimate is locked — unlock it to change scenarios', true); return; }
+  const g = wbGroupById(e, id); if (!g) return;
+  g.on = !wbGroupOn(g); wbApplyGroup(g); e.wbMode = true;
+  renderWbBody(); scheduleWbSave();
+}
+/* how the scenarios read from outside the editor — on the change-order card and its drawer */
+function wbScenSummary(e) {
+  const gs = wbGroups(e); if (!gs.length) return '';
+  const off = gs.filter(g => !wbGroupOn(g)).length;
+  return gs.length + ' scenario' + (gs.length === 1 ? '' : 's') + (off ? ' · ' + off + ' off' : ' · all on');
+}
+function wbRenameGroup(id) {
+  const e = wbEntity(); if (!e) return;
+  if (wbScenLocked()) { toast('This estimate is locked — unlock it to change scenarios', true); return; }
+  const g = wbGroupById(e, id); if (!g) return;
+  const n = prompt('Name for this scenario:', g.name || ''); if (n === null) return;
+  g.name = String(n).trim() || g.name; renderWbBody(); scheduleWbSave();
+}
+/* Deleting a scenario keeps its numbers: they go back to being ordinary inputs on those rows,
+   switched on. Nothing you typed is ever thrown away by ungrouping. */
+function wbUngroup(id) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  if (wbScenLocked()) { toast('This estimate is locked — unlock it to change scenarios', true); return; }
+  const g = wbGroupById(e, id); if (!g) return;
+  const was = wbGroupOn(g);
+  if (!confirm(was
+    ? 'Ungroup “' + (g.name || 'this scenario') + '”? Its rows stay exactly as they are — they just stop being a scenario you can switch off.'
+    : 'Ungroup “' + (g.name || 'this scenario') + '”? It is switched off, so its numbers will come back into the workbook as ordinary rows.')) return;
+  const c = g.cells || {};
+  e.wbInputs = e.wbInputs || {};
+  for (const k in c) { e.wbInputs[k] = c[k]; const s = wbSplitKey(k); if (s) _wbEng.setInput(s.sheet, s.addr, c[k]); }
+  e.wbGroups = wbGroups(e).filter(x => x.id !== id); e.wbMode = true;
+  renderWbBody(); scheduleWbSave();
+}
+/* ---- picking the rows for a new scenario ---- */
+function wbSelStart() {
+  if (!_wbSheet || _wbView === 'cells') return;
+  if (wbScenLocked()) { toast('This estimate is locked — unlock it to change scenarios', true); return; }
+  _wbSel = { sheet: _wbSheet, rows: {} }; renderWbBody();
+}
+function wbSelCancel() { _wbSel = null; renderWbBody(); }
+function wbSelToggle(r, on) {
+  if (!_wbSel) return; r = +r;
+  if (on) _wbSel.rows[r] = 1; else delete _wbSel.rows[r];
+  const n = document.getElementById('wbSelN'); if (n) n.textContent = String(Object.keys(_wbSel.rows).length);
+}
+function wbSelCreate() {
+  const e = wbEntity(); if (!e || !_wbSel) return;
+  const sheet = _wbSel.sheet;
+  const rows = Object.keys(_wbSel.rows).map(Number).sort((a, b) => a - b);
+  if (!rows.length) { toast('Tick the rows that make up this scenario first', true); return; }
+  const box = document.getElementById('wbSelName');
+  const name = String((box && box.value) || '').trim() || ('Option ' + (wbGroups(e).length + 1));
+  const g = { id: uid('wbg'), name, sheet, rows, on: true, cells: {} };
+  const ov = e.wbInputs || {};                       // the rows' existing values move onto the scenario
+  for (const k in ov) { const s = wbSplitKey(k); if (!s || s.sheet !== sheet) continue; if (rows.indexOf(wbCellRow(s.addr)) < 0) continue; g.cells[k] = ov[k]; delete ov[k]; }
+  e.wbGroups = wbGroups(e).concat([g]); e.wbMode = true;
+  _wbSel = null; renderWbBody(); scheduleWbSave();
+  toast('Scenario “' + name + '” created — untick it to price the job without it');
+}
 function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {};
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSel = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   renderWbModal();                                  // loading state
   try {
     const XL = await loadSheetJS();
     const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true, cellNF: true });
     const eng = makeWbEngine(wb);
-    const ov = e.wbInputs || {};
+    const ov = wbEffectiveInputs(e);                // ungrouped inputs + the switched-on scenarios
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
     _wbEng = eng;
     _wbSheet = eng.visibleSheets.indexOf(cfg.prefer) >= 0 ? cfg.prefer : eng.visibleSheets[0];
     renderWbModal();
   } catch (err) { console.error(err); closeWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbView = null; $('modalHost').innerHTML = ''; }
-function wbSetSheet(name) { _wbSheet = name; renderWbModal(); }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbView = null; _wbSel = null; $('modalHost').innerHTML = ''; }
+function wbSetSheet(name) { _wbSheet = name; _wbSel = null; renderWbModal(); }
 function wbSetView(v) { _wbView = v; renderWbModal(); }
 function wbMoreRows() { _wbRows[_wbSheet] = (_wbRows[_wbSheet] != null ? _wbRows[_wbSheet] : WB_ROW_CAP) + WB_ROW_STEP; renderWbGridOnly(); }
 function wbEdit(sheet, addr, val) {
@@ -6904,8 +7023,11 @@ function wbEdit(sheet, addr, val) {
   if (s === '') stored = '';
   else if (numish) { let n = parseFloat(s.replace(/[$,\s]/g, '').replace('%', '')); if (/%\s*$/.test(s)) n = n / 100; stored = n; }
   else stored = val;
-  _wbEng.setInput(sheet, addr, stored);
-  e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
+  const key = sheet + '!' + addr;
+  const g = wbGroupOf(e, sheet, wbCellRow(addr));   // a scenario owns its rows — the value lives on it
+  if (g) { g.cells = g.cells || {}; g.cells[key] = stored; if (wbGroupOn(g)) _wbEng.setInput(sheet, addr, stored); }
+  else { _wbEng.setInput(sheet, addr, stored); e.wbInputs = e.wbInputs || {}; e.wbInputs[key] = stored; }
+  e.wbMode = true;
   renderWbBody();
   scheduleWbSave();
 }
@@ -6925,14 +7047,15 @@ function wbEditDate(sheet, addr, val) {
   if (!isFinite(ms)) { toast('That isn’t a date — try 3/1/2026', true); renderWbBody(); return; }
   wbEdit(sheet, addr, Math.round(ms / 86400000) + 25569);
 }
-/* the active sheet page (clean) or the raw cell view, + the header total */
-function renderWbBodyHtml() { return (_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet); }
+/* the active sheet page (clean) or the raw cell view, + the scenarios and the header total */
+function renderWbBodyHtml() { return (_wbView === 'cells') ? wbGridHtml() : (wbScenBarHtml() + wbSheetHtml(_wbSheet)); }
 function renderWbBody() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = renderWbBodyHtml();
+  const s = document.getElementById('wbSideScenWrap'); if (s) s.innerHTML = wbSideScenHtml();
   const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
 }
 function scheduleWbSave() { clearTimeout(_wbSaveT); _wbSaveT = setTimeout(() => { persistWbInputs().catch(() => {}); }, 1200); }
-function wbHasEdits(e) { return !!(e && e.wbInputs && Object.keys(e.wbInputs).length); }
+function wbHasEdits(e) { return !!(e && ((e.wbInputs && Object.keys(e.wbInputs).length) || wbGroups(e).some(g => wbGroupCellCount(g)))); }
 function wbApplyTotals(e, cfg) { const t = round2(wbTotalVal()); e.wbTotal = t; if (cfg.hasAmount) e.amount = String(t); }
 async function persistWbInputs() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !job || !cfg || !wbHasEdits(e)) return;   // only engage workbook mode once something is actually edited
@@ -6997,10 +7120,12 @@ function renderWbGridOnly() { renderWbBody(); }
    cell is an editable field — the same look as the estimating pages. */
 function wbSheetHtml(sheet) {
   const eng = _wbEng; if (!eng || !sheet) return '';
+  const ent = wbEntity();
   const b = wbSheetBounds(sheet);
   const cols = b.cols; if (!cols.length) return '<div class="wbcard" style="padding:18px;color:#5c6470">This sheet is empty.</div>';
   const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;
   const endR = Math.min(b.r1, b.r0 + shown - 1);
+  const picking = !!(_wbSel && _wbSel.sheet === sheet);
   const merges = {}, covered = {};
   eng.mergesOf(sheet).forEach(mg => {
     let cs = 0; for (let c = mg.s.c; c <= mg.e.c; c++) if (b.pos[c] != null) cs++;
@@ -7008,6 +7133,7 @@ function wbSheetHtml(sheet) {
     for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
   });
   const shEsc = String(sheet).replace(/'/g, "\\'");
+  const span0 = cols.length + (picking ? 1 : 0);
   let html = '<div class="wbcard"><table class="wbsheet">', gap = 0;
   for (let r = b.r0; r <= endR; r++) {
     let any = false;
@@ -7017,9 +7143,14 @@ function wbSheetHtml(sheet) {
       const raw = eng.raw(sheet, XLSX.utils.encode_cell({ r, c }));
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
     }
-    if (!any) { gap++; continue; }                                   // collapse blank runs into one thin gap
-    if (gap) { html += `<tr class="gap"><td colspan="${cols.length}"></td></tr>`; gap = 0; }
-    html += '<tr>';
+    const grp = wbGroupOf(ent, sheet, r);
+    if (!any && !grp) { gap++; continue; }                           // collapse blank runs into one thin gap
+    if (gap) { html += `<tr class="gap"><td colspan="${span0}"></td></tr>`; gap = 0; }
+    const offG = grp && !wbGroupOn(grp);
+    html += `<tr class="${offG ? 'gexcl' : grp ? 'ging' : ''}"${grp ? ` title="${esc(grp.name || 'Scenario')}${offG ? ' — switched off, not in the total' : ''}"` : ''}>`;
+    if (picking) html += grp
+      ? `<td class="wbsel taken" title="Already in “${esc(grp.name || 'Scenario')}”">•</td>`
+      : `<td class="wbsel"><input type="checkbox" onchange="wbSelToggle(${r},this.checked)"></td>`;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
       if (covered[r + ',' + c]) continue;
@@ -7027,11 +7158,13 @@ function wbSheetHtml(sheet) {
       const mg = merges[r + ',' + c];
       const span = mg ? ` colspan="${mg.cs}" rowspan="${mg.rs}"` : '';
       const raw = eng.raw(sheet, a);
-      const ov = eng.getOverride(sheet, a);
+      const key = sheet + '!' + a;
+      // a switched-off scenario keeps its own values on the group, not in the engine
+      const ov = offG ? ((grp.cells && key in grp.cells) ? grp.cells[key] : undefined) : eng.getOverride(sheet, a);
       const isF = !!(raw && raw.f != null) && ov == null;             // a formula you typed over becomes your input again
       const z = raw && raw.z;
-      const val = eng.get(sheet, a);
-      if (isF) html += `<td${span} class="calc" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
+      const val = (ov !== undefined) ? ov : eng.get(sheet, a);
+      if (isF) html += `<td${span} class="calc" title="=${esc(String(raw.f))}">${esc(wbCellFmt(eng.get(sheet, a), z))}</td>`;
       else if (typeof val === 'string' && val !== '' && ov == null) html += `<td${span} class="label">${esc(val)}</td>`;
       else {
         const pct = wbIsPctCell(z), dat = !pct && wbIsDateCell(z);
@@ -7047,6 +7180,49 @@ function wbSheetHtml(sheet) {
   if (endR < b.r1) html += `<div style="padding:12px 2px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, b.r1 - endR)} more rows (of ${b.r1 - b.r0 + 1})</button></div>`;
   return html;
 }
+/* the Scenarios strip above the sheet — switch options on and off, or group new rows */
+function wbScenBarHtml() {
+  const e = wbEntity(); if (!e || !_wbSheet) return '';
+  if (_wbSel && _wbSel.sheet === _wbSheet) {
+    return `<div class="wbscen picking">
+      <b>Pick the rows that make up this scenario</b>
+      <span class="wbscenhint">Tick every row that belongs to it — <b id="wbSelN">0</b> picked</span>
+      <input id="wbSelName" class="wbscenname" placeholder="Name it (e.g. Option 1 — spiral)" onkeydown="if(event.key==='Enter')wbSelCreate()">
+      <button class="wbbtn" onclick="wbSelCreate()">Create scenario</button>
+      <button class="wbbtn sec" onclick="wbSelCancel()">Cancel</button>
+    </div>`;
+  }
+  const mine = wbGroups(e).filter(g => g.sheet === _wbSheet);
+  const chips = mine.map(g => {
+    const on = wbGroupOn(g), d = wbGroupDelta(g);
+    return `<span class="wbchip${on ? ' on' : ' off'}">
+      <label title="${on ? 'Switch this scenario off — it comes out of the total' : 'Switch this scenario on — it goes back into the total'}"><input type="checkbox"${on ? ' checked' : ''} onchange="wbToggleGroup('${g.id}')"><b>${esc(g.name || 'Scenario')}</b></label>
+      <i class="wbchipd">${d ? (d > 0 ? '+' : '−') + esc(fmtMoney(Math.abs(d)) || '$0') : (g.rows || []).length + ' rows'}</i>
+      <button class="wbchipb" title="Rename" onclick="wbRenameGroup('${g.id}')">✎</button>
+      <button class="wbchipb" title="Ungroup — the rows stay, they just stop being a scenario" onclick="wbUngroup('${g.id}')">✕</button>
+    </span>`;
+  }).join('');
+  return `<div class="wbscen">
+    <b>Scenarios</b>
+    ${chips || '<span class="wbscenhint">Price an option on some rows, then group them — switch it off and the workbook prices without it.</span>'}
+    <button class="wbbtn sec" onclick="wbSelStart()" title="Tick the rows that make up an option and give it a name">＋ Group rows</button>
+  </div>`;
+}
+/* every scenario in the workbook, in the sidebar, so any of them can be flipped from any sheet */
+function wbSideScenHtml() {
+  const e = wbEntity(); if (!e) return '';
+  const gs = wbGroups(e); if (!gs.length) return '';
+  const rows = gs.map(g => {
+    const on = wbGroupOn(g), d = wbGroupDelta(g);
+    return `<label class="wbsg${on ? '' : ' off'}" title="${esc(g.sheet)}">
+      <input type="checkbox"${on ? ' checked' : ''} onchange="wbToggleGroup('${g.id}')">
+      <span class="wbsgn">${esc(g.name || 'Scenario')}</span>
+      <i>${d ? (d > 0 ? '+' : '−') + esc(fmtMoney(Math.abs(d)) || '$0') : ''}</i>
+    </label>`;
+  }).join('');
+  const off = gs.filter(g => !wbGroupOn(g)).length;
+  return `<div class="wbscenh">Scenarios${off ? ' · ' + off + ' off' : ''}</div>${rows}`;
+}
 function renderWbModal() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { $('modalHost').innerHTML = ''; return; }
   const loading = !_wbEng;
@@ -7058,6 +7234,7 @@ function renderWbModal() {
     <aside class="wbside">
       <div class="wbbrand"><b>${esc(cfg.title(e))}</b><span>${esc(cfg.docLabel || 'Workbook')}</span></div>
       <nav class="wbnav">${nav}</nav>
+      <div class="wbscenside" id="wbSideScenWrap">${loading ? '' : wbSideScenHtml()}</div>
       <div class="wbsfoot">Every sheet of the workbook — edit here, it saves back to the spreadsheet.</div>
     </aside>
     <div class="wbmain">
@@ -7080,7 +7257,7 @@ function renderWbModal() {
     .wbbrand{padding:12px 14px;border-bottom:1px solid #2a3468}
     .wbbrand b{display:block;color:#fff;font-size:13.5px;line-height:1.3}
     .wbbrand span{font-size:11.5px;color:#9aa3d0}
-    .wbnav{flex:1;padding:6px 0;overflow-y:auto}
+    .wbnav{flex:1 1 auto;min-height:0;padding:6px 0;overflow-y:auto}
     .wbnav a{display:block;padding:8px 14px;color:#c3c9ea;font-size:13.5px;border-left:3px solid transparent;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .wbnav a:hover{background:#1a2354;color:#fff}
     .wbnav a.on{background:#1d2f9e;color:#fff;border-left-color:#7e8ef0;font-weight:600}
@@ -7110,6 +7287,34 @@ function renderWbModal() {
     .wbapp input.wbi.edited{background:#e7edff;border-color:#7e8ef0;font-weight:600}
     .wbapp input.wbi.pct{padding-right:18px}
     .wbapp .pctm{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-style:normal;font-size:11px;color:#5c6470;pointer-events:none}
+    .wbscen{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:8px 10px;background:#fff;border:1px solid #d7dbe3;border-radius:8px}
+    .wbscen>b{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#5c6470}
+    .wbscen.picking{background:#eef1fb;border-color:#7e8ef0}
+    .wbscenhint{font-size:12px;color:#5c6470}
+    .wbscenname{border:1px solid #c8cede;background:#fffef2;border-radius:5px;padding:5px 8px;font:inherit;font-size:13px;min-width:230px}
+    .wbchip{display:inline-flex;align-items:center;gap:6px;border:1px solid #c8cede;border-radius:999px;padding:3px 5px 3px 11px;background:#eef1fb}
+    .wbchip label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin:0}
+    .wbchip b{font-size:13px;color:#14206e}
+    .wbchip.off{background:#f4d8db;border-color:#e0b6bb}
+    .wbchip.off b{color:#b02a37;text-decoration:line-through}
+    .wbchipd{font-style:normal;font-size:12px;color:#5c6470;font-variant-numeric:tabular-nums}
+    .wbchipb{border:none;background:transparent;cursor:pointer;color:#5c6470;font-size:12px;padding:2px 5px;border-radius:4px;line-height:1}
+    .wbchipb:hover{background:#fff;color:#14206e}
+    .wbapp table.wbsheet tr.ging td:first-child{box-shadow:inset 3px 0 0 #7e8ef0}
+    .wbapp table.wbsheet tr.gexcl td{background:#fbeff1}
+    .wbapp table.wbsheet tr.gexcl td.label{background:#f7e6e9;color:#b02a37;text-decoration:line-through}
+    .wbapp table.wbsheet tr.gexcl td.calc{background:#f4dde1;color:#a5707a}
+    .wbapp table.wbsheet tr.gexcl input.wbi{background:#fdf4f5;border-color:#e0b6bb;color:#b02a37}
+    .wbapp table.wbsheet td.wbsel{width:30px;text-align:center;background:#eef1fb;padding:2px}
+    .wbapp table.wbsheet td.wbsel.taken{color:#7e8ef0}
+    .wbscenside{flex:0 0 auto;max-height:34vh;overflow-y:auto;border-top:1px solid #2a3468;padding:8px 10px}
+    .wbscenside:empty{display:none}
+    .wbscenh{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#77809f;margin-bottom:4px}
+    .wbsg{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:5px;cursor:pointer;color:#c3c9ea;font-size:12.5px}
+    .wbsg:hover{background:#1a2354}
+    .wbsgn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .wbsg i{font-style:normal;font-size:11px;color:#9aa3d0;font-variant-numeric:tabular-nums}
+    .wbsg.off .wbsgn{text-decoration:line-through;color:#77809f}
     .wbapp table.wbgrid{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;background:#fff}
     .wbapp .wbgrid th.wbh{position:sticky;top:0;background:#e9ecf3;border:1px solid #d7dbe3;color:#5c6470;font-weight:600;padding:2px 6px;z-index:1;text-align:center;min-width:28px}
     .wbapp .wbgrid th.wbrow{position:sticky;left:0;top:auto;z-index:0}
@@ -7125,7 +7330,7 @@ function renderWbModal() {
 function wbResetWorkbook() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) return;
   if (!confirm('Clear all your workbook edits and return to the original workbook?')) return;
-  e.wbInputs = {}; e.wbMode = false; delete e.wbTotal;
+  e.wbInputs = {}; e.wbGroups = []; e.wbMode = false; delete e.wbTotal;
   try { FB.setDoc(cfg.ref(e), clean(e)); } catch (x) {}
   openWorkbook(_wb.kind, _wb.id);
   cfg.rerender();
@@ -7169,8 +7374,8 @@ async function reconcileWorkbookFile(kind, e) {
     const mirror = XL.read(new Uint8Array(bytes), { type: 'array', cellFormula: true });
     const mk = WB_MARK[kind];
     const newInputs = readWorkbookInputsDiff(mirror, await wbPristineWb(kind), mk.sheet, mk.cells);
-    if (wbInputsSig(newInputs) === wbInputsSig(e.wbInputs)) { if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; return false; }
-    e.wbInputs = newInputs; e.wbMode = true;
+    if (wbInputsSig(newInputs) === wbInputsSig(wbEffectiveInputs(e))) { if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; return false; }
+    wbAbsorbInputs(e, newInputs); e.wbMode = true;    // route the Excel edits back to their scenarios
     const eng = makeWbEngine(mirror);
     e.wbTotal = round2(eng.get(cfg.total.sheet, cfg.total.cell)); if (cfg.hasAmount) e.amount = String(e.wbTotal);
     if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; e.updated = Date.now();
