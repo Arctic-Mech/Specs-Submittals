@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.39';
+const APP_VERSION = 'v7.40';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6849,6 +6849,7 @@ function makeWbEngine(wb) {
     getOverride(sheet, addr) { const k = okey(sheet, addr); return k in overrides ? overrides[k] : undefined; },
     overrides,
     sheetObj(s) { return wb.Sheets[s]; },
+    names() { return (wb.Workbook && wb.Workbook.Names) || []; },
     unknown() { return { fns: unknownFns, cells: unknownAt }; },
     range(s) { const ws = wb.Sheets[s]; return (ws && ws['!ref']) ? XL.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }; },
     mergesOf(s) { const ws = wb.Sheets[s]; return (ws && ws['!merges']) || []; },
@@ -6862,6 +6863,7 @@ let _wbDV = {}, _wbSecOpen = {};        // the workbook's dropdown lists + which
 let _wbFxOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a deduct) + the compare panel
 let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected block in cell view
 let _wbChk = null;                       // the last check against the filed spreadsheet
+let _wbPA = {};                          // print area per sheet — the document, as opposed to the scaffolding
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -6883,6 +6885,23 @@ function wbTypedExtent(sheet) {
   }
   return out;
 }
+/* The sheet's print area is the document itself — the form that gets printed and sent. Anything
+   outside it is working scaffolding (the exclusions picker, hidden helper columns). Showing the
+   two together, undivided, is what made the Proposal read as a sprawl. */
+function wbPrintArea(sheet) {
+  if (_wbPA[sheet] !== undefined) return _wbPA[sheet];
+  let out = null;
+  (_wbEng.names() || []).forEach(n => {
+    if (!/Print_Area$/.test(String(n.Name || ''))) return;
+    const ref = String(n.Ref || '');
+    const m = ref.match(/^'?([^'!]+)'?!(\$?[A-Z]+\$?\d+(?::\$?[A-Z]+\$?\d+)?)$/);
+    if (!m || m[1] !== sheet) return;
+    try { out = XLSX.utils.decode_range(m[2].replace(/\$/g, '')); } catch (x) {}
+  });
+  return (_wbPA[sheet] = out || null);
+}
+function wbHiddenRow(sheet, r) { const ws = _wbEng.sheetObj(sheet); const rs = ws && ws['!rows']; return !!(rs && rs[r] && rs[r].hidden); }
+function wbHiddenCol(sheet, c) { const ws = _wbEng.sheetObj(sheet); const cs = ws && ws['!cols']; return !!(cs && cs[c] && cs[c].hidden); }
 function wbSheetBounds(sheet) {                       // the sheet's real content: used rows + the columns that carry anything
   if (_wbBounds[sheet]) return _wbBounds[sheet];
   const eng = _wbEng, rg = eng.range(sheet);
@@ -6907,11 +6926,17 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
   const typed = wbTypedExtent(sheet);                                    // ...plus anything typed past that range
   if (typed.r > r1) r1 = typed.r;
   for (const c in typed.cols) live[c] = 1;
-  const cols = Object.keys(live).map(Number).sort((x, y) => x - y);      // drop columns that hold nothing at all
+  const cols = Object.keys(live).map(Number).sort((x, y) => x - y)
+    .filter(c => !wbHiddenCol(sheet, c));                                // Excel hides these; so do we
+
   // A column that is only here because a merge spans it is spacing, not a field — give it no
   // minimum width, or a form like the Proposal is dragged far wider than the screen.
   const filler = {}; cols.forEach(c => { if (!own[c] && !typed.cols[c]) filler[c] = 1; });
-  return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, filler, pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
+  const pa = wbPrintArea(sheet);
+  const inPA = pa ? cols.filter(c => c >= pa.s.c && c <= pa.e.c) : cols.slice();
+  const outPA = pa ? cols.filter(c => c < pa.s.c || c > pa.e.c) : [];
+  return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, filler, inPA, outPA, pa,
+    pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
 }
 /* ── What the workbook says you may type in ──
    Estimating workbooks colour their entry cells and leave calculated ones plain — yellow on
@@ -7257,7 +7282,7 @@ function wbApplyFx(e) {
     ws[m[2]] = { t: 'n', v: 0, f: fx[k] };
   }
   _wbEng.recalc();
-  _wbBounds = {}; _wbSecs = {}; _wbFills = {};        // the overlay can create cells outside the old bounds
+  _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {};   // the overlay can create cells outside the old bounds
   if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
@@ -7513,7 +7538,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7533,7 +7558,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7565,7 +7590,7 @@ function wbNoteOutsideBounds(sheet, addr) {
   const b = _wbBounds[sheet]; if (!b) return;
   let cell; try { cell = XLSX.utils.decode_cell(addr); } catch (x) { return; }
   if (cell.r <= b.r1 && b.pos[cell.c] != null) return;
-  delete _wbBounds[sheet]; delete _wbSecs[sheet]; delete _wbFills[sheet];
+  delete _wbBounds[sheet]; delete _wbSecs[sheet]; delete _wbFills[sheet]; delete _wbPA[sheet];
 }
 /* store a value exactly as given (no typing rules) — how a section switch is flipped */
 function wbSetCell(sheet, addr, stored) {
@@ -7778,23 +7803,41 @@ function wbSheetHtml(sheet) {
   const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;
   const endR = Math.min(b.r1, b.r0 + shown - 1);
   const secs = wbSectionsOf(sheet).filter(s => s.min <= endR);
+  const docEnd = b.pa ? Math.min(endR, b.pa.e.r) : endR;             // the printed document stops here
+  const main = b.inPA && b.inPA.length ? b.inPA : b.cols;
   let html = '', prev = b.r0 - 1;
-  if (!secs.length) html = wbCardHtml(sheet, b.r0, endR, null);
+  if (!secs.length) html = wbCardHtml(sheet, b.r0, docEnd, null, main);
   else {
     secs.forEach(s => {
       const start = Math.max(prev + 1, s.min - 2);                  // pick up the section's own heading rows
-      if (start > prev + 1) html += wbCardHtml(sheet, prev + 1, start - 1, null);
-      html += wbCardHtml(sheet, start, Math.min(Math.max(s.max, s.row), endR), s);
+      if (start > prev + 1) html += wbCardHtml(sheet, prev + 1, start - 1, null, main);
+      html += wbCardHtml(sheet, start, Math.min(Math.max(s.max, s.row), docEnd), s, main);
       prev = Math.max(s.max, s.row);
     });
-    if (prev < endR) html += wbCardHtml(sheet, prev + 1, endR, null);
+    if (prev < docEnd) html += wbCardHtml(sheet, prev + 1, docEnd, null, main);
   }
+  html += wbAsideHtml(sheet, b, endR, docEnd);
   if (endR < b.r1) html += `<div style="padding:4px 2px 12px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, b.r1 - endR)} more rows (of ${b.r1 - b.r0 + 1})</button></div>`;
   return html;
 }
+/* Everything the printed sheet doesn't carry — the columns beside it and any rows below it.
+   Kept, and one click away, but folded up so the document reads first. */
+function wbAsideHtml(sheet, b, endR, docEnd) {
+  if (!b.pa) return '';
+  let out = '';
+  if (b.outPA && b.outPA.length) {
+    const rows = wbRowsHtml(sheet, b.r0, endR, null, b.outPA);
+    if (rows) out += `<details class="wbaside"><summary>Beside the printed sheet — ${esc(b.outPA.map(c => XLSX.utils.encode_col(c)).join(', '))}</summary><div class="wbcard"><table class="wbsheet">${rows}</table></div></details>`;
+  }
+  if (docEnd < endR) {
+    const rows = wbRowsHtml(sheet, docEnd + 1, endR, null, b.inPA && b.inPA.length ? b.inPA : b.cols);
+    if (rows) out += `<details class="wbaside"><summary>Below the printed sheet — rows ${docEnd + 2} onward</summary><div class="wbcard"><table class="wbsheet">${rows}</table></div></details>`;
+  }
+  return out;
+}
 /* a block of rows: a plain card, or a section card with its Exclude switch on the header bar */
-function wbCardHtml(sheet, r0, r1, sec) {
-  const rows = wbRowsHtml(sheet, r0, r1, sec);
+function wbCardHtml(sheet, r0, r1, sec, colList) {
+  const rows = wbRowsHtml(sheet, r0, r1, sec, colList);
   if (!rows) return '';
   if (!sec) return `<div class="wbcard"><table class="wbsheet">${rows}</table></div>`;
   const off = wbSectionExcluded(sheet, sec.sw);
@@ -7820,8 +7863,8 @@ function wbCardHtml(sheet, r0, r1, sec) {
     <table class="wbsheet">${rows}</table>
   </details>`;
 }
-function wbRowsHtml(sheet, r0, r1, sec) {
-  const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols;
+function wbRowsHtml(sheet, r0, r1, sec, colList) {
+  const eng = _wbEng, b = wbSheetBounds(sheet), cols = colList || b.cols;
   const merges = {}, covered = {};
   eng.mergesOf(sheet).forEach(mg => {
     let cs = 0; for (let c = mg.s.c; c <= mg.e.c; c++) if (b.pos[c] != null) cs++;
@@ -7847,6 +7890,7 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
       else { const ov2 = eng.getOverride(sheet, ad); if (ov2 !== undefined && ov2 !== '') any = true; }   // typed into an empty cell
     }
+    if (wbHiddenRow(sheet, r)) { gap++; continue; }                   // Excel hides this row; so do we
     if (!any) { gap++; continue; }                                   // collapse blank runs into one thin gap
     if (gap && any0) html += `<tr class="gap"><td colspan="${cols.length + (subCol ? 1 : 0)}"></td></tr>`;
     gap = 0; any0 = true;
@@ -8016,6 +8060,12 @@ function renderWbModal() {
     .wbchk.bad .wbchkhead b{color:#b02a37}
     .wbchkhead span{font-size:12.5px;color:#5c6470}
     .wbchknote{font-size:12.5px;color:#5c6470;margin-top:5px}
+    .wbapp details.wbaside{margin:10px 0 12px;border:1px dashed #c8cede;border-radius:8px;background:#fbfcfe}
+    .wbapp details.wbaside>summary{cursor:pointer;padding:7px 12px;font-size:12px;color:#5c6470;list-style:none}
+    .wbapp details.wbaside>summary::-webkit-details-marker{display:none}
+    .wbapp details.wbaside>summary::before{content:'▸ ';color:#7e8ef0}
+    .wbapp details.wbaside[open]>summary::before{content:'▾ '}
+    .wbapp details.wbaside .wbcard{margin:0 10px 10px}
     .wbapp details.togroup>table.wbsheet{display:block;overflow-x:auto;max-width:100%}
     .wbapp table.wbgrid{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;background:#fff}
     .wbapp .wbgrid th.wbh{position:sticky;top:0;background:#e9ecf3;border:1px solid #d7dbe3;color:#5c6470;font-weight:600;padding:2px 6px;z-index:1;text-align:center;min-width:28px}
