@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.31';
+const APP_VERSION = 'v7.32';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6787,7 +6787,7 @@ function makeWbEngine(wb) {
 }
 
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
-let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {};
+let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {}, _wbFills = {};
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -6816,6 +6816,34 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
   const cols = Object.keys(live).map(Number).sort((x, y) => x - y);      // drop columns that hold nothing at all
   return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
 }
+/* ── What the workbook says you may type in ──
+   Estimating workbooks colour their entry cells and leave calculated ones plain — yellow on
+   CP Backup, peach on the takeoff sheets. So the workbook itself tells us what is editable,
+   including the labels it lets you rename ("Additional Material", "Custom 1 Hrs", "Labor
+   Markup"). We work the entry colour out per sheet rather than hard-coding one. */
+function wbFillKey(raw) {
+  const s = raw && raw.s; if (!s || s.patternType === 'none') return '';    // no fill tells us nothing
+  const f = s.fgColor; if (!f) return '';
+  return f.rgb ? 'rgb:' + f.rgb : (f.theme != null ? 'theme:' + f.theme + '/' + (f.tint || 0) : '');
+}
+function wbInputFills(sheet) {
+  if (_wbFills[sheet]) return _wbFills[sheet];
+  const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols, tally = {};
+  for (let r = b.r0; r <= b.r1; r++) for (let i = 0; i < cols.length; i++) {
+    const raw = eng.raw(sheet, XLSX.utils.encode_cell({ r, c: cols[i] }));
+    const key = wbFillKey(raw); if (!key) continue;
+    const t = tally[key] || (tally[key] = { calc: 0, entry: 0, text: 0 });
+    if (raw.f != null) t.calc++;
+    else { t.entry++; if (typeof raw.v === 'string' && raw.v !== '') t.text++; }
+  }
+  const out = {};
+  for (const k in tally) {
+    const t = tally[k];                                 // an entry colour: mostly not formulas, mostly not prose
+    if (t.entry >= 5 && t.entry / (t.entry + t.calc) >= 0.8 && t.text / t.entry <= 0.5) out[k] = 1;
+  }
+  return (_wbFills[sheet] = out);
+}
+function wbIsInputCell(sheet, raw) { const k = wbFillKey(raw); return !!k && !!wbInputFills(sheet)[k]; }
 function wbIsPctCell(z) { return String(z == null ? '' : z).indexOf('%') >= 0; }
 function wbIsDateCell(z) { const s = String(z == null ? '' : z).replace(/\[[^\]]*\]|"[^"]*"/g, ''); return /[dy]/.test(s) && /m|d/.test(s) && !/%/.test(s); }
 function wbDateStr(v) {                               // Excel serial → m/d/yyyy
@@ -6989,7 +7017,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {};
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {};
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -6997,7 +7025,7 @@ async function openWorkbook(kind, id) {
   try {
     await wbMigrateTemplate(kind, e, cfg);
     const XL = await loadSheetJS();
-    const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true, cellNF: true });
+    const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true, cellNF: true, cellStyles: true });
     const eng = makeWbEngine(wb);
     const ov = e.wbInputs || {};
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
@@ -7006,7 +7034,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7204,7 +7232,7 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       const z = raw && raw.z;
       const val = eng.get(sheet, a);
       if (isF) html += `<td${span} class="calc" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
-      else if (typeof val === 'string' && val !== '' && ov == null) html += `<td${span} class="label">${esc(val)}</td>`;
+      else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label">${esc(val)}</td>`;
       else {
         const pct = wbIsPctCell(z), dat = !pct && wbIsDateCell(z);
         const sv = pct ? ((val === '' || val == null) ? '' : (Math.round(Number(val) * 10000) / 100))
