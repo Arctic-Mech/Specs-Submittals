@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.40';
+const APP_VERSION = 'v7.41';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6864,6 +6864,7 @@ let _wbFxOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a d
 let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected block in cell view
 let _wbChk = null;                       // the last check against the filed spreadsheet
 let _wbPA = {};                          // print area per sheet — the document, as opposed to the scaffolding
+let _wbBlocks = {};                      // the sheet's fixed-length lists (takeoff lines, subs, additional material)
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -6926,6 +6927,9 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
   const typed = wbTypedExtent(sheet);                                    // ...plus anything typed past that range
   if (typed.r > r1) r1 = typed.r;
   for (const c in typed.cols) live[c] = 1;
+  let addR = -1;                                                         // ...and any lines added past the end of a list
+  wbAdds(wbEntity(), sheet).forEach(x => { if (x.row > addR) addR = x.row; });
+  if (addR > r1) r1 = addR;
   const cols = Object.keys(live).map(Number).sort((x, y) => x - y)
     .filter(c => !wbHiddenCol(sheet, c));                                // Excel hides these; so do we
 
@@ -7096,7 +7100,11 @@ function wbSectionExcluded(sheet, addr) {
 function wbSectionsOf(sheet) {
   if (_wbSecs[sheet]) return _wbSecs[sheet];
   const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols, found = [], byAddr = {};
+  // A line added past the end of a list sits below the sheet and reads its section's switch, but
+  // the section itself still ends where the form ends — or section 1 would swallow the rest.
+  const added = wbAddedRowSet(sheet);
   for (let r = b.r0; r <= b.r1; r++) {
+    if (added[r]) continue;
     for (let i = 0; i < cols.length; i++) {
       const v = eng.get(sheet, XLSX.utils.encode_cell({ r, c: cols[i] }));
       if (typeof v !== 'string' || !WB_EXCL_LABEL.test(v)) continue;
@@ -7113,6 +7121,7 @@ function wbSectionsOf(sheet) {
   }
   if (!found.length) return (_wbSecs[sheet] = []);
   for (let r = b.r0; r <= b.r1; r++) {                                        // rows that read a switch belong to it
+    if (added[r]) continue;
     for (let i = 0; i < cols.length; i++) {
       const raw = eng.raw(sheet, XLSX.utils.encode_cell({ r, c: cols[i] }));
       if (!raw || raw.f == null) continue;
@@ -7232,8 +7241,10 @@ function wbSubRowInfo(e, key) {
   const m = String(key).match(/^(.+)!(\d+)$/); if (!m) return null;
   const sheet = m[1], row = (+m[2]) - 1;
   const secs = wbSectionsOf(sheet);
+  const add = wbAdds(e, sheet).filter(x => x.row === row)[0];
+  const at = add ? wbBlocksOf(sheet)[add.key].r1 : row;   // an added line belongs to the section its list is in
   let sec = null;
-  for (let i = 0; i < secs.length; i++) if (row >= secs[i].min && row <= secs[i].max && row !== secs[i].row) sec = secs[i];
+  for (let i = 0; i < secs.length; i++) if (at >= secs[i].min && at <= secs[i].max && at !== secs[i].row) sec = secs[i];
   if (!sec) return null;
   const c = wbTakeoffCols(sheet, sec);
   if (c.qty == null || c.unit == null || c.total == null) return null;
@@ -7242,7 +7253,7 @@ function wbSubRowInfo(e, key) {
 }
 function wbQuote(sheet) { return "'" + String(sheet).replace(/'/g, "''") + "'!"; }
 /* the formulas a set of subcontracted lines needs */
-function wbSubFx(e) {
+function wbSubFx(e, add) {
   const fx = {}, keys = wbSubList(e); if (!keys.length || !_wbEng) return fx;
   const rows = keys.map(k => wbSubRowInfo(e, k)).filter(Boolean)
     .sort((a, b) => (a.sheet === b.sheet ? a.row - b.row : (a.sheet < b.sheet ? -1 : 1)));
@@ -7257,9 +7268,11 @@ function wbSubFx(e) {
     fx[WB_SUB.sheet + '!' + WB_SUB.costCol + slot] = amount;
     fx[r.sheet + '!' + r.total] = '0';                                   // no longer our material
   });
-  if (over.length) fx[WB_SUB.sheet + '!' + WB_SUB.total] =
-    'SUM(' + WB_SUB.costCol + WB_SUB.first + ':' + WB_SUB.costCol + WB_SUB.last + ')+SUM(' +
-    WB_SUB.costCol + over[0] + ':' + WB_SUB.costCol + over[over.length - 1] + ')';
+  if (over.length) {
+    const tk = WB_SUB.sheet + '!' + WB_SUB.total;
+    const base = (add && add[tk]) || ('SUM(' + WB_SUB.costCol + WB_SUB.first + ':' + WB_SUB.costCol + WB_SUB.last + ')');
+    fx[tk] = base + '+SUM(' + WB_SUB.costCol + over[0] + ':' + WB_SUB.costCol + over[over.length - 1] + ')';
+  }
   return fx;
 }
 /* ── One formula overlay for the whole workbook ──
@@ -7274,7 +7287,8 @@ function wbApplyFx(e) {
     if (o === null) delete ws[m[2]]; else ws[m[2]] = o;
   }
   _wbFxOrig = {};
-  const fx = Object.assign({}, wbDeductFx(e), wbSubFx(e));
+  const add = wbAddFx(e);                                                // added lines widen their subtotals…
+  const fx = Object.assign({}, add, wbDeductFx(e), wbSubFx(e, add));     // …and the sub overflow builds on that
   for (const k in fx) {
     const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
     const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
@@ -7287,6 +7301,141 @@ function wbApplyFx(e) {
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
 function wbFormulasFor(e) { return (e && (e.wbFx || e.wbTotalsF)) || {}; }
+/* ── Running out of lines ──
+   Every list in this workbook is a fixed run of rows with a subtotal underneath: 26 takeoff
+   lines per section (SUM(H3:H28)), 7 additional-material lines, 6 equipment lines, 6
+   subcontractor lines. In Excel you insert a row when you run out — which shifts everything
+   below it and quietly breaks the references the rest of the workbook makes to fixed cells.
+   We put the new line in free space below the sheet and widen the subtotal to take it in, so
+   nothing moves, then draw it in its place at the end of the list. Excel opens the result and
+   totals it the same way, because the widened SUM is a real formula in the file. */
+function wbOrigRaw(sheet, addr) {                     // the cell as the workbook has it, behind any overlay
+  const o = _wbFxOrig[sheet + '!' + addr];
+  return o !== undefined ? o : _wbEng.raw(sheet, addr);
+}
+function wbSelfRowFx(f, row) {                        // does this formula only reach across its own row?
+  let ok = true;
+  String(f).replace(/(\$?)([A-Z]{1,3})(\$?)(\d{1,7})/g, (m0, d1, col, d2, r) => { if (d2 !== '$' && (+r) !== row) ok = false; return m0; });
+  return ok;
+}
+function wbBlocksOf(sheet) {
+  if (_wbBlocks[sheet]) return _wbBlocks[sheet];
+  const eng = _wbEng, rg = eng.range(sheet), cand = {};
+  for (let r = rg.s.r; r <= rg.e.r; r++) for (let c = rg.s.c; c <= rg.e.c; c++) {
+    const a = XLSX.utils.encode_cell({ r, c }), raw = wbOrigRaw(sheet, a);
+    if (!raw || raw.f == null) continue;
+    const m = String(raw.f).match(/^SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$/i);
+    if (!m || m[1] !== m[3] || XLSX.utils.decode_col(m[1]) !== c) continue;   // the column sums its own rows
+    const r0 = (+m[2]) - 1, r1 = (+m[4]) - 1;
+    if (r1 < r0 || r <= r1 || r1 - r0 < 3) continue;   // the total sits below a run of at least four
+    const k = r0 + ':' + r1;
+    (cand[k] = cand[k] || { r0, r1, totals: [] }).totals.push({ addr: a, col: c, f: String(raw.f) });
+  }
+  const out = {};
+  for (const k in cand) {
+    const bl = cand[k];
+    let list = true;
+    // A list ends on an empty line waiting to be filled in; a recap ("Total Costs", "Bond",
+    // "Round to Nearest $5") ends on a labelled row of formulas that reach elsewhere. That is
+    // the difference between somewhere you can add a line and somewhere you must not.
+    for (let c = rg.s.c; c <= rg.e.c && list; c++) {
+      const raw = wbOrigRaw(sheet, XLSX.utils.encode_cell({ r: bl.r1, c }));
+      if (raw && raw.f == null && raw.v != null && raw.v !== '') list = false;
+    }
+    bl.totals.forEach(t => {
+      const raw = wbOrigRaw(sheet, XLSX.utils.encode_col(t.col) + (bl.r1 + 1));
+      if (raw && raw.f != null && !wbSelfRowFx(raw.f, bl.r1 + 1)) list = false;
+    });
+    if (list) out[k] = bl;
+  }
+  return (_wbBlocks[sheet] = out);
+}
+/* Which columns of a list you may type in. Taken from the whole run, not just its last line —
+   the spare lines aren't always coloured all the way across (D30 on CP Backup is the workbook's
+   own oversight), and a column you can type in anywhere in the list is one you can type in on a
+   line added to the end of it. The cell found also carries the column's number format. */
+function wbBlockEntry(sheet, bl) {
+  if (bl.entry) return bl.entry;
+  const rg = _wbEng.range(sheet), out = {};
+  for (let c = rg.s.c; c <= rg.e.c; c++) for (let r = bl.r1; r >= bl.r0; r--) {
+    const raw = wbOrigRaw(sheet, XLSX.utils.encode_cell({ r, c }));
+    if (raw && raw.f == null && wbIsInputCell(sheet, raw)) { out[c] = raw; break; }
+  }
+  return (bl.entry = out);
+}
+function wbBlockEnding(sheet, row) {                  // the list whose last line this is, if any
+  const bl = wbBlocksOf(sheet);
+  for (const k in bl) if (bl[k].r1 === row) return Object.assign({ key: k, sheet }, bl[k]);
+  return null;
+}
+function wbAdds(e, sheet) { return ((e && e.wbAdd) || []).filter(x => x.sheet === sheet); }
+function wbAddedFor(e, sheet, key) { return wbAdds(e, sheet).filter(x => x.key === key).sort((a, b) => a.row - b.row); }
+function wbAddedRowSet(sheet) {
+  const out = {}; wbAdds(wbEntity(), sheet).forEach(x => out[x.row] = x); return out;
+}
+/* free space below everything this sheet already uses — including lines added before now */
+function wbNextFreeRow(e, sheet) {
+  let r = Math.max(_wbEng.range(sheet).e.r, wbSubMaxRow(sheet)) + 2;
+  wbAdds(e, sheet).forEach(x => { if (x.row >= r) r = x.row + 1; });
+  return r;
+}
+function wbSubMaxRow(sheet) {                         // the subcontractor overflow also lives below the sheet
+  if (sheet !== WB_SUB.sheet) return 0;
+  const n = wbSubList(wbEntity()).length - (WB_SUB.last - WB_SUB.first + 1);
+  return n > 0 ? WB_SUB.overflow + n : 0;
+}
+/* Copy the list's own last line into the new row, moving only the references that point at that
+   line. $K$29 and the like stay exactly where they are, so the section's Exclude switch, the
+   labour rates and the markups all keep working on the added line. */
+function wbCloneRowFx(sheet, fromRow, toRow) {
+  const rg = _wbEng.range(sheet), out = {};
+  for (let c = rg.s.c; c <= rg.e.c; c++) {
+    const raw = wbOrigRaw(sheet, XLSX.utils.encode_cell({ r: fromRow, c }));
+    if (!raw || raw.f == null) continue;
+    const moved = String(raw.f).replace(/(\$?)([A-Z]{1,3})(\$?)(\d{1,7})/g,
+      (m0, d1, col, d2, row) => (d2 !== '$' && (+row) === fromRow + 1) ? (d1 + col + d2 + (toRow + 1)) : m0);
+    out[sheet + '!' + XLSX.utils.encode_cell({ r: toRow, c })] = moved;
+  }
+  return out;
+}
+function wbAddFx(e) {
+  const fx = {}, adds = (e && e.wbAdd) || []; if (!adds.length || !_wbEng) return fx;
+  const groups = {};
+  adds.forEach(x => { (groups[x.sheet + ' ' + x.key] = groups[x.sheet + ' ' + x.key] || []).push(x); });
+  for (const g in groups) {
+    const list = groups[g].slice().sort((a, b) => a.row - b.row), sheet = list[0].sheet;
+    const bl = wbBlocksOf(sheet)[list[0].key]; if (!bl) continue;
+    list.forEach(x => Object.assign(fx, wbCloneRowFx(sheet, bl.r1, x.row)));
+    bl.totals.forEach(t => {                          // widen the subtotal to take the added lines in
+      fx[sheet + '!' + t.addr] = t.f + list.map(x => '+' + XLSX.utils.encode_col(t.col) + (x.row + 1)).join('');
+    });
+  }
+  return fx;
+}
+function wbAddLine(sheet, key) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to add a line', true); return; }
+  if (!wbBlocksOf(sheet)[key]) return;
+  e.wbAdd = (e.wbAdd || []).concat([{ sheet, key, row: wbNextFreeRow(e, sheet) }]);
+  e.wbMode = true;
+  wbApplyFx(e);
+  renderWbBody(); scheduleWbSave();
+}
+function wbRemoveAddedLine(sheet, key, row) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  if (!confirm('Remove this added line, and anything entered on it?')) { renderWbBody(); return; }
+  e.wbAdd = (e.wbAdd || []).filter(x => !(x.sheet === sheet && x.key === key && x.row === row));
+  const pre = sheet + '!';
+  for (const k in (e.wbInputs || {})) {              // whatever was typed on it goes with it
+    if (k.indexOf(pre) !== 0) continue;
+    const m = k.slice(pre.length).match(/^[A-Z]+(\d+)$/);
+    if (m && (+m[1]) - 1 === row) { delete e.wbInputs[k]; _wbEng.clearInput(sheet, k.slice(pre.length)); }
+  }
+  for (const k in (e.wbSubs || {})) if (k === wbSubKey(sheet, row)) delete e.wbSubs[k];
+  e.wbMode = true;
+  wbApplyFx(e);
+  renderWbBody(); scheduleWbSave();
+}
 function wbToggleSub(sheet, row) {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
   if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to edit', true); renderWbBody(); return; }
@@ -7392,6 +7541,9 @@ function wbSheetSnapshot() {
   L.push('sections: ' + (secs.length ? secs.join(' | ') : 'none'));
   L.push('total: ' + (fmtMoney(wbTotalVal()) || '0') + '   edits: ' + Object.keys((e && e.wbInputs) || {}).length +
     '   subs: ' + wbSubList(e).length + '   formula overlay: ' + Object.keys((e && e.wbFx) || {}).length);
+  const adds = wbAdds(e, sheet);
+  if (adds.length) L.push('added lines: ' + adds.map(x => 'row ' + (x.row + 1) + ' at the end of ' +
+    (+x.key.split(':')[0] + 1) + '-' + (+x.key.split(':')[1] + 1)).join(', '));
   L.push('addr | how it renders | stored | shown');
   const merges = {};
   eng.mergesOf(sheet).forEach(mg => { for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) merges[r + ',' + c] = 1; });
@@ -7538,7 +7690,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7558,7 +7710,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7817,7 +7969,9 @@ function wbSheetHtml(sheet) {
     if (prev < docEnd) html += wbCardHtml(sheet, prev + 1, docEnd, null, main);
   }
   html += wbAsideHtml(sheet, b, endR, docEnd);
-  if (endR < b.r1) html += `<div style="padding:4px 2px 12px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, b.r1 - endR)} more rows (of ${b.r1 - b.r0 + 1})</button></div>`;
+  let real = b.r1;                                                   // added lines are already drawn, in their place
+  wbAdds(wbEntity(), sheet).forEach(x => { if (x.row >= real) real = x.row - 1; });
+  if (endR < real) html += `<div style="padding:4px 2px 12px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, real - endR)} more rows (of ${real - b.r0 + 1})</button></div>`;
   return html;
 }
 /* Everything the printed sheet doesn't carry — the columns beside it and any rows below it.
@@ -7880,8 +8034,59 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
   const subCol = !!(sec && wbTakeoffCols(sheet, sec).total != null);     // only takeoff lines can be subcontracted
   const hide = {};                                        // the switch and the name live on the header bar now
   if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
+  const span = cols.length + (subCol ? 1 : 0);
+  const added = wbAddedRowSet(sheet);                     // lines added past the end of a list, drawn in their place
+  const cfg = wbCfg(), locked = !!(cfg && cfg.locked && cfg.locked(ent));
+  /* One row. An added line sits physically below the sheet, so it borrows everything the list's
+     last line knows — its merges, its dropdowns, its number formats, and which of its cells you
+     are meant to type in — and comes out looking like the line above it. */
+  function drawRow(r, src, blk) {
+    const mr = src != null ? src : r;
+    const entry = blk ? wbBlockEntry(sheet, blk) : null;
+    let out = '';
+    const isLine = subCol && (src != null || (r >= sec.min && r <= sec.max && r !== sec.row));
+    const isSub = isLine && wbIsSub(ent, sheet, r);
+    out += `<tr class="${src != null ? 'wbadded ' : ''}${isSub ? 'subline' : ''}">`;
+    if (subCol) out += isLine
+      ? `<td class="wbsubc" title="Charge this line as a subcontractor — it moves to the Subcontractors block and takes the sub markup"><input type="checkbox"${isSub ? ' checked' : ''} onchange="wbToggleSub('${shEsc}',${r})"></td>`
+      : `<td class="wbsubc hd">${r === (sec.desc && sec.desc.hdr) ? 'Sub' : ''}</td>`;
+    for (let i = 0; i < cols.length; i++) {
+      const c = cols[i];
+      if (covered[mr + ',' + c]) continue;
+      const a = XLSX.utils.encode_cell({ r, c });
+      const mg = merges[mr + ',' + c];
+      const cs = mg ? ` colspan="${mg.cs}" rowspan="${src != null ? 1 : mg.rs}"` : '';
+      const fil = (b.filler && b.filler[c] && !mg) ? ' filler' : '';
+      if (hide[a]) { out += `<td${cs}></td>`; continue; }
+      const raw = eng.raw(sheet, a);
+      const sa = src != null ? XLSX.utils.encode_cell({ r: src, c }) : a;
+      const sraw = src != null ? ((entry && entry[c]) || wbOrigRaw(sheet, sa)) : raw;   // what the list's own lines have here
+      const ov = eng.getOverride(sheet, a);
+      const isF = !!(raw && raw.f != null) && ov == null;                // a formula you typed over becomes your input again
+      const z = (raw && raw.z) || (sraw && sraw.z);
+      const val = eng.get(sheet, a);
+      if (isF) { const bad = (eng.unknown().cells || {})[sheet + '!' + a];
+        out += `<td${cs} class="calc${fil}${bad ? ' nocalc' : ''}" title="${bad ? esc(bad) + ' is a macro function the website cannot calculate — check this one in Excel. ' : ''}=${esc(String(raw.f))}">${esc(bad ? '?' : wbCellFmt(val, z))}</td>`; }
+      else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) out += `<td${cs} class="label${val.length <= 40 ? ' short' : ''}${fil}">${esc(val)}</td>`;
+      else {
+        if (marksEntries && ov == null && (val === '' || val == null) && !wbIsInputCell(sheet, sraw)) { out += `<td${cs} class="pad${fil}"></td>`; continue; }
+        const dv = wbDvFor(sheet, a) || (src != null ? wbDvFor(sheet, sa) : null);
+        if (dv) { out += `<td${cs} class="inp${fil}">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
+        // a percent/date-formatted cell can hold plain text ("TBD", "Upon approval") — show it as
+        // typed rather than an empty box, and let it be edited as text
+        const numeric = typeof val === 'number' && isFinite(val);
+        const pct = numeric && wbIsPctCell(z), dat = numeric && !pct && wbIsDateCell(z);
+        const sv = pct ? (Math.round(Number(val) * 10000) / 100) : dat ? wbDateStr(val) : wbInputRaw(val);
+        const fn = pct ? 'wbEditPct' : dat ? 'wbEditDate' : 'wbEdit';
+        const txt = !numeric && sv !== '' ? ' txt' : '';        // words read left to right; figures stay right-aligned
+        out += `<td${cs} class="inp${fil}"><input class="wbi${pct ? ' pct' : ''}${txt}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
+      }
+    }
+    return out + '</tr>';
+  }
   let html = '', gap = 0, any0 = false;
   for (let r = r0; r <= r1; r++) {
+    if (added[r]) continue;                                           // drawn at the end of its own list instead
     let any = false;
     for (let i = 0; i < cols.length && !any; i++) {
       const c = cols[i], ad = XLSX.utils.encode_cell({ r, c });
@@ -7890,47 +8095,21 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
       else { const ov2 = eng.getOverride(sheet, ad); if (ov2 !== undefined && ov2 !== '') any = true; }   // typed into an empty cell
     }
-    if (wbHiddenRow(sheet, r)) { gap++; continue; }                   // Excel hides this row; so do we
-    if (!any) { gap++; continue; }                                   // collapse blank runs into one thin gap
-    if (gap && any0) html += `<tr class="gap"><td colspan="${cols.length + (subCol ? 1 : 0)}"></td></tr>`;
+    const blk = wbBlockEnding(sheet, r);                              // is this the last line of a list?
+    const extra = blk && blk.totals.some(t => b.pos[t.col] != null && cols.indexOf(t.col) >= 0) ? wbAddedFor(ent, sheet, blk.key) : null;
+    if (wbHiddenRow(sheet, r) && !extra) { gap++; continue; }         // Excel hides this row; so do we
+    if (!any && !extra) { gap++; continue; }                          // collapse blank runs into one thin gap
+    if (gap && any0) html += `<tr class="gap"><td colspan="${span}"></td></tr>`;
     gap = 0; any0 = true;
-    const isLine = subCol && r >= sec.min && r <= sec.max && r !== sec.row;
-    const isSub = isLine && wbIsSub(ent, sheet, r);
-    html += `<tr${isSub ? ' class="subline"' : ''}>`;
-    if (subCol) html += isLine
-      ? `<td class="wbsubc" title="Charge this line as a subcontractor — it moves to the Subcontractors block and takes the sub markup"><input type="checkbox"${isSub ? ' checked' : ''} onchange="wbToggleSub('${shEsc}',${r})"></td>`
-      : `<td class="wbsubc hd">${r === (sec.desc && sec.desc.hdr) ? 'Sub' : ''}</td>`;
-    for (let i = 0; i < cols.length; i++) {
-      const c = cols[i];
-      if (covered[r + ',' + c]) continue;
-      const a = XLSX.utils.encode_cell({ r, c });
-      const mg = merges[r + ',' + c];
-      const span = mg ? ` colspan="${mg.cs}" rowspan="${mg.rs}"` : '';
-      const fil = (b.filler && b.filler[c] && !mg) ? ' filler' : '';
-      if (hide[a]) { html += `<td${span}></td>`; continue; }
-      const raw = eng.raw(sheet, a);
-      const ov = eng.getOverride(sheet, a);
-      const isF = !!(raw && raw.f != null) && ov == null;             // a formula you typed over becomes your input again
-      const z = raw && raw.z;
-      const val = eng.get(sheet, a);
-      if (isF) { const bad = (eng.unknown().cells || {})[sheet + '!' + a];
-        html += `<td${span} class="calc${fil}${bad ? ' nocalc' : ''}" title="${bad ? esc(bad) + ' is a macro function the website cannot calculate — check this one in Excel. ' : ''}=${esc(String(raw.f))}">${esc(bad ? '?' : wbCellFmt(val, z))}</td>`; }
-      else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label${val.length <= 40 ? ' short' : ''}${fil}">${esc(val)}</td>`;
-      else {
-        if (marksEntries && ov == null && (val === '' || val == null) && !wbIsInputCell(sheet, raw)) { html += `<td${span} class="pad${fil}"></td>`; continue; }
-        const dv = wbDvFor(sheet, a);
-        if (dv) { html += `<td${span} class="inp${fil}">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
-        // a percent/date-formatted cell can hold plain text ("TBD", "Upon approval") — show it as
-        // typed rather than an empty box, and let it be edited as text
-        const numeric = typeof val === 'number' && isFinite(val);
-        const pct = numeric && wbIsPctCell(z), dat = numeric && !pct && wbIsDateCell(z);
-        const sv = pct ? (Math.round(Number(val) * 10000) / 100) : dat ? wbDateStr(val) : wbInputRaw(val);
-        const fn = pct ? 'wbEditPct' : dat ? 'wbEditDate' : 'wbEdit';
-        const txt = !numeric && sv !== '' ? ' txt' : '';        // words read left to right; figures stay right-aligned
-        html += `<td${span} class="inp${fil}"><input class="wbi${pct ? ' pct' : ''}${txt}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
-      }
+    if (any && !wbHiddenRow(sheet, r)) html += drawRow(r, null);
+    if (extra) {
+      extra.forEach(x => { html += drawRow(x.row, blk.r1, blk); });
+      if (!locked) html += `<tr class="wbaddbar"><td colspan="${span}">
+        <button class="wbbtn sec" onclick="wbAddLine('${shEsc}','${esc(blk.key)}')" title="Put another line at the end of this list — it totals in with the rest, in Excel too">+ Add a line</button>
+        ${extra.length ? `<button class="wbbtn sec" onclick="wbRemoveAddedLine('${shEsc}','${esc(blk.key)}',${extra[extra.length - 1].row})" title="Take the last added line back off">✕ Remove added line</button>
+        <span class="wbaddnote">${extra.length} line${extra.length === 1 ? '' : 's'} added past the ${blk.r1 - blk.r0 + 1} the form comes with</span>` : ''}
+      </td></tr>`;
     }
-    html += '</tr>';
   }
   return html;
 }
@@ -8033,6 +8212,9 @@ function renderWbModal() {
     .wbapp table.wbsheet tr.subline td{background:#eef7f0}
     .wbapp table.wbsheet tr.subline td.label{background:#e3f0e7}
     .wbapp table.wbsheet tr.subline input.wbi{background:#f6fbf7}
+    .wbapp table.wbsheet tr.wbadded td:first-child{box-shadow:inset 3px 0 0 #7e8ef0}
+    .wbapp table.wbsheet tr.wbaddbar td{background:#fbfcfe;border-color:#eef0f5;padding:5px 6px;text-align:left}
+    .wbapp table.wbsheet tr.wbaddbar .wbaddnote{font-size:11px;color:#7a828f;margin-left:8px}
     .wbapp details.togroup.deducted>summary{background:#fdf0d5}
     .wbapp details.togroup.deducted>summary .tgnum::after{content:' −';color:#8a5a00}
     .wbcmp{background:#fff;border:1px solid #7e8ef0;border-radius:8px;padding:10px 12px;margin-bottom:12px}
