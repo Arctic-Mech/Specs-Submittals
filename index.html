@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.35';
+const APP_VERSION = 'v7.36';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6464,14 +6464,25 @@ function xlSetCell(xml, ref, spec) {
   else { inner = '<v>' + spec.num + '</v>'; }
   const reFull = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>[\\s\\S]*?</c>)');
   const m = xml.match(reFull);
-  if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; return xml.replace(reFull, '<c r="' + ref + '"' + s + tattr + '>' + inner + '</c>'); }
+  // NB: replace with a function, never a string — a "$29" in a formula or a typed "$2" in text
+  // would otherwise be read as a capture-group reference and mangle the cell.
+  if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; const rep = '<c r="' + ref + '"' + s + tattr + '>' + inner + '</c>'; return xml.replace(reFull, () => rep); }
   const reRow = new RegExp('(<row r="' + row + '"[^>]*>)([\\s\\S]*?)(</row>)');
   const rm = xml.match(reRow); const cellXml = '<c r="' + ref + '"' + tattr + '>' + inner + '</c>';
   if (rm) {
     const cells = [...rm[2].matchAll(/<c r="([A-Z]+)\d+"[\s\S]*?(?:\/>|<\/c>)/g)]; let out = '', placed = false;
     for (const cm of cells) { if (!placed && xlColToNum(cm[1]) > xlColToNum(col)) { out += cellXml; placed = true; } out += cm[0]; }
-    if (!placed) out += cellXml; return xml.replace(reRow, rm[1] + out + rm[3]);
+    if (!placed) out += cellXml; const rep2 = rm[1] + out + rm[3]; return xml.replace(reRow, () => rep2);
   }
+  // the row doesn't exist yet (writing below the sheet's content) — create it, in order
+  const rowXml = '<row r="' + row + '">' + cellXml + '</row>';
+  const rn = +row;
+  let at = -1;
+  const rre = /<row r="(\d+)"/g; let rmm;
+  while ((rmm = rre.exec(xml))) { if (+rmm[1] > rn) { at = rmm.index; break; } }
+  if (at >= 0) return xml.slice(0, at) + rowXml + xml.slice(at);
+  const sd = xml.lastIndexOf('</sheetData>');
+  if (sd >= 0) return xml.slice(0, sd) + rowXml + xml.slice(sd);
   return xml;
 }
 function xlClearCell(xml, ref) {
@@ -6585,10 +6596,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbTotalsFormulasFor(c));
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c));
 }
 async function buildEstWorkbookXlsm(e) {
-  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbTotalsFormulasFor(e));
+  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbFormulasFor(e));
 }
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
@@ -6790,6 +6801,7 @@ function makeWbEngine(wb) {
     clearInput(sheet, addr) { delete overrides[okey(sheet, addr)]; cache = {}; },
     getOverride(sheet, addr) { const k = okey(sheet, addr); return k in overrides ? overrides[k] : undefined; },
     overrides,
+    sheetObj(s) { return wb.Sheets[s]; },
     range(s) { const ws = wb.Sheets[s]; return (ws && ws['!ref']) ? XL.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }; },
     mergesOf(s) { const ws = wb.Sheets[s]; return (ws && ws['!merges']) || []; },
     recalc() { cache = {}; },
@@ -6799,7 +6811,7 @@ function makeWbEngine(wb) {
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
 let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {}, _wbFills = {};
 let _wbDV = {}, _wbSecOpen = {};        // the workbook's dropdown lists + which sections you've opened
-let _wbTotalsOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a deduct) + the compare panel
+let _wbFxOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a deduct) + the compare panel
 let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected block in cell view
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
@@ -7062,17 +7074,23 @@ function wbDeductKey(sheet, sec) { return sheet + '!' + sec.sw; }
 function wbIsDeducted(sheet, sec) { const e = wbEntity(); return !!(e && e.wbDeduct && e.wbDeduct[wbDeductKey(sheet, sec)]); }
 /* Rewrite every totals cell on a sheet: a cell that adds up two or more section subtotals from
    its own column. The original formula is kept so clearing the deducts restores it exactly. */
-function wbApplyDeducts(sheet) {
+function wbDeductFx(e) {
+  const out = {};
+  if (!_wbEng || !e || !e.wbDeduct || !Object.keys(e.wbDeduct).length) return out;
+  _wbEng.visibleSheets.forEach(sh => { const m = wbDeductFxSheet(sh, e); for (const k in m) out[k] = m[k]; });
+  return out;
+}
+function wbDeductFxSheet(sheet, e) {
   const eng = _wbEng; if (!eng) return {};
   const secs = wbSectionsOf(sheet); if (secs.length < 2) return {};
-  const e = wbEntity(), ded = (e && e.wbDeduct) || {};
+  const ded = (e && e.wbDeduct) || {};
   const b = wbSheetBounds(sheet), cols = b.cols, byRow = {}, out = {};
   secs.forEach(s => { byRow[s.row] = s; });
   for (let r = b.r0; r <= b.r1; r++) for (let i = 0; i < cols.length; i++) {
     const c = cols[i], a = XLSX.utils.encode_cell({ r, c });
     const raw = eng.raw(sheet, a); if (!raw || raw.f == null) continue;
     const key = sheet + '!' + a;
-    const orig = (_wbTotalsOrig[key] !== undefined) ? _wbTotalsOrig[key] : String(raw.f);
+    const orig = (_wbFxOrig[key] && _wbFxOrig[key].f != null) ? String(_wbFxOrig[key].f) : String(raw.f);
     const refs = orig.match(/\$?[A-Z]{1,3}\$?\d{1,7}/g); if (!refs) continue;
     const hits = [];
     for (let k = 0; k < refs.length; k++) {
@@ -7080,24 +7098,112 @@ function wbApplyDeducts(sheet) {
       if (dc.c === c && byRow[dc.r]) hits.push({ addr: XLSX.utils.encode_cell(dc), sec: byRow[dc.r] });
     }
     if (hits.length < 2) continue;                                 // not a totals cell
-    _wbTotalsOrig[key] = orig;
-    const anyDed = hits.some(h => ded[wbDeductKey(sheet, h.sec)]);
-    if (!anyDed) { if (String(raw.f) !== orig) raw.f = orig; continue; }
-    const f = hits.map((h, j) => (ded[wbDeductKey(sheet, h.sec)] ? '-' : (j ? '+' : '')) + h.addr).join('');
-    raw.f = f; out[key] = f;                                       // the mirror gets the same formula
+    if (!hits.some(h => ded[wbDeductKey(sheet, h.sec)])) continue;
+    out[key] = hits.map((h, j) => (ded[wbDeductKey(sheet, h.sec)] ? '-' : (j ? '+' : '')) + h.addr).join('');
   }
-  eng.recalc();
   return out;
 }
-/* Work the rewritten totals out once, here in the editor, and keep them on the record — the
-   mirror is also written by the background sync, when no workbook is open to derive them from. */
-function wbSyncTotalsF(e) {
-  if (!e || !_wbEng) return;
-  const all = {};
-  _wbEng.visibleSheets.forEach(sh => { const m = wbApplyDeducts(sh); for (const k in m) all[k] = m[k]; });
-  if (Object.keys(all).length) e.wbTotalsF = all; else delete e.wbTotalsF;
+/* ── Marking a takeoff line as a subcontractor ──
+   A subcontracted line is a lump sum, not our material: its cost belongs in the Subcontractors
+   block on CP Backup (D98:D103), where the workbook's own Sub Markup (B105) is applied to it.
+   Marking a line zeroes its Material Total on the takeoff and writes a live sub line that reads
+   straight off that row, so the spreadsheet keeps working in Excel and the two can't drift.
+   The workbook has six sub slots; past that we continue below the sheet's content and widen the
+   Sub Total to take the extra in. */
+const WB_SUB = { sheet: 'CP Backup', first: 98, last: 103, total: 'D104', descCol: 'A', costCol: 'D', overflow: 168 };
+function wbSubKey(sheet, row) { return sheet + '!' + (row + 1); }          // row is 0-based; the key reads like Excel
+function wbSubList(e) { const o = (e && e.wbSubs) || {}; return Object.keys(o).filter(k => o[k]); }
+function wbIsSub(e, sheet, row) { return !!((e && e.wbSubs) || {})[wbSubKey(sheet, row)]; }
+/* which column is which on a takeoff sheet — read off the section's own headings */
+function wbTakeoffCols(sheet, sec) {
+  const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols, out = {};
+  const hdr = (sec.desc && sec.desc.hdr >= 0) ? sec.desc.hdr : -1; if (hdr < 0) return out;
+  for (let i = 0; i < cols.length; i++) {
+    const v = eng.get(sheet, XLSX.utils.encode_cell({ r: hdr, c: cols[i] }));
+    if (typeof v !== 'string') continue;
+    const t = v.trim().toLowerCase();
+    if (/description$/.test(t)) out.desc = cols[i];
+    else if (t === 'quantity') out.qty = cols[i];
+    else if (t === 'material unit') out.unit = cols[i];
+    else if (t === 'material total') out.total = cols[i];
+  }
+  return out;
 }
-function wbTotalsFormulasFor(e) { return (e && e.wbTotalsF) || {}; }
+function wbSubRowInfo(e, key) {
+  const m = String(key).match(/^(.+)!(\d+)$/); if (!m) return null;
+  const sheet = m[1], row = (+m[2]) - 1;
+  const secs = wbSectionsOf(sheet);
+  let sec = null;
+  for (let i = 0; i < secs.length; i++) if (row >= secs[i].min && row <= secs[i].max && row !== secs[i].row) sec = secs[i];
+  if (!sec) return null;
+  const c = wbTakeoffCols(sheet, sec);
+  if (c.qty == null || c.unit == null || c.total == null) return null;
+  const A1 = n => XLSX.utils.encode_cell({ r: row, c: n });
+  return { sheet, row, sec, cols: c, qty: A1(c.qty), unit: A1(c.unit), total: A1(c.total), desc: A1(c.desc != null ? c.desc : c.qty) };
+}
+function wbQuote(sheet) { return "'" + String(sheet).replace(/'/g, "''") + "'!"; }
+/* the formulas a set of subcontracted lines needs */
+function wbSubFx(e) {
+  const fx = {}, keys = wbSubList(e); if (!keys.length || !_wbEng) return fx;
+  const rows = keys.map(k => wbSubRowInfo(e, k)).filter(Boolean)
+    .sort((a, b) => (a.sheet === b.sheet ? a.row - b.row : (a.sheet < b.sheet ? -1 : 1)));
+  const over = [];
+  rows.forEach((r, i) => {
+    const q = wbQuote(r.sheet);
+    const ded = wbIsDeducted(r.sheet, r.sec) ? '-' : '';
+    const amount = ded + 'IF(' + q + '$' + XLSX.utils.encode_col(XLSX.utils.decode_cell(r.sec.sw).c) + '$' + (r.sec.row + 1) + '="Yes",0,' + q + r.qty + '*' + q + r.unit + ')';
+    const slot = (i <= WB_SUB.last - WB_SUB.first) ? (WB_SUB.first + i) : (WB_SUB.overflow + i - (WB_SUB.last - WB_SUB.first + 1));
+    if (slot >= WB_SUB.overflow) over.push(slot);
+    fx[WB_SUB.sheet + '!' + WB_SUB.descCol + slot] = q + r.desc;
+    fx[WB_SUB.sheet + '!' + WB_SUB.costCol + slot] = amount;
+    fx[r.sheet + '!' + r.total] = '0';                                   // no longer our material
+  });
+  if (over.length) fx[WB_SUB.sheet + '!' + WB_SUB.total] =
+    'SUM(' + WB_SUB.costCol + WB_SUB.first + ':' + WB_SUB.costCol + WB_SUB.last + ')+SUM(' +
+    WB_SUB.costCol + over[0] + ':' + WB_SUB.costCol + over[over.length - 1] + ')';
+  return fx;
+}
+/* ── One formula overlay for the whole workbook ──
+   Deducted sections and subcontracted lines both work by rewriting formulas. We rebuild the
+   overlay from scratch every time, restoring the workbook first, so nothing can accumulate. */
+function wbApplyFx(e) {
+  if (!_wbEng) return;
+  for (const k in _wbFxOrig) {                                           // put the workbook back
+    const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
+    const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
+    const o = _wbFxOrig[k];
+    if (o === null) delete ws[m[2]]; else ws[m[2]] = o;
+  }
+  _wbFxOrig = {};
+  const fx = Object.assign({}, wbDeductFx(e), wbSubFx(e));
+  for (const k in fx) {
+    const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
+    const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
+    _wbFxOrig[k] = ws[m[2]] ? Object.assign({}, ws[m[2]]) : null;
+    ws[m[2]] = { t: 'n', v: 0, f: fx[k] };
+  }
+  _wbEng.recalc();
+  if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
+  delete e.wbTotalsF;                                                    // superseded by the single overlay
+}
+function wbFormulasFor(e) { return (e && (e.wbFx || e.wbTotalsF)) || {}; }
+function wbToggleSub(sheet, row) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to edit', true); renderWbBody(); return; }
+  const key = wbSubKey(sheet, row);
+  e.wbSubs = e.wbSubs || {};
+  if (e.wbSubs[key]) delete e.wbSubs[key];
+  else {
+    if (!wbSubRowInfo(e, key)) { toast('Only a takeoff line can be marked as a subcontractor', true); return; }
+    e.wbSubs[key] = 1;
+  }
+  e.wbMode = true;
+  wbApplyFx(e);
+  renderWbBody(); scheduleWbSave();
+  const n = wbSubList(e).length;
+  if (n > (WB_SUB.last - WB_SUB.first + 1)) toast('That’s ' + n + ' subcontracted lines — the extra ones continue below the Subcontractors block and are added into the Sub Total.');
+}
+
 function wbToggleDeduct(sheet, sw) {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
   if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to change sections', true); renderWbBody(); return; }
@@ -7105,7 +7211,7 @@ function wbToggleDeduct(sheet, sw) {
   e.wbDeduct = e.wbDeduct || {};
   if (e.wbDeduct[key]) delete e.wbDeduct[key]; else e.wbDeduct[key] = 1;
   e.wbMode = true;
-  wbSyncTotalsF(e);
+  wbApplyFx(e);
   renderWbBody(); scheduleWbSave();
 }
 /* ── Comparing two sections ── */
@@ -7210,7 +7316,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbTotalsOrig = {}; _wbCmp = null; _wbSel = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7226,16 +7332,11 @@ async function openWorkbook(kind, id) {
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
     _wbEng = eng;
     _wbSheet = eng.visibleSheets.indexOf(cfg.prefer) >= 0 ? cfg.prefer : eng.visibleSheets[0];
-    for (const k in (e.wbTotalsF || {})) {              // put back the deducted totals rows
-      const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue;
-      const raw = eng.raw(mm[1], mm[2]); if (!raw || raw.f == null) continue;
-      _wbTotalsOrig[k] = String(raw.f); raw.f = e.wbTotalsF[k];
-    }
-    eng.recalc();
+    wbApplyFx(e);                                      // deducted sections + subcontracted lines
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbTotalsOrig = {}; _wbCmp = null; _wbSel = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7519,6 +7620,8 @@ function wbRowsHtml(sheet, r0, r1, sec) {
     for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
   });
   const shEsc = String(sheet).replace(/'/g, "\\'");
+  const ent = wbEntity();
+  const subCol = !!(sec && wbTakeoffCols(sheet, sec).total != null);     // only takeoff lines can be subcontracted
   const hide = {};                                        // the switch and the name live on the header bar now
   if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
   let html = '', gap = 0, any0 = false;
@@ -7531,9 +7634,14 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
     }
     if (!any) { gap++; continue; }                                   // collapse blank runs into one thin gap
-    if (gap && any0) html += `<tr class="gap"><td colspan="${cols.length}"></td></tr>`;
+    if (gap && any0) html += `<tr class="gap"><td colspan="${cols.length + (subCol ? 1 : 0)}"></td></tr>`;
     gap = 0; any0 = true;
-    html += '<tr>';
+    const isLine = subCol && r >= sec.min && r <= sec.max && r !== sec.row;
+    const isSub = isLine && wbIsSub(ent, sheet, r);
+    html += `<tr${isSub ? ' class="subline"' : ''}>`;
+    if (subCol) html += isLine
+      ? `<td class="wbsubc" title="Charge this line as a subcontractor — it moves to the Subcontractors block and takes the sub markup"><input type="checkbox"${isSub ? ' checked' : ''} onchange="wbToggleSub('${shEsc}',${r})"></td>`
+      : `<td class="wbsubc hd">${r === (sec.desc && sec.desc.hdr) ? 'Sub' : ''}</td>`;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
       if (covered[r + ',' + c]) continue;
@@ -7644,6 +7752,11 @@ function renderWbModal() {
     .wbapp .tgex{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:12.5px;color:#5c6470;cursor:pointer;text-decoration:none}
     .wbapp .excl-note{color:#b02a37;font-size:12px;font-weight:600;text-decoration:none}
     .wbapp .ded-note{color:#8a5a00;font-size:12px;font-weight:600}
+    .wbapp table.wbsheet td.wbsubc{width:34px;text-align:center;background:#f4f5f8;padding:2px}
+    .wbapp table.wbsheet td.wbsubc.hd{font-size:10px;color:#5c6470;font-weight:600}
+    .wbapp table.wbsheet tr.subline td{background:#eef7f0}
+    .wbapp table.wbsheet tr.subline td.label{background:#e3f0e7}
+    .wbapp table.wbsheet tr.subline input.wbi{background:#f6fbf7}
     .wbapp details.togroup.deducted>summary{background:#fdf0d5}
     .wbapp details.togroup.deducted>summary .tgnum::after{content:' −';color:#8a5a00}
     .wbcmp{background:#fff;border:1px solid #7e8ef0;border-radius:8px;padding:10px 12px;margin-bottom:12px}
