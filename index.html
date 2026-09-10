@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.37';
+const APP_VERSION = 'v7.38';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6849,6 +6849,8 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) { if (r > r1) r1 = r; live[c] = 1; }
     }
   }
+  const own = {};                                     // columns that carry something of their own
+  for (const c in live) own[c] = 1;
   (eng.mergesOf(sheet) || []).forEach(m => {
     if (m.s.r <= r1 && m.e.r > r1) r1 = m.e.r;
     if (live[m.s.c]) for (let c = m.s.c; c <= m.e.c; c++) live[c] = 1;   // a merged cell needs the columns it spans
@@ -6857,7 +6859,10 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
   if (typed.r > r1) r1 = typed.r;
   for (const c in typed.cols) live[c] = 1;
   const cols = Object.keys(live).map(Number).sort((x, y) => x - y);      // drop columns that hold nothing at all
-  return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
+  // A column that is only here because a merge spans it is spacing, not a field — give it no
+  // minimum width, or a form like the Proposal is dragged far wider than the screen.
+  const filler = {}; cols.forEach(c => { if (!own[c] && !typed.cols[c]) filler[c] = 1; });
+  return (_wbBounds[sheet] = { r0: rg.s.r, r1, cols, filler, pos: cols.reduce((m, c, i) => (m[c] = i, m), {}) });
 }
 /* ── What the workbook says you may type in ──
    Estimating workbooks colour their entry cells and leave calculated ones plain — yellow on
@@ -7714,6 +7719,10 @@ function wbRowsHtml(sheet, r0, r1, sec) {
   });
   const shEsc = String(sheet).replace(/'/g, "\\'");
   const ent = wbEntity();
+  // Where the sheet colours its entry cells, a blank cell that ISN'T one is spacing in the form,
+  // not a field — drawing a box in every one of them is what turns a proposal into a sea of
+  // boxes twice the width of the screen. Sheets that colour nothing keep every cell typeable.
+  const marksEntries = Object.keys(wbInputFills(sheet)).length > 0;
   const subCol = !!(sec && wbTakeoffCols(sheet, sec).total != null);     // only takeoff lines can be subcontracted
   const hide = {};                                        // the switch and the name live on the header bar now
   if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
@@ -7742,24 +7751,27 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       const a = XLSX.utils.encode_cell({ r, c });
       const mg = merges[r + ',' + c];
       const span = mg ? ` colspan="${mg.cs}" rowspan="${mg.rs}"` : '';
+      const fil = (b.filler && b.filler[c] && !mg) ? ' filler' : '';
       if (hide[a]) { html += `<td${span}></td>`; continue; }
       const raw = eng.raw(sheet, a);
       const ov = eng.getOverride(sheet, a);
       const isF = !!(raw && raw.f != null) && ov == null;             // a formula you typed over becomes your input again
       const z = raw && raw.z;
       const val = eng.get(sheet, a);
-      if (isF) html += `<td${span} class="calc" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
-      else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label">${esc(val)}</td>`;
+      if (isF) html += `<td${span} class="calc${fil}" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
+      else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label${val.length <= 40 ? ' short' : ''}${fil}">${esc(val)}</td>`;
       else {
+        if (marksEntries && ov == null && (val === '' || val == null) && !wbIsInputCell(sheet, raw)) { html += `<td${span} class="pad${fil}"></td>`; continue; }
         const dv = wbDvFor(sheet, a);
-        if (dv) { html += `<td${span} class="inp">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
+        if (dv) { html += `<td${span} class="inp${fil}">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
         // a percent/date-formatted cell can hold plain text ("TBD", "Upon approval") — show it as
         // typed rather than an empty box, and let it be edited as text
         const numeric = typeof val === 'number' && isFinite(val);
         const pct = numeric && wbIsPctCell(z), dat = numeric && !pct && wbIsDateCell(z);
         const sv = pct ? (Math.round(Number(val) * 10000) / 100) : dat ? wbDateStr(val) : wbInputRaw(val);
         const fn = pct ? 'wbEditPct' : dat ? 'wbEditDate' : 'wbEdit';
-        html += `<td${span} class="inp"><input class="wbi${pct ? ' pct' : ''}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
+        const txt = !numeric && sv !== '' ? ' txt' : '';        // words read left to right; figures stay right-aligned
+        html += `<td${span} class="inp${fil}"><input class="wbi${pct ? ' pct' : ''}${txt}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
       }
     }
     html += '</tr>';
@@ -7823,12 +7835,20 @@ function renderWbModal() {
     .wbcard{background:#fff;border:1px solid #d7dbe3;border-radius:8px;overflow:auto;display:inline-block;max-width:100%}
     .wbapp table.wbsheet{border-collapse:collapse;font-size:13px;background:#fff}
     .wbapp table.wbsheet td{border:1px solid #e3e6ee;padding:3px 7px;background:#fff;vertical-align:middle}
-    .wbapp table.wbsheet td.label{background:#fafbfd;white-space:nowrap;color:#16181d}
+    /* Long prose (a proposal's scope paragraph) must wrap, or one cell drags the table
+       thousands of pixels wide and everything to its right falls off the screen. */
+    .wbapp table.wbsheet td.label{background:#fafbfd;color:#16181d;white-space:normal;overflow-wrap:anywhere}
+    .wbapp table.wbsheet td.label.short{white-space:nowrap}
+    .wbapp table.wbsheet{max-width:100%}
+    .wbapp table.wbsheet td.pad{background:#fff;min-width:0;padding:0;border-color:#f0f2f6}
+    .wbapp table.wbsheet td.filler{min-width:0;padding:1px}
+    .wbapp table.wbsheet td.filler input.wbi{min-width:0;padding:2px}
     .wbapp table.wbsheet td.calc{background:#f1f3f7;color:#333;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
     .wbapp table.wbsheet tr.gap td{background:#f4f5f8;height:9px;padding:0;border-left-color:transparent;border-right-color:transparent}
     .wbapp table.wbsheet td.inp{padding:1px 2px;position:relative;min-width:78px}
     .wbapp input.wbi{width:100%;min-width:64px;border:1px solid #c8cede;background:#fffef2;border-radius:3px;padding:3px 5px;
       text-align:right;font:inherit;font-variant-numeric:tabular-nums;color:#16181d}
+    .wbapp input.wbi.txt{text-align:left}
     .wbapp input.wbi:focus{outline:2px solid #7e8ef0}
     .wbapp input.wbi.pct{padding-right:18px}
     .wbapp .pctm{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-style:normal;font-size:11px;color:#5c6470;pointer-events:none}
