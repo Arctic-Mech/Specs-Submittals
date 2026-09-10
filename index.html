@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.41';
+const APP_VERSION = 'v7.42';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6485,6 +6485,44 @@ function xlSetCell(xml, ref, spec) {
   if (sd >= 0) return xml.slice(0, sd) + rowXml + xml.slice(sd);
   return xml;
 }
+/* Give rows copied below the sheet the same dropdowns Excel offers on the rows they came from —
+   Overtime, Shift, the Yes/No on an Exclude switch. Each validation lists the cells it covers in
+   one sqref, so extending it is a matter of adding the copied rows to that list. */
+function xlAddValidationRows(xml, pairs) {
+  if (!pairs || !pairs.length) return xml;
+  return xml.replace(/(<dataValidation\b[^>]*\bsqref=")([^"]*)(")/g, (m0, pre, sq, post) => {
+    const parts = sq.split(/\s+/).filter(Boolean), rows = {};
+    parts.forEach(p => {
+      const m = p.match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/); if (!m) return;
+      const key = m[1] + ':' + (m[3] || m[1]), lo = +m[2], hi = m[4] ? +m[4] : +m[2];
+      pairs.forEach(pr => { if (pr[0] >= lo && pr[0] <= hi) (rows[key] = rows[key] || {})[pr[1]] = 1; });
+    });
+    const extra = [];
+    for (const key in rows) {
+      const cols = key.split(':'), rs = Object.keys(rows[key]).map(Number).sort((a, b) => a - b);
+      for (let i = 0; i < rs.length;) {                      // consecutive rows become one range
+        let j = i; while (j + 1 < rs.length && rs[j + 1] === rs[j] + 1) j++;
+        const a = cols[0] + rs[i], b2 = cols[1] + rs[j];
+        const one = (a === b2) ? a : (a + ':' + b2);
+        if (parts.indexOf(one) < 0) extra.push(one);
+        i = j + 1;
+      }
+    }
+    return pre + (extra.length ? sq + ' ' + extra.join(' ') : sq) + post;
+  });
+}
+/* every (row it was copied from → row it now lives on) this estimate has created */
+function wbDvRowsFor(e) {
+  const out = {};
+  ((e && e.wbAdd) || []).forEach(x => {
+    const m = String(x.key).split(':');
+    (out[x.sheet] = out[x.sheet] || []).push([(+m[1]) + 1, x.row + 1]);
+  });
+  ((e && e.wbSecAdd) || []).forEach(x => {
+    for (let r = x.s0; r <= x.s1; r++) (out[x.sheet] = out[x.sheet] || []).push([r + 1, r + x.off + 1]);
+  });
+  return out;
+}
 function xlClearCell(xml, ref) {
   const reFull = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>[\\s\\S]*?</c>)'); const m = xml.match(reFull);
   if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; return xml.replace(reFull, '<c r="' + ref + '"' + s + '/>'); } return xml;
@@ -6567,7 +6605,7 @@ async function zipSheetFileMap(zip) {
 /* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
    value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
    recomputes, drop the calc chain, and stamp the Dingus marker. */
-async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas) {
+async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dvRows) {
   const JZ = await ensureJSZip();
   const zip = await JZ.loadAsync(templateBytes);
   const fmap = await zipSheetFileMap(zip);
@@ -6584,6 +6622,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas) {
     const f = fmap[mm[1]]; if (!f || !zip.file(f)) continue;
     zip.file(f, xlSetCell(await zip.file(f).async('string'), mm[2], { formula: formulas[k], v: 0 }));   // Excel recalcs on open (fullCalcOnLoad)
   }
+  for (const sh in (dvRows || {})) {                        // copied rows get the same dropdowns
+    const f = fmap[sh]; if (!f || !zip.file(f)) continue;
+    zip.file(f, xlAddValidationRows(await zip.file(f).async('string'), dvRows[sh]));
+  }
   if (marker) { const mf = fmap[marker.sheet]; if (mf && zip.file(mf)) { let xml = await zip.file(mf).async('string'); for (const a in marker.cells) xml = xlSetCell(xml, a, { str: String(marker.cells[a] == null ? '' : marker.cells[a]) }); zip.file(mf, xml); } }
   let wbx = await zip.file('xl/workbook.xml').async('string');
   wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
@@ -6596,10 +6638,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c));
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c), wbDvRowsFor(c));
 }
 async function buildEstWorkbookXlsm(e) {
-  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbFormulasFor(e));
+  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbFormulasFor(e), wbDvRowsFor(e));
 }
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
@@ -6927,7 +6969,7 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
   const typed = wbTypedExtent(sheet);                                    // ...plus anything typed past that range
   if (typed.r > r1) r1 = typed.r;
   for (const c in typed.cols) live[c] = 1;
-  let addR = -1;                                                         // ...and any lines added past the end of a list
+  let addR = wbSecMaxRow(wbEntity(), sheet);                             // ...and any lines or sections added below
   wbAdds(wbEntity(), sheet).forEach(x => { if (x.row > addR) addR = x.row; });
   if (addR > r1) r1 = addR;
   const cols = Object.keys(live).map(Number).sort((x, y) => x - y)
@@ -7110,9 +7152,11 @@ function wbSectionsOf(sheet) {
       if (typeof v !== 'string' || !WB_EXCL_LABEL.test(v)) continue;
       for (let j = i + 1; j < cols.length && cols[j] <= cols[i] + 3; j++) {   // the switch sits just right of its label
         const a = XLSX.utils.encode_cell({ r, c: cols[j] });
-        const raw = eng.raw(sheet, a);
-        if (!raw || raw.f != null) continue;
-        const s = { row: r, sw: a, lbl: XLSX.utils.encode_cell({ r, c: cols[i] }), bool: typeof raw.v === 'boolean', min: r, max: r };
+        const raw = eng.raw(sheet, a), ov = eng.getOverride(sheet, a);
+        // a switch you typed in is a switch too — that is how a section you added has one
+        if (ov !== undefined ? ov === '' : (!raw || raw.f != null)) continue;
+        const sv = ov !== undefined ? ov : raw.v;
+        const s = { row: r, sw: a, lbl: XLSX.utils.encode_cell({ r, c: cols[i] }), bool: typeof sv === 'boolean', min: r, max: r };
         found.push(s); byAddr[a] = s;
         break;
       }
@@ -7182,13 +7226,13 @@ function wbDeductKey(sheet, sec) { return sheet + '!' + sec.sw; }
 function wbIsDeducted(sheet, sec) { const e = wbEntity(); return !!(e && e.wbDeduct && e.wbDeduct[wbDeductKey(sheet, sec)]); }
 /* Rewrite every totals cell on a sheet: a cell that adds up two or more section subtotals from
    its own column. The original formula is kept so clearing the deducts restores it exactly. */
-function wbDeductFx(e) {
+function wbDeductFx(e, base) {
   const out = {};
   if (!_wbEng || !e || !e.wbDeduct || !Object.keys(e.wbDeduct).length) return out;
-  _wbEng.visibleSheets.forEach(sh => { const m = wbDeductFxSheet(sh, e); for (const k in m) out[k] = m[k]; });
+  _wbEng.visibleSheets.forEach(sh => { const m = wbDeductFxSheet(sh, e, base); for (const k in m) out[k] = m[k]; });
   return out;
 }
-function wbDeductFxSheet(sheet, e) {
+function wbDeductFxSheet(sheet, e, base) {
   const eng = _wbEng; if (!eng) return {};
   const secs = wbSectionsOf(sheet); if (secs.length < 2) return {};
   const ded = (e && e.wbDeduct) || {};
@@ -7198,7 +7242,9 @@ function wbDeductFxSheet(sheet, e) {
     const c = cols[i], a = XLSX.utils.encode_cell({ r, c });
     const raw = eng.raw(sheet, a); if (!raw || raw.f == null) continue;
     const key = sheet + '!' + a;
-    const orig = (_wbFxOrig[key] && _wbFxOrig[key].f != null) ? String(_wbFxOrig[key].f) : String(raw.f);
+    // work off whatever the added lines and sections left here, not the form's own formula
+    const orig = (base && base[key] != null) ? String(base[key])
+      : (_wbFxOrig[key] && _wbFxOrig[key].f != null) ? String(_wbFxOrig[key].f) : String(raw.f);
     const refs = orig.match(/\$?[A-Z]{1,3}\$?\d{1,7}/g); if (!refs) continue;
     const hits = [];
     for (let k = 0; k < refs.length; k++) {
@@ -7287,8 +7333,10 @@ function wbApplyFx(e) {
     if (o === null) delete ws[m[2]]; else ws[m[2]] = o;
   }
   _wbFxOrig = {};
-  const add = wbAddFx(e);                                                // added lines widen their subtotals…
-  const fx = Object.assign({}, add, wbDeductFx(e), wbSubFx(e, add));     // …and the sub overflow builds on that
+  // Added lines widen their subtotals; an added section brings its own, and is totalled in with
+  // the rest; deducting works off whatever those two left, and the sub overflow off all of it.
+  const add = Object.assign({}, wbAddFx(e), wbSecAddFx(e));
+  const fx = Object.assign({}, add, wbDeductFx(e, add), wbSubFx(e, add));
   for (const k in fx) {
     const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
     const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
@@ -7375,7 +7423,7 @@ function wbAddedRowSet(sheet) {
 }
 /* free space below everything this sheet already uses — including lines added before now */
 function wbNextFreeRow(e, sheet) {
-  let r = Math.max(_wbEng.range(sheet).e.r, wbSubMaxRow(sheet)) + 2;
+  let r = Math.max(_wbEng.range(sheet).e.r, wbSubMaxRow(sheet), wbSecMaxRow(e, sheet)) + 2;
   wbAdds(e, sheet).forEach(x => { if (x.row >= r) r = x.row + 1; });
   return r;
 }
@@ -7411,6 +7459,101 @@ function wbAddFx(e) {
     });
   }
   return fx;
+}
+/* ── Another section ──
+   A section is 29 rows: its column headings, 26 lines, and a subtotal row carrying its own
+   "Exclude Section" switch. Adding one copies the sheet's last section into free space below it,
+   moving every reference that points inside the copied block — including the absolute $K$91 the
+   lines read their switch from — and leaving everything else alone. Whatever added the old
+   section's subtotals into the sheet total adds the new one in as well. Nothing shifts, so the
+   references the rest of the workbook makes to fixed cells all still land where they did. */
+function wbSecAdds(e, sheet) { return ((e && e.wbSecAdd) || []).filter(x => x.sheet === sheet).sort((a, b) => a.off - b.off); }
+function wbSecRowMap(sheet) {                       // every added-section row, and the row it was copied from
+  const out = {};
+  wbSecAdds(wbEntity(), sheet).forEach(x => { for (let r = x.s0; r <= x.s1; r++) out[r + x.off] = { src: r, sw: x.sw }; });
+  return out;
+}
+function wbSecMaxRow(e, sheet) { let m = -1; wbSecAdds(e, sheet).forEach(x => { if (x.s1 + x.off > m) m = x.s1 + x.off; }); return m; }
+function wbShiftFx(f, s0, s1, off) {                // move only what points inside the copied block
+  return String(f).replace(/(!?)(\$?)([A-Z]{1,3})(\$?)(\d{1,7})/g, (m0, bang, d1, col, d2, row) => {
+    if (bang) return m0;                            // a reference on another sheet stays where it is
+    const r = (+row) - 1;
+    return (r >= s0 && r <= s1) ? (d1 + col + d2 + (r + off + 1)) : m0;
+  });
+}
+/* the section this sheet copies from: its last one that came with the form, headings included */
+function wbSecSource(sheet) {
+  const map = wbSecRowMap(sheet);
+  const secs = wbSectionsOf(sheet).filter(s => !map[s.row]);
+  if (!secs.length) return null;
+  const s = secs[secs.length - 1], b = wbSheetBounds(sheet);
+  return { sec: s, s0: Math.max(b.r0, s.min - 2), s1: Math.max(s.max, s.row) };
+}
+function wbSecAddFx(e) {
+  const fx = {}, list = (e && e.wbSecAdd) || []; if (!list.length || !_wbEng) return fx;
+  list.slice().sort((a, b) => a.off - b.off).forEach(x => {
+    const rg = _wbEng.range(x.sheet), tot = {};
+    for (let r = x.s0; r <= x.s1; r++) for (let c = rg.s.c; c <= rg.e.c; c++) {
+      const a = XLSX.utils.encode_cell({ r, c }), raw = wbOrigRaw(x.sheet, a);
+      if (!raw || raw.f == null) continue;
+      fx[x.sheet + '!' + XLSX.utils.encode_cell({ r: r + x.off, c })] = wbShiftFx(raw.f, x.s0, x.s1, x.off);
+      if (r === x.s1 && /^SUM\(/i.test(String(raw.f))) tot[a] = XLSX.utils.encode_cell({ r: r + x.off, c });
+    }
+    if (!Object.keys(tot).length) return;
+    for (let r = rg.s.r; r <= rg.e.r; r++) {        // whatever totalled the old section totals the new one too
+      if (r >= x.s0 && r <= x.s1) continue;
+      for (let c = rg.s.c; c <= rg.e.c; c++) {
+        const a = XLSX.utils.encode_cell({ r, c }), raw = wbOrigRaw(x.sheet, a);
+        if (!raw || raw.f == null) continue;
+        const key = x.sheet + '!' + a;
+        const refs = String(raw.f).replace(/(?:'[^']*'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d{1,7}/g, ' ').match(/\$?[A-Z]{1,3}\$?\d{1,7}/g) || [];
+        const seen = {}, extra = [];
+        refs.forEach(rf => { const t = tot[rf.replace(/\$/g, '')]; if (t && !seen[t]) { seen[t] = 1; extra.push('+' + t); } });
+        if (extra.length) fx[key] = (fx[key] || String(raw.f)) + extra.join('');
+      }
+    }
+  });
+  return fx;
+}
+function wbAddSection(sheet) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to add a section', true); return; }
+  const src = wbSecSource(sheet); if (!src) { toast('This sheet has no section to copy', true); return; }
+  const at = wbNextFreeRow(e, sheet) + 1, off = at - src.s0;
+  const rg = _wbEng.range(sheet);
+  e.wbInputs = e.wbInputs || {};
+  for (let r = src.s0; r <= src.s1; r++) for (let c = rg.s.c; c <= rg.e.c; c++) {
+    const raw = wbOrigRaw(sheet, XLSX.utils.encode_cell({ r, c }));       // headings, the Exclude label and its switch
+    if (!raw || raw.f != null || raw.v == null || raw.v === '') continue;
+    const a = sheet + '!' + XLSX.utils.encode_cell({ r: r + off, c });
+    e.wbInputs[a] = raw.v; _wbEng.setInput(sheet, a.split('!')[1], raw.v);
+  }
+  const swc = XLSX.utils.decode_cell(src.sec.sw);
+  e.wbSecAdd = (e.wbSecAdd || []).concat([{ sheet, s0: src.s0, s1: src.s1, off,
+    sw: XLSX.utils.encode_cell({ r: swc.r + off, c: swc.c }) }]);
+  e.wbMode = true;
+  wbApplyFx(e);
+  _wbSecOpen[sheet + '!' + XLSX.utils.encode_cell({ r: swc.r + off, c: swc.c })] = 1;   // open it, you just made it
+  renderWbBody(); scheduleWbSave();
+  toast('Added a section — name it, fill it in, and Exclude or Deduct it like any other');
+}
+function wbRemoveSection(sheet, sw) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  const x = wbSecAdds(e, sheet).filter(y => y.sw === sw)[0]; if (!x) return;
+  if (!confirm('Remove this whole section, and everything entered in it?')) { renderWbBody(); return; }
+  e.wbSecAdd = (e.wbSecAdd || []).filter(y => !(y.sheet === sheet && y.sw === sw));
+  const lo = x.s0 + x.off, hi = x.s1 + x.off, pre = sheet + '!';
+  for (const k in (e.wbInputs || {})) {
+    if (k.indexOf(pre) !== 0) continue;
+    const m = k.slice(pre.length).match(/^[A-Z]+(\d+)$/); if (!m) continue;
+    const r = (+m[1]) - 1;
+    if (r >= lo && r <= hi) { delete e.wbInputs[k]; _wbEng.clearInput(sheet, k.slice(pre.length)); }
+  }
+  for (const k in (e.wbSubs || {})) { const m = k.match(/^(.+)!(\d+)$/); if (m && m[1] === sheet) { const r = (+m[2]) - 1; if (r >= lo && r <= hi) delete e.wbSubs[k]; } }
+  for (const k in (e.wbDeduct || {})) if (k === sheet + '!' + sw) delete e.wbDeduct[k];
+  e.wbMode = true;
+  wbApplyFx(e);
+  renderWbBody(); scheduleWbSave();
 }
 function wbAddLine(sheet, key) {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
@@ -7544,6 +7687,9 @@ function wbSheetSnapshot() {
   const adds = wbAdds(e, sheet);
   if (adds.length) L.push('added lines: ' + adds.map(x => 'row ' + (x.row + 1) + ' at the end of ' +
     (+x.key.split(':')[0] + 1) + '-' + (+x.key.split(':')[1] + 1)).join(', '));
+  const secAdds = wbSecAdds(e, sheet);
+  if (secAdds.length) L.push('added sections: ' + secAdds.map(x => 'rows ' + (x.s0 + x.off + 1) + '-' + (x.s1 + x.off + 1) +
+    ' copied from ' + (x.s0 + 1) + '-' + (x.s1 + 1) + ', switch ' + x.sw).join(' | '));
   L.push('addr | how it renders | stored | shown');
   const merges = {};
   eng.mergesOf(sheet).forEach(mg => { for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) merges[r + ',' + c] = 1; });
@@ -7954,9 +8100,10 @@ function wbSheetHtml(sheet) {
   if (!b.cols.length) return '<div class="wbcard" style="padding:18px;color:#5c6470">This sheet is empty.</div>';
   const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;
   const endR = Math.min(b.r1, b.r0 + shown - 1);
-  const secs = wbSectionsOf(sheet).filter(s => s.min <= endR);
+  const all = wbSectionsOf(sheet).filter(s => s.min <= endR);
   const docEnd = b.pa ? Math.min(endR, b.pa.e.r) : endR;             // the printed document stops here
   const main = b.inPA && b.inPA.length ? b.inPA : b.cols;
+  const secs = all.filter(s => s.min <= docEnd), below = all.filter(s => s.min > docEnd);
   let html = '', prev = b.r0 - 1;
   if (!secs.length) html = wbCardHtml(sheet, b.r0, docEnd, null, main);
   else {
@@ -7968,9 +8115,13 @@ function wbSheetHtml(sheet) {
     });
     if (prev < docEnd) html += wbCardHtml(sheet, prev + 1, docEnd, null, main);
   }
+  // sections added past the end of the form — part of the estimate, so drawn as sections, not scaffolding
+  below.forEach(s => { html += wbCardHtml(sheet, Math.max(s.min - 2, docEnd + 1), Math.max(s.max, s.row), s, main); });
+  if (all.length && wbSecSource(sheet)) html += `<div style="padding:2px 2px 12px"><button class="wbbtn sec" onclick="wbAddSection('${esc(sheet).replace(/'/g, "\\'")}')" title="Copy this sheet's last section to the end — a fresh set of lines with its own Exclude and Deduct switches, totalled in with the others">+ Add a section</button></div>`;
   html += wbAsideHtml(sheet, b, endR, docEnd);
   let real = b.r1;                                                   // added lines are already drawn, in their place
   wbAdds(wbEntity(), sheet).forEach(x => { if (x.row >= real) real = x.row - 1; });
+  { const sm = wbSecMaxRow(wbEntity(), sheet); if (sm >= real) real = docEnd; }
   if (endR < real) html += `<div style="padding:4px 2px 12px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, real - endR)} more rows (of ${real - b.r0 + 1})</button></div>`;
   return html;
 }
@@ -7980,7 +8131,7 @@ function wbAsideHtml(sheet, b, endR, docEnd) {
   if (!b.pa) return '';
   let out = '';
   if (b.outPA && b.outPA.length) {
-    const rows = wbRowsHtml(sheet, b.r0, endR, null, b.outPA);
+    const rows = wbRowsHtml(sheet, b.r0, endR, null, b.outPA, true);
     if (rows) out += `<details class="wbaside"><summary>Beside the printed sheet — ${esc(b.outPA.map(c => XLSX.utils.encode_col(c)).join(', '))}</summary><div class="wbcard"><table class="wbsheet">${rows}</table></div></details>`;
   }
   if (docEnd < endR) {
@@ -8012,12 +8163,13 @@ function wbCardHtml(sheet, r0, r1, sec, colList) {
       <label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${sec.bool ? 'true' : 'false'})"> Exclude</label>
       <label class="tgex" title="Subtract this section instead of adding it — how you charge only the difference between two options"><input type="checkbox"${ded ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleDeduct('${shEsc}','${sec.sw}')"> Deduct</label>
       ${off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ded ? '<span class="ded-note">DEDUCTED — subtracted from the total</span>' : ''}
+      ${wbSecAdds(wbEntity(), sheet).some(x => x.sw === sec.sw) ? `<button class="wbchipb" title="Remove this added section and everything in it" onclick="event.stopPropagation();event.preventDefault();wbRemoveSection('${shEsc}','${sec.sw}')">✕</button>` : ''}
       <span class="sums">${sums}</span>
     </summary>
     <table class="wbsheet">${rows}</table>
   </details>`;
 }
-function wbRowsHtml(sheet, r0, r1, sec, colList) {
+function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
   const eng = _wbEng, b = wbSheetBounds(sheet), cols = colList || b.cols;
   const merges = {}, covered = {};
   eng.mergesOf(sheet).forEach(mg => {
@@ -8036,6 +8188,7 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
   if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
   const span = cols.length + (subCol ? 1 : 0);
   const added = wbAddedRowSet(sheet);                     // lines added past the end of a list, drawn in their place
+  const secRows = wbSecRowMap(sheet);                     // rows of an added section, and what each was copied from
   const cfg = wbCfg(), locked = !!(cfg && cfg.locked && cfg.locked(ent));
   /* One row. An added line sits physically below the sheet, so it borrows everything the list's
      last line knows — its merges, its dropdowns, its number formats, and which of its cells you
@@ -8044,9 +8197,9 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
     const mr = src != null ? src : r;
     const entry = blk ? wbBlockEntry(sheet, blk) : null;
     let out = '';
-    const isLine = subCol && (src != null || (r >= sec.min && r <= sec.max && r !== sec.row));
+    const isLine = subCol && (blk != null || (r >= sec.min && r <= sec.max && r !== sec.row));
     const isSub = isLine && wbIsSub(ent, sheet, r);
-    out += `<tr class="${src != null ? 'wbadded ' : ''}${isSub ? 'subline' : ''}">`;
+    out += `<tr class="${blk ? 'wbadded ' : ''}${isSub ? 'subline' : ''}">`;
     if (subCol) out += isLine
       ? `<td class="wbsubc" title="Charge this line as a subcontractor — it moves to the Subcontractors block and takes the sub markup"><input type="checkbox"${isSub ? ' checked' : ''} onchange="wbToggleSub('${shEsc}',${r})"></td>`
       : `<td class="wbsubc hd">${r === (sec.desc && sec.desc.hdr) ? 'Sub' : ''}</td>`;
@@ -8086,10 +8239,15 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
   }
   let html = '', gap = 0, any0 = false;
   for (let r = r0; r <= r1; r++) {
-    if (added[r]) continue;                                           // drawn at the end of its own list instead
+    // Added lines and sections are drawn in their place, in the document — but the columns beside
+    // the printed sheet (Overtime, Shift, the pay working) carry them too, so keep them there.
+    if (added[r] && !keepAdded) continue;
+    const sr = secRows[r];
+    if (sr && !keepAdded && (!sec || sec.sw !== sr.sw)) continue;
     let any = false;
     for (let i = 0; i < cols.length && !any; i++) {
       const c = cols[i], ad = XLSX.utils.encode_cell({ r, c });
+      if (hide[ad]) continue;                                         // shown on the header bar, not in the table
       if (covered[r + ',' + c]) { any = true; break; }
       const raw = eng.raw(sheet, ad);
       if (raw && (raw.f != null || (raw.v != null && raw.v !== ''))) any = true;
@@ -8101,7 +8259,10 @@ function wbRowsHtml(sheet, r0, r1, sec, colList) {
     if (!any && !extra) { gap++; continue; }                          // collapse blank runs into one thin gap
     if (gap && any0) html += `<tr class="gap"><td colspan="${span}"></td></tr>`;
     gap = 0; any0 = true;
-    if (any && !wbHiddenRow(sheet, r)) html += drawRow(r, null);
+    if (any && !wbHiddenRow(sheet, r)) {
+      const ln = added[r] && wbBlocksOf(sheet)[added[r].key];
+      html += drawRow(r, sr ? sr.src : (ln ? ln.r1 : null), null);
+    }
     if (extra) {
       extra.forEach(x => { html += drawRow(x.row, blk.r1, blk); });
       if (!locked) html += `<tr class="wbaddbar"><td colspan="${span}">
