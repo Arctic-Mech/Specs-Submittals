@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.34';
+const APP_VERSION = 'v7.35';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6556,7 +6556,7 @@ async function zipSheetFileMap(zip) {
 /* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
    value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
    recomputes, drop the calc chain, and stamp the Dingus marker. */
-async function buildWorkbookMirror(templateBytes, wbInputs, marker) {
+async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas) {
   const JZ = await ensureJSZip();
   const zip = await JZ.loadAsync(templateBytes);
   const fmap = await zipSheetFileMap(zip);
@@ -6567,6 +6567,11 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker) {
     let xml = await zip.file(f).async('string');
     bySheet[sh].forEach(pair => { const addr = pair[0], val = pair[1]; xml = (typeof val === 'number') ? xlSetCell(xml, addr, { num: val }) : xlSetCell(xml, addr, { str: String(val == null ? '' : val) }); });
     zip.file(f, xml);
+  }
+  for (const k in (formulas || {})) {                       // a deducted section rewrites its sheet's totals row
+    const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue;
+    const f = fmap[mm[1]]; if (!f || !zip.file(f)) continue;
+    zip.file(f, xlSetCell(await zip.file(f).async('string'), mm[2], { formula: formulas[k], v: 0 }));   // Excel recalcs on open (fullCalcOnLoad)
   }
   if (marker) { const mf = fmap[marker.sheet]; if (mf && zip.file(mf)) { let xml = await zip.file(mf).async('string'); for (const a in marker.cells) xml = xlSetCell(xml, a, { str: String(marker.cells[a] == null ? '' : marker.cells[a]) }); zip.file(mf, xml); } }
   let wbx = await zip.file('xl/workbook.xml').async('string');
@@ -6580,10 +6585,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker) {
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } });
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbTotalsFormulasFor(c));
 }
 async function buildEstWorkbookXlsm(e) {
-  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } });
+  return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbTotalsFormulasFor(e));
 }
 async function buildCoXlsm(c, rates, ctx) {
   const JZ = await ensureJSZip();
@@ -6794,6 +6799,8 @@ function makeWbEngine(wb) {
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
 let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {}, _wbFills = {};
 let _wbDV = {}, _wbSecOpen = {};        // the workbook's dropdown lists + which sections you've opened
+let _wbTotalsOrig = {}, _wbCmp = null;  // original totals formulas (for undoing a deduct) + the compare panel
+let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected block in cell view
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -7046,6 +7053,117 @@ function wbSectionName(sheet, s) {
   }
   return 'Section ' + s.n;
 }
+/* ── Deducting a section (charging only the difference) ──
+   A takeoff sheet totals its sections by adding their subtotals together. Marking a section
+   "Deduct" flips its sign in that totals row, so pricing option A against option B charges
+   A − B. We rewrite the sheet's own totals formula, and write the same formula into the
+   exported workbook, so Excel computes the identical number. */
+function wbDeductKey(sheet, sec) { return sheet + '!' + sec.sw; }
+function wbIsDeducted(sheet, sec) { const e = wbEntity(); return !!(e && e.wbDeduct && e.wbDeduct[wbDeductKey(sheet, sec)]); }
+/* Rewrite every totals cell on a sheet: a cell that adds up two or more section subtotals from
+   its own column. The original formula is kept so clearing the deducts restores it exactly. */
+function wbApplyDeducts(sheet) {
+  const eng = _wbEng; if (!eng) return {};
+  const secs = wbSectionsOf(sheet); if (secs.length < 2) return {};
+  const e = wbEntity(), ded = (e && e.wbDeduct) || {};
+  const b = wbSheetBounds(sheet), cols = b.cols, byRow = {}, out = {};
+  secs.forEach(s => { byRow[s.row] = s; });
+  for (let r = b.r0; r <= b.r1; r++) for (let i = 0; i < cols.length; i++) {
+    const c = cols[i], a = XLSX.utils.encode_cell({ r, c });
+    const raw = eng.raw(sheet, a); if (!raw || raw.f == null) continue;
+    const key = sheet + '!' + a;
+    const orig = (_wbTotalsOrig[key] !== undefined) ? _wbTotalsOrig[key] : String(raw.f);
+    const refs = orig.match(/\$?[A-Z]{1,3}\$?\d{1,7}/g); if (!refs) continue;
+    const hits = [];
+    for (let k = 0; k < refs.length; k++) {
+      let dc; try { dc = XLSX.utils.decode_cell(refs[k].replace(/\$/g, '')); } catch (x) { continue; }
+      if (dc.c === c && byRow[dc.r]) hits.push({ addr: XLSX.utils.encode_cell(dc), sec: byRow[dc.r] });
+    }
+    if (hits.length < 2) continue;                                 // not a totals cell
+    _wbTotalsOrig[key] = orig;
+    const anyDed = hits.some(h => ded[wbDeductKey(sheet, h.sec)]);
+    if (!anyDed) { if (String(raw.f) !== orig) raw.f = orig; continue; }
+    const f = hits.map((h, j) => (ded[wbDeductKey(sheet, h.sec)] ? '-' : (j ? '+' : '')) + h.addr).join('');
+    raw.f = f; out[key] = f;                                       // the mirror gets the same formula
+  }
+  eng.recalc();
+  return out;
+}
+/* Work the rewritten totals out once, here in the editor, and keep them on the record — the
+   mirror is also written by the background sync, when no workbook is open to derive them from. */
+function wbSyncTotalsF(e) {
+  if (!e || !_wbEng) return;
+  const all = {};
+  _wbEng.visibleSheets.forEach(sh => { const m = wbApplyDeducts(sh); for (const k in m) all[k] = m[k]; });
+  if (Object.keys(all).length) e.wbTotalsF = all; else delete e.wbTotalsF;
+}
+function wbTotalsFormulasFor(e) { return (e && e.wbTotalsF) || {}; }
+function wbToggleDeduct(sheet, sw) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to change sections', true); renderWbBody(); return; }
+  const key = sheet + '!' + sw;
+  e.wbDeduct = e.wbDeduct || {};
+  if (e.wbDeduct[key]) delete e.wbDeduct[key]; else e.wbDeduct[key] = 1;
+  e.wbMode = true;
+  wbSyncTotalsF(e);
+  renderWbBody(); scheduleWbSave();
+}
+/* ── Comparing two sections ── */
+function wbAllSections() {
+  const out = []; if (!_wbEng) return out;
+  _wbEng.visibleSheets.forEach(sh => wbSectionsOf(sh).forEach(s => out.push({ sheet: sh, sec: s, key: sh + '!' + s.sw })));
+  return out;
+}
+function wbSecByKey(key) { const all = wbAllSections(); for (let i = 0; i < all.length; i++) if (all[i].key === key) return all[i]; return null; }
+function wbCmpToggle() { _wbCmp = _wbCmp ? null : { a: '', b: '' }; renderWbBody(); }
+function wbCmpPick(side, key) { if (!_wbCmp) return; _wbCmp[side] = key; renderWbBody(); }
+function wbCmpCharge() {
+  if (!_wbCmp || !_wbCmp.b) { toast('Pick the section to deduct first', true); return; }
+  const B = wbSecByKey(_wbCmp.b); if (!B) return;
+  const e = wbEntity(); if (!e) return;
+  if (wbSectionExcluded(B.sheet, B.sec.sw)) wbToggleSection(B.sheet, B.sec.sw, B.sec.bool);   // a deducted section must be in
+  if (!wbIsDeducted(B.sheet, B.sec)) wbToggleDeduct(B.sheet, B.sec.sw);
+  else { toast('That section is already being deducted'); renderWbBody(); }
+}
+function wbCmpHtml() {
+  if (!_wbCmp || !_wbEng) return '';
+  const all = wbAllSections();
+  const opt = (side, cur) => `<select class="wbcmpsel" onchange="wbCmpPick('${side}',this.value)">
+      <option value="">Pick a section…</option>
+      ${all.map(x => `<option value="${esc(x.key)}"${x.key === cur ? ' selected' : ''}>${esc(x.sheet)} · ${esc(wbSectionName(x.sheet, x.sec))}</option>`).join('')}
+    </select>`;
+  const A = _wbCmp.a ? wbSecByKey(_wbCmp.a) : null, B = _wbCmp.b ? wbSecByKey(_wbCmp.b) : null;
+  let body = '<div class="wbcmphint">Pick the two options you priced. The difference is what the change is actually worth.</div>';
+  if (A && B) {
+    const sa = wbSectionSums(A.sheet, A.sec), sb = wbSectionSums(B.sheet, B.sec);
+    const bMap = {}; sb.forEach(x => { bMap[x.label] = x; });
+    const rows = sa.filter(x => bMap[x.label]).map(x => {
+      const av = wbSumRaw(A.sheet, A.sec, x.label), bv = wbSumRaw(B.sheet, B.sec, x.label);
+      const d = round2(av - bv);
+      return `<tr><td class="label">${esc(x.label)}</td><td class="calc">${esc(x.val)}</td><td class="calc">${esc(bMap[x.label].val)}</td>
+        <td class="calc wbcmpd">${esc((d > 0 ? '+' : d < 0 ? '−' : '') + (fmtMoney(Math.abs(d)) || wbFmtNum(Math.abs(d)) || '0'))}</td></tr>`;
+    }).join('');
+    body = rows
+      ? `<table class="wbcmptbl"><tr><th></th><th>${esc(wbSectionName(A.sheet, A.sec))}</th><th>${esc(wbSectionName(B.sheet, B.sec))}</th><th>Difference</th></tr>${rows}</table>`
+      : '<div class="wbcmphint">Those two sections don’t total the same things, so there’s nothing to line up.</div>';
+    body += `<div class="wbcmpact"><button class="wbbtn" onclick="wbCmpCharge()">Charge the difference — deduct “${esc(wbSectionName(B.sheet, B.sec))}”</button>
+      ${wbIsDeducted(B.sheet, B.sec) ? '<span class="wbcmpon">Already deducted — the sheet is charging the difference</span>' : ''}</div>`;
+  }
+  return `<div class="wbcmp"><div class="wbcmphead"><b>Compare sections</b>${opt('a', _wbCmp.a)}<span class="wbcmpvs">against</span>${opt('b', _wbCmp.b)}
+    <button class="wbchipb" title="Close" onclick="wbCmpToggle()">✕</button></div>${body}</div>`;
+}
+/* the raw number behind a section subtotal, for the difference */
+function wbSumRaw(sheet, sec, label) {
+  const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols;
+  const hdr = (sec.desc && sec.desc.hdr >= 0) ? sec.desc.hdr : -1;
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i];
+    if (hdr >= 0) { const l = eng.get(sheet, XLSX.utils.encode_cell({ r: hdr, c })); if (l !== label) continue; }
+    const v = eng.get(sheet, XLSX.utils.encode_cell({ r: sec.row, c }));
+    if (typeof v === 'number' && isFinite(v)) return v;
+  }
+  return 0;
+}
 function wbSecKey(sheet, s) { return sheet + '!' + s.sw; }
 function wbSecOpenSet(key, on) { if (on) _wbSecOpen[key] = 1; else delete _wbSecOpen[key]; }
 /* what the section totals — read off its own subtotal row, labelled by its own column headings */
@@ -7092,9 +7210,9 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {};
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbTotalsOrig = {}; _wbCmp = null; _wbSel = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
-  wireWbPop();
+  wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
   renderWbModal();                                  // loading state
   try {
@@ -7108,10 +7226,16 @@ async function openWorkbook(kind, id) {
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
     _wbEng = eng;
     _wbSheet = eng.visibleSheets.indexOf(cfg.prefer) >= 0 ? cfg.prefer : eng.visibleSheets[0];
+    for (const k in (e.wbTotalsF || {})) {              // put back the deducted totals rows
+      const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (!mm) continue;
+      const raw = eng.raw(mm[1], mm[2]); if (!raw || raw.f == null) continue;
+      _wbTotalsOrig[k] = String(raw.f); raw.f = e.wbTotalsF[k];
+    }
+    eng.recalc();
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbTotalsOrig = {}; _wbCmp = null; _wbSel = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7162,7 +7286,7 @@ function wbEditDate(sheet, addr, val) {
   wbEdit(sheet, addr, Math.round(ms / 86400000) + 25569);
 }
 /* the active sheet page (clean) or the raw cell view, + the header total */
-function renderWbBodyHtml() { return (_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet); }
+function renderWbBodyHtml() { return wbCmpHtml() + ((_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet)); }
 function renderWbBody() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = renderWbBodyHtml();
   const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
@@ -7188,6 +7312,110 @@ async function saveWorkbook(closeAfter) {
   } catch (x) { console.error(x); toast('Could not save the workbook: ' + (x.message || x), true); }
   if (closeAfter) requestCloseWb();
 }
+/* ── Selecting a block of cells in cell view, and copy / paste ──
+   Drag across cells (or shift-click) to select a rectangle, Ctrl/Cmd+C copies it as tab-separated
+   text — straight into Excel — and Ctrl/Cmd+V pastes a block back in, filling down and across
+   from the top-left cell you have selected. Calculated cells are copied but never pasted over. */
+function wbSelRect() {
+  if (!_wbSel) return null;
+  const a = _wbSel.a, b = _wbSel.b || _wbSel.a;
+  return { r0: Math.min(a.r, b.r), r1: Math.max(a.r, b.r), c0: Math.min(a.c, b.c), c1: Math.max(a.c, b.c) };
+}
+function wbSelIn(r, c) { const s = wbSelRect(); return !!s && r >= s.r0 && r <= s.r1 && c >= s.c0 && c <= s.c1; }
+function wbSelClear() { _wbSel = null; wbSelPaint(); }
+/* repaint without rebuilding the grid — dragging must stay smooth */
+function wbSelPaint() {
+  const s = wbSelRect();
+  const wrap = document.getElementById('wbGridWrap');
+  const cells = (wrap && typeof wrap.querySelectorAll === 'function') ? wrap.querySelectorAll('td.wbc') : null;
+  if (cells && typeof cells.length === 'number') {
+    for (let i = 0; i < cells.length; i++) {
+      const td = cells[i], r = +td.getAttribute('data-r'), c = +td.getAttribute('data-c');
+      const on = !!s && r >= s.r0 && r <= s.r1 && c >= s.c0 && c <= s.c1;
+      if (on) td.classList.add('wbsel'); else td.classList.remove('wbsel');
+    }
+  }
+  const n = document.getElementById('wbSelInfo');
+  try { if (n) n.textContent = s ? ((s.r1 - s.r0 + 1) + ' × ' + (s.c1 - s.c0 + 1) + ' selected — Ctrl+C to copy, Ctrl+V to paste') : ''; } catch (x) {}
+}
+function wbSelStart(r, c, shift) {
+  if (shift && _wbSel) { _wbSel.b = { r: +r, c: +c }; }
+  else { _wbSel = { a: { r: +r, c: +c }, b: { r: +r, c: +c } }; _wbSelDrag = true; }
+  wbSelPaint();
+}
+function wbSelOver(r, c) {
+  if (!_wbSelDrag || !_wbSel) return;
+  if (+r !== _wbSel.a.r || +c !== _wbSel.a.c) {       // past the first cell — stop the browser text-selecting as we drag
+    try { const g = window.getSelection && window.getSelection(); if (g && g.removeAllRanges) g.removeAllRanges(); } catch (x) {}
+  }
+  _wbSel.b = { r: +r, c: +c }; wbSelPaint();
+}
+function wbSelEnd() { _wbSelDrag = false; }
+/* the selection as tab-separated text — what Excel expects on the clipboard */
+function wbSelText() {
+  const s = wbSelRect(); if (!s || !_wbEng) return '';
+  const lines = [];
+  for (let r = s.r0; r <= s.r1; r++) {
+    const row = [];
+    for (let c = s.c0; c <= s.c1; c++) {
+      const v = _wbEng.get(_wbSheet, XLSX.utils.encode_cell({ r, c }));
+      row.push(v == null || v === '' ? '' : String(v));
+    }
+    lines.push(row.join('\t'));
+  }
+  return lines.join('\n');
+}
+function wbPasteText(text) {
+  const s = wbSelRect(); if (!s || !_wbEng) return 0;
+  const cfg = wbCfg(), e = wbEntity(); if (!e) return 0;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to edit', true); return 0; }
+  const rows = String(text).replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map(l => l.split('\t'));
+  let wrote = 0, skipped = 0;
+  for (let i = 0; i < rows.length; i++) for (let j = 0; j < rows[i].length; j++) {
+    const r = s.r0 + i, c = s.c0 + j;
+    const addr = XLSX.utils.encode_cell({ r, c });
+    const raw = _wbEng.raw(_wbSheet, addr);
+    if (raw && raw.f != null) { skipped++; continue; }        // never paste over a calculated cell
+    wbStoreCell(_wbSheet, addr, rows[i][j]);
+    wrote++;
+  }
+  if (wrote) {
+    _wbSel.b = { r: s.r0 + rows.length - 1, c: s.c0 + Math.max.apply(null, rows.map(x => x.length)) - 1 };
+    e.wbMode = true; renderWbBody(); scheduleWbSave();
+  }
+  toast(wrote ? ('Pasted ' + wrote + ' cell' + (wrote === 1 ? '' : 's') + (skipped ? ' — ' + skipped + ' calculated cell' + (skipped === 1 ? '' : 's') + ' left alone' : '')) : 'Nothing to paste there', !wrote);
+  return wrote;
+}
+/* store one pasted value with the same typing rules as typing it in, but without redrawing */
+function wbStoreCell(sheet, addr, val) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  const t = String(val == null ? '' : val).trim();
+  const numish = t !== '' && /^[-+]?[$,\s]*\d[\d,]*(\.\d+)?\s*%?$/.test(t);
+  let stored;
+  if (t === '') stored = '';
+  else if (numish) { let n = parseFloat(t.replace(/[$,\s]/g, '').replace('%', '')); if (/%\s*$/.test(t)) n = n / 100; stored = n; }
+  else stored = val;
+  _wbEng.setInput(sheet, addr, stored);
+  e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored;
+}
+function wireWbClipboard() {
+  if (_wbClipWired || typeof document.addEventListener !== 'function') return; _wbClipWired = true;
+  document.addEventListener('mouseup', () => wbSelEnd());
+  document.addEventListener('copy', ev => {
+    if (!_wb || _wbView !== 'cells') return;
+    const s = wbSelRect(); if (!s) return;
+    if (s.r0 === s.r1 && s.c0 === s.c1) return;      // one cell — let the field copy its own text
+    const txt = wbSelText(); if (!txt) return;
+    ev.preventDefault(); ev.clipboardData.setData('text/plain', txt);
+    toast('Copied ' + (s.r1 - s.r0 + 1) + ' × ' + (s.c1 - s.c0 + 1) + ' cells');
+  });
+  document.addEventListener('paste', ev => {
+    if (!_wb || _wbView !== 'cells' || !wbSelRect()) return;
+    const txt = ev.clipboardData && ev.clipboardData.getData('text/plain'); if (!txt) return;
+    if (txt.indexOf('\t') < 0 && txt.indexOf('\n') < 0) return;     // a single value — let the field handle it
+    ev.preventDefault(); wbPasteText(txt);
+  });
+}
 function wbGridHtml() {
   const eng = _wbEng, sheet = _wbSheet; if (!eng) return '';
   const rg = eng.range(sheet);
@@ -7200,7 +7428,7 @@ function wbGridHtml() {
     merges[mg.s.r + ',' + mg.s.c] = { rs: mg.e.r - mg.s.r + 1, cs: mg.e.c - mg.s.c + 1 };
     for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
   });
-  let html = '<table class="wbgrid"><thead><tr><th class="wbh wbcorner"></th>';
+  let html = '<div class="wbselbar">Drag across cells to select a block · <span id="wbSelInfo"></span></div><table class="wbgrid"><thead><tr><th class="wbh wbcorner"></th>';
   for (let c = rg.s.c; c <= endC; c++) html += `<th class="wbh">${XLSX.utils.encode_col(c)}</th>`;
   html += '</tr></thead><tbody>';
   for (let r = rg.s.r; r <= endR; r++) {
@@ -7214,11 +7442,12 @@ function wbGridHtml() {
       const isF = !!(raw && raw.f != null);
       const val = eng.get(sheet, a);
       const isStr = typeof val === 'string';
-      if (isF) { html += `<td${span} class="wbc wbcalc" title="=${esc(raw.f)}">${esc(wbFmtNum(val))}</td>`; }
-      else if (isStr && val !== '') { html += `<td${span} class="wbc wblbl">${esc(val)}</td>`; }
+      const coord = ` data-r="${r}" data-c="${c}" onmousedown="wbSelStart(${r},${c},event.shiftKey)" onmouseover="wbSelOver(${r},${c})"`;
+      if (isF) { html += `<td${span} class="wbc wbcalc${wbSelIn(r, c) ? ' wbsel' : ''}"${coord} title="=${esc(raw.f)}">${esc(wbFmtNum(val))}</td>`; }
+      else if (isStr && val !== '') { html += `<td${span} class="wbc wblbl${wbSelIn(r, c) ? ' wbsel' : ''}"${coord}>${esc(val)}</td>`; }
       else {
         const ov = eng.getOverride(sheet, a);
-        html += `<td${span} class="wbc"><input class="wbin" value="${esc(wbInputRaw(val))}" onchange="wbEdit('${esc(sheet).replace(/'/g, "\\'")}','${a}',this.value)"></td>`;
+        html += `<td${span} class="wbc${wbSelIn(r, c) ? ' wbsel' : ''}"${coord}><input class="wbin" value="${esc(wbInputRaw(val))}" onchange="wbEdit('${esc(sheet).replace(/'/g, "\\'")}','${a}',this.value)"></td>`;
       }
     }
     html += '</tr>';
@@ -7262,18 +7491,20 @@ function wbCardHtml(sheet, r0, r1, sec) {
   const sums = wbSectionSums(sheet, sec).map(s => `${esc(s.label)} <b>${esc(s.val)}</b>`).join(' · ');
   const shEsc = String(sheet).replace(/'/g, "\\'");
   const key = wbSecKey(sheet, sec);
+  const ded = wbIsDeducted(sheet, sec);
   const title = wbSectionTitleCell(sheet, sec);
   const name = wbSectionName(sheet, sec);
   const nameHtml = title
     ? `<input class="tgname" value="${esc(name)}" placeholder="Name this section" title="Names the section in the workbook itself — Excel shows it too" onclick="event.stopPropagation()" onchange="wbEdit('${shEsc}','${title}',this.value)">`
     : `<span class="tgname">${esc(name)}</span>`;
-  return `<details class="togroup${off ? ' excluded' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
+  return `<details class="togroup${off ? ' excluded' : ded ? ' deducted' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
     <summary>
       <span class="caret">▸</span>
       <span class="tgnum">${sec.n}.</span>
       ${nameHtml}
       <label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${sec.bool ? 'true' : 'false'})"> Exclude</label>
-      ${off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ''}
+      <label class="tgex" title="Subtract this section instead of adding it — how you charge only the difference between two options"><input type="checkbox"${ded ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleDeduct('${shEsc}','${sec.sw}')"> Deduct</label>
+      ${off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ded ? '<span class="ded-note">DEDUCTED — subtracted from the total</span>' : ''}
       <span class="sums">${sums}</span>
     </summary>
     <table class="wbsheet">${rows}</table>
@@ -7349,6 +7580,7 @@ function renderWbModal() {
         <h1>${esc(loading ? 'Loading…' : cur)}</h1>
         ${loading ? '' : `<span class="wbtot"><small>Total bid</small><b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>
         <button class="wbbtn sec" onclick="wbSetView('${cells ? 'sheet' : 'cells'}')" title="${cells ? 'Back to the clean sheet view' : 'Show spreadsheet row/column references'}">${cells ? '▤ Sheet view' : '⌗ Cell view'}</button>
+        <button class="wbbtn sec" onclick="wbCmpToggle()" title="Compare two sections and charge only the difference">⇄ Compare sections</button>
         <button class="wbbtn sec" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
         <button class="wbbtn" onclick="saveWorkbook(true)">Save &amp; close</button>
         <button class="wbx" onclick="requestCloseWb()" title="Close">✕</button>
@@ -7411,6 +7643,24 @@ function renderWbModal() {
     .wbapp select.wbi:focus{outline:2px solid #7e8ef0}
     .wbapp .tgex{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:12.5px;color:#5c6470;cursor:pointer;text-decoration:none}
     .wbapp .excl-note{color:#b02a37;font-size:12px;font-weight:600;text-decoration:none}
+    .wbapp .ded-note{color:#8a5a00;font-size:12px;font-weight:600}
+    .wbapp details.togroup.deducted>summary{background:#fdf0d5}
+    .wbapp details.togroup.deducted>summary .tgnum::after{content:' −';color:#8a5a00}
+    .wbcmp{background:#fff;border:1px solid #7e8ef0;border-radius:8px;padding:10px 12px;margin-bottom:12px}
+    .wbcmphead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+    .wbcmphead>b{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#5c6470}
+    .wbcmpvs{font-size:12px;color:#5c6470}
+    .wbcmpsel{border:1px solid #c8cede;background:#fffef2;border-radius:5px;padding:5px 8px;font:inherit;font-size:13px;max-width:34vw}
+    .wbcmphint{font-size:12.5px;color:#5c6470}
+    table.wbcmptbl{border-collapse:collapse;font-size:13px;margin-bottom:8px}
+    table.wbcmptbl th{text-align:right;font-size:11.5px;color:#5c6470;padding:3px 10px;font-weight:600}
+    table.wbcmptbl th:first-child{text-align:left}
+    table.wbcmptbl td{border-top:1px solid #e3e6ee;padding:4px 10px}
+    table.wbcmptbl td.calc{text-align:right;font-variant-numeric:tabular-nums;background:none}
+    table.wbcmptbl td.label{background:none;white-space:nowrap}
+    table.wbcmptbl td.wbcmpd{font-weight:700;color:#14206e}
+    .wbcmpact{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .wbcmpon{font-size:12px;color:#8a5a00;font-weight:600}
     .wbapp details.togroup>table.wbsheet{display:block;overflow-x:auto;max-width:100%}
     .wbapp table.wbgrid{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;background:#fff}
     .wbapp .wbgrid th.wbh{position:sticky;top:0;background:#e9ecf3;border:1px solid #d7dbe3;color:#5c6470;font-weight:600;padding:2px 6px;z-index:1;text-align:center;min-width:28px}
@@ -7420,13 +7670,19 @@ function renderWbModal() {
     .wbapp .wbgrid td.wbcalc{padding:2px 6px;text-align:right;color:#333;background:#f1f3f7}
     .wbapp .wbin{width:100%;min-width:56px;border:none;background:#fffef2;padding:2px 6px;font:inherit;text-align:right;color:#16181d}
     .wbapp .wbin:focus{outline:2px solid #7e8ef0}
+    .wbselbar{font-size:12px;color:#5c6470;padding:6px 2px}
+    .wbselbar span{color:#14206e;font-weight:600}
+    .wbapp .wbgrid td.wbc.wbsel{background:#dfe6ff;box-shadow:inset 0 0 0 1px #7e8ef0}
+    .wbapp .wbgrid td.wbc.wbsel input.wbin{background:#dfe6ff}
+    .wbapp .wbgrid td.wbc{user-select:none}
+    .wbapp .wbgrid td.wbc input.wbin{user-select:text}
     @media (max-width:900px){ .wbapp{flex-direction:column} .wbside{width:100%;flex:none;max-height:38vh} .wbnav{display:flex;flex-wrap:wrap} .wbnav a{border-left:none;border-bottom:3px solid transparent} .wbnav a.on{border-left:none;border-bottom-color:#7e8ef0} }
   </style>`;
 }
 function wbResetWorkbook() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) return;
   if (!confirm('Clear all your workbook edits and return to the original workbook?')) return;
-  e.wbInputs = {}; e.wbMode = false; delete e.wbTotal;
+  e.wbInputs = {}; e.wbDeduct = {}; e.wbMode = false; delete e.wbTotal;
   try { FB.setDoc(cfg.ref(e), clean(e)); } catch (x) {}
   openWorkbook(_wb.kind, _wb.id);
   cfg.rerender();
