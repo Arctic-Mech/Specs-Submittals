@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.32';
+const APP_VERSION = 'v7.33';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5551,11 +5551,16 @@ function estEvalWb(ws, names) {
    lossless round-trip of the free-form lists; the Proposal sheet's headline
    dollar figure (and its spelled-out amount) are stamped too.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* The template workbooks are big and change rarely, so they're cached hard — but 'force-cache'
+   means the browser keeps whatever it downloaded FIRST and never revalidates, so a replaced
+   template would never reach anyone who had already opened the app. Stamping the release onto
+   the URL makes each deploy a new cache entry: still one download per release, always current. */
+function tplUrl(u) { return u + '?v=' + encodeURIComponent(APP_VERSION); }
 const EST_TEMPLATE_URL = 'templates/estimate-template.xlsm';
 let _estTemplateBuf = null;
 async function estTemplateBytes() {
   if (_estTemplateBuf) return _estTemplateBuf.slice(0);
-  const res = await fetch(EST_TEMPLATE_URL, { cache: 'force-cache' });
+  const res = await fetch(tplUrl(EST_TEMPLATE_URL), { cache: 'force-cache' });
   if (!res.ok) throw new Error('template ' + res.status);
   _estTemplateBuf = await res.arrayBuffer();
   return _estTemplateBuf.slice(0);
@@ -6443,7 +6448,7 @@ const CO_TEMPLATE_URL = 'templates/co-proposal-template.xlsm';
 let _coTemplateBuf = null;
 async function coTemplateBytes() {
   if (_coTemplateBuf) return _coTemplateBuf.slice(0);
-  const res = await fetch(CO_TEMPLATE_URL, { cache: 'force-cache' });
+  const res = await fetch(tplUrl(CO_TEMPLATE_URL), { cache: 'force-cache' });
   if (!res.ok) throw new Error('template ' + res.status);
   _coTemplateBuf = await res.arrayBuffer();
   return _coTemplateBuf.slice(0);
@@ -7004,7 +7009,7 @@ function wbToggleSection(sheet, sw, bool) {
    only the cells that DIFFER from the template, so if the template changes underneath it that
    diff no longer means the same thing — re-read the filed spreadsheet, which holds the real
    values, and take a fresh diff. Left unstamped when the folder isn't connected, so it retries. */
-const WB_TPL_V = { co: 2, est: 1 };
+const WB_TPL_V = { co: 3, est: 1 };
 async function wbMigrateTemplate(kind, e, cfg) {
   if (!e.wbMode || (e.wbTplV || 0) >= WB_TPL_V[kind]) return;
   let ok = false;
