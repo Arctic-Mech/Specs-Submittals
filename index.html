@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.33';
+const APP_VERSION = 'v7.34';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6793,6 +6793,7 @@ function makeWbEngine(wb) {
 
 /* ── CO WORKBOOK GRID — view + edit all 12 sheets on the website, live totals ── */
 let _wb = null, _wbEng = null, _wbSheet = null, _wbRows = {}, _wbSaveT = null, _wbView = null, _wbBounds = {}, _wbSecs = {}, _wbFills = {};
+let _wbDV = {}, _wbSecOpen = {};        // the workbook's dropdown lists + which sections you've opened
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -6826,6 +6827,61 @@ function wbSheetBounds(sheet) {                       // the sheet's real conten
    CP Backup, peach on the takeoff sheets. So the workbook itself tells us what is editable,
    including the labels it lets you rename ("Additional Material", "Custom 1 Hrs", "Labor
    Markup"). We work the entry colour out per sheet rather than hard-coding one. */
+/* ── The workbook's own dropdowns ──
+   Overtime, Shift, the tax line and the Exclude switches are all Excel data-validation lists
+   ("OT,DBLT", "Swing, Graveyard, Special", "Yes,No"). We read those lists straight out of the
+   sheet XML and render the cell as a picker with exactly the choices Excel offers. */
+function wbDvUnesc(s) { return String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'); }
+function wbDvValues(f1) {
+  const raw = wbDvUnesc(String(f1 || '').trim());
+  if (!raw || raw.charAt(0) !== '"') return [];                 // only inline lists; a range ref needs the sheet
+  return raw.replace(/^"|"$/g, '').split(',').map(v => v.trim()).filter(v => v !== '');
+}
+async function wbLoadValidations(bytes) {
+  const out = {};
+  try {
+    const JZ = await ensureJSZip();
+    const zip = await JZ.loadAsync(bytes);
+    const fmap = await zipSheetFileMap(zip);
+    for (const sheet in fmap) {
+      const f = zip.file(fmap[sheet]); if (!f) continue;
+      const xml = await f.async('string');
+      const list = [];
+      const re = /<dataValidation\b([^>]*?)(?:\/>|>([\s\S]*?)<\/dataValidation>)/g;
+      let m;
+      while ((m = re.exec(xml))) {
+        const attrs = m[1] || '';
+        if (attrs.indexOf('type="list"') < 0) continue;
+        const sq = (attrs.match(/sqref="([^"]+)"/) || [])[1]; if (!sq) continue;
+        const vals = wbDvValues(((m[2] || '').match(/<formula1>([\s\S]*?)<\/formula1>/) || [])[1]);
+        if (!vals.length) continue;
+        const ranges = wbDvUnesc(sq).trim().split(/\s+/).map(r => { try { return XLSX.utils.decode_range(r); } catch (x) { return null; } }).filter(Boolean);
+        if (ranges.length) list.push({ ranges, values: vals });
+      }
+      if (list.length) out[sheet] = list;
+    }
+  } catch (x) { console.warn('dropdowns: could not read the workbook’s lists:', x && x.message || x); }
+  return out;
+}
+function wbDvFor(sheet, addr) {
+  const list = _wbDV[sheet]; if (!list) return null;
+  let cell; try { cell = XLSX.utils.decode_cell(addr); } catch (x) { return null; }
+  for (let i = 0; i < list.length; i++) {
+    const rs = list[i].ranges;
+    for (let j = 0; j < rs.length; j++) {
+      const r = rs[j];
+      if (cell.r >= r.s.r && cell.r <= r.e.r && cell.c >= r.s.c && cell.c <= r.e.c) return list[i].values;
+    }
+  }
+  return null;
+}
+function wbSelectHtml(sheet, addr, val, values, cls) {
+  const cur = (val == null ? '' : String(val));
+  const opts = ['<option value=""></option>'].concat(
+    values.map(v => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)}</option>`),
+    (cur && values.indexOf(cur) < 0) ? [`<option value="${esc(cur)}" selected>${esc(cur)}</option>`] : []);
+  return `<select class="${cls}" onchange="wbEdit('${String(sheet).replace(/'/g, "\\'")}','${addr}',this.value)">${opts.join('')}</select>`;
+}
 function wbFillKey(raw) {
   const s = raw && raw.s; if (!s || s.patternType === 'none') return '';    // no fill tells us nothing
   const f = s.fgColor; if (!f) return '';
@@ -6966,9 +7022,21 @@ function wbSectionDescCol(sheet, s, b) {
   }
   return { c: cols[0], hdr: -1 };
 }
-/* the section's name: its first description line, as the estimator names a takeoff group */
+/* Where the workbook keeps the section's name: the row above its first line, in the description
+   column — an entry-coloured cell the form leaves blank for you (A2 / A33 / A64 on a takeoff
+   sheet). Naming a section here writes into the workbook, so Excel shows it too. */
+function wbSectionTitleCell(sheet, s) {
+  const d = s.desc || {};
+  if (d.c == null || s.min <= 0) return '';
+  const r = s.min - 1;
+  if (d.hdr >= 0 && r <= d.hdr) return '';                 // no room between the column headings and the lines
+  return XLSX.utils.encode_cell({ r, c: d.c });
+}
+/* the section's name: what you typed on its title row, else its first line, else its number */
 function wbSectionName(sheet, s) {
   const eng = _wbEng, d = s.desc || {};
+  const t = wbSectionTitleCell(sheet, s);
+  if (t) { const tv = eng.get(sheet, t); if (typeof tv === 'string' && tv.trim()) return tv.trim(); }
   if (d.c != null) {
     for (let r = Math.max(0, d.hdr < 0 ? s.min : d.hdr + 1); r <= s.max; r++) {
       if (r === s.row) continue;
@@ -6978,6 +7046,8 @@ function wbSectionName(sheet, s) {
   }
   return 'Section ' + s.n;
 }
+function wbSecKey(sheet, s) { return sheet + '!' + s.sw; }
+function wbSecOpenSet(key, on) { if (on) _wbSecOpen[key] = 1; else delete _wbSecOpen[key]; }
 /* what the section totals — read off its own subtotal row, labelled by its own column headings */
 function wbSectionSums(sheet, s) {
   const eng = _wbEng, b = wbSheetBounds(sheet), cols = b.cols, out = [];
@@ -7022,7 +7092,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {};
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {};
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7030,7 +7100,9 @@ async function openWorkbook(kind, id) {
   try {
     await wbMigrateTemplate(kind, e, cfg);
     const XL = await loadSheetJS();
-    const wb = XL.read(new Uint8Array(await cfg.tpl()), { type: 'array', cellFormula: true, cellNF: true, cellStyles: true });
+    const tplBytes = new Uint8Array(await cfg.tpl());
+    const wb = XL.read(tplBytes, { type: 'array', cellFormula: true, cellNF: true, cellStyles: true });
+    _wbDV = await wbLoadValidations(tplBytes);      // Overtime / Shift / tax pickers, as Excel defines them
     const eng = makeWbEngine(wb);
     const ov = e.wbInputs || {};
     for (const k in ov) { const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (m) eng.setInput(m[1], m[2], ov[k]); }
@@ -7039,7 +7111,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbDV = {}; _wbSecOpen = {}; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7146,7 +7218,7 @@ function wbGridHtml() {
       else if (isStr && val !== '') { html += `<td${span} class="wbc wblbl">${esc(val)}</td>`; }
       else {
         const ov = eng.getOverride(sheet, a);
-        html += `<td${span} class="wbc"><input class="wbin${ov != null ? ' wbedited' : ''}" value="${esc(wbInputRaw(val))}" onchange="wbEdit('${esc(sheet).replace(/'/g, "\\'")}','${a}',this.value)"></td>`;
+        html += `<td${span} class="wbc"><input class="wbin" value="${esc(wbInputRaw(val))}" onchange="wbEdit('${esc(sheet).replace(/'/g, "\\'")}','${a}',this.value)"></td>`;
       }
     }
     html += '</tr>';
@@ -7189,11 +7261,17 @@ function wbCardHtml(sheet, r0, r1, sec) {
   const off = wbSectionExcluded(sheet, sec.sw);
   const sums = wbSectionSums(sheet, sec).map(s => `${esc(s.label)} <b>${esc(s.val)}</b>`).join(' · ');
   const shEsc = String(sheet).replace(/'/g, "\\'");
-  return `<details class="togroup${off ? ' excluded' : ''}" open>
+  const key = wbSecKey(sheet, sec);
+  const title = wbSectionTitleCell(sheet, sec);
+  const name = wbSectionName(sheet, sec);
+  const nameHtml = title
+    ? `<input class="tgname" value="${esc(name)}" placeholder="Name this section" title="Names the section in the workbook itself — Excel shows it too" onclick="event.stopPropagation()" onchange="wbEdit('${shEsc}','${title}',this.value)">`
+    : `<span class="tgname">${esc(name)}</span>`;
+  return `<details class="togroup${off ? ' excluded' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
     <summary>
       <span class="caret">▸</span>
       <span class="tgnum">${sec.n}.</span>
-      <span class="tgname">${esc(wbSectionName(sheet, sec))}</span>
+      ${nameHtml}
       <label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${sec.bool ? 'true' : 'false'})"> Exclude</label>
       ${off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ''}
       <span class="sums">${sums}</span>
@@ -7210,7 +7288,8 @@ function wbRowsHtml(sheet, r0, r1, sec) {
     for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
   });
   const shEsc = String(sheet).replace(/'/g, "\\'");
-  const hide = sec ? { [sec.lbl]: 1, [sec.sw]: 1 } : {};   // the switch lives on the header bar now
+  const hide = {};                                        // the switch and the name live on the header bar now
+  if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
   let html = '', gap = 0, any0 = false;
   for (let r = r0; r <= r1; r++) {
     let any = false;
@@ -7239,11 +7318,13 @@ function wbRowsHtml(sheet, r0, r1, sec) {
       if (isF) html += `<td${span} class="calc" title="=${esc(String(raw.f))}">${esc(wbCellFmt(val, z))}</td>`;
       else if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) html += `<td${span} class="label">${esc(val)}</td>`;
       else {
+        const dv = wbDvFor(sheet, a);
+        if (dv) { html += `<td${span} class="inp">${wbSelectHtml(sheet, a, val, dv, 'wbi wbsel2')}</td>`; continue; }
         const pct = wbIsPctCell(z), dat = !pct && wbIsDateCell(z);
         const sv = pct ? ((val === '' || val == null) ? '' : (Math.round(Number(val) * 10000) / 100))
           : dat ? wbDateStr(val) : wbInputRaw(val);
         const fn = pct ? 'wbEditPct' : dat ? 'wbEditDate' : 'wbEdit';
-        html += `<td${span} class="inp"><input class="wbi${pct ? ' pct' : ''}${ov != null ? ' edited' : ''}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
+        html += `<td${span} class="inp"><input class="wbi${pct ? ' pct' : ''}" value="${esc(sv)}" onchange="${fn}('${shEsc}','${a}',this.value)">${pct ? '<i class="pctm">%</i>' : ''}</td>`;
       }
     }
     html += '</tr>';
@@ -7310,7 +7391,6 @@ function renderWbModal() {
     .wbapp input.wbi{width:100%;min-width:64px;border:1px solid #c8cede;background:#fffef2;border-radius:3px;padding:3px 5px;
       text-align:right;font:inherit;font-variant-numeric:tabular-nums;color:#16181d}
     .wbapp input.wbi:focus{outline:2px solid #7e8ef0}
-    .wbapp input.wbi.edited{background:#e7edff;border-color:#7e8ef0;font-weight:600}
     .wbapp input.wbi.pct{padding-right:18px}
     .wbapp .pctm{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-style:normal;font-size:11px;color:#5c6470;pointer-events:none}
     .wbapp details.togroup{border:1px solid #d7dbe3;border-radius:8px;margin-bottom:12px;background:#fff;overflow:hidden;max-width:100%}
@@ -7323,7 +7403,12 @@ function renderWbModal() {
     .wbapp details.togroup>summary .sums b{color:#14206e;font-variant-numeric:tabular-nums}
     .wbapp details.togroup.excluded>summary{background:#f4d8db;text-decoration:line-through}
     .wbapp .tgnum{color:#5c6470;font-weight:600}
-    .wbapp .tgname{font-weight:600}
+    .wbapp span.tgname{font-weight:600}
+    .wbapp input.tgname{font:600 13.5px inherit;color:#14206e;background:#fffef2;border:1px solid #c8cede;border-radius:5px;padding:3px 8px;min-width:220px;max-width:46vw}
+    .wbapp input.tgname:focus{outline:2px solid #7e8ef0}
+    .wbapp details.togroup.excluded input.tgname{text-decoration:line-through;color:#b02a37}
+    .wbapp select.wbi{width:100%;min-width:88px;border:1px solid #c8cede;background:#fffef2;border-radius:3px;padding:2px 4px;font:inherit;color:#16181d}
+    .wbapp select.wbi:focus{outline:2px solid #7e8ef0}
     .wbapp .tgex{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:12.5px;color:#5c6470;cursor:pointer;text-decoration:none}
     .wbapp .excl-note{color:#b02a37;font-size:12px;font-weight:600;text-decoration:none}
     .wbapp details.togroup>table.wbsheet{display:block;overflow-x:auto;max-width:100%}
@@ -7335,7 +7420,6 @@ function renderWbModal() {
     .wbapp .wbgrid td.wbcalc{padding:2px 6px;text-align:right;color:#333;background:#f1f3f7}
     .wbapp .wbin{width:100%;min-width:56px;border:none;background:#fffef2;padding:2px 6px;font:inherit;text-align:right;color:#16181d}
     .wbapp .wbin:focus{outline:2px solid #7e8ef0}
-    .wbapp .wbin.wbedited{background:#e7edff;font-weight:600}
     @media (max-width:900px){ .wbapp{flex-direction:column} .wbside{width:100%;flex:none;max-height:38vh} .wbnav{display:flex;flex-wrap:wrap} .wbnav a{border-left:none;border-bottom:3px solid transparent} .wbnav a.on{border-left:none;border-bottom-color:#7e8ef0} }
   </style>`;
 }
