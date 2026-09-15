@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.42';
+const APP_VERSION = 'v7.43';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6907,6 +6907,8 @@ let _wbSel = null, _wbSelDrag = false, _wbClipWired = false;   // the selected b
 let _wbChk = null;                       // the last check against the filed spreadsheet
 let _wbPA = {};                          // print area per sheet — the document, as opposed to the scaffolding
 let _wbBlocks = {};                      // the sheet's fixed-length lists (takeoff lines, subs, additional material)
+let _wbPage = {};                        // how Excel is set up to print each sheet (portrait / landscape)
+let _wbPdf = null;                       // the "which pages?" picker, while it is open
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
    Pages ARE the workbook's own sheets (SM Takeoff, Pipe Takeoff, CP Backup, Labor Rates …),
@@ -7001,6 +7003,7 @@ function wbDvValues(f1) {
 }
 async function wbLoadValidations(bytes) {
   const out = {};
+  _wbPage = {};
   try {
     const JZ = await ensureJSZip();
     const zip = await JZ.loadAsync(bytes);
@@ -7008,6 +7011,10 @@ async function wbLoadValidations(bytes) {
     for (const sheet in fmap) {
       const f = zip.file(fmap[sheet]); if (!f) continue;
       const xml = await f.async('string');
+      // while we have the sheet's XML: how Excel is set up to PRINT it. The takeoffs are
+      // landscape, the proposal and the CP portrait — the exported PDF should agree.
+      const ps = (xml.match(/<pageSetup\b[^>]*>/) || [])[0] || '';
+      _wbPage[sheet] = { orient: /orientation="landscape"/.test(ps) ? 'landscape' : 'portrait' };
       const list = [];
       const re = /<dataValidation\b([^>]*?)(?:\/>|>([\s\S]*?)<\/dataValidation>)/g;
       let m;
@@ -7916,7 +7923,7 @@ function wbEditDate(sheet, addr, val) {
   wbEdit(sheet, addr, Math.round(ms / 86400000) + 25569);
 }
 /* the active sheet page (clean) or the raw cell view, + the header total */
-function renderWbBodyHtml() { return wbChkHtml() + wbCmpHtml() + ((_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet)); }
+function renderWbBodyHtml() { return wbPdfHtml() + wbChkHtml() + wbCmpHtml() + ((_wbView === 'cells') ? wbGridHtml() : wbSheetHtml(_wbSheet)); }
 function renderWbBody() {
   const g = document.getElementById('wbGridWrap'); if (g) g.innerHTML = renderWbBodyHtml();
   const t = document.getElementById('wbTotal'); if (t) t.textContent = fmtMoney(wbTotalVal()) || '$0';
@@ -8100,30 +8107,42 @@ function wbSheetHtml(sheet) {
   if (!b.cols.length) return '<div class="wbcard" style="padding:18px;color:#5c6470">This sheet is empty.</div>';
   const shown = _wbRows[sheet] != null ? _wbRows[sheet] : WB_ROW_CAP;
   const endR = Math.min(b.r1, b.r0 + shown - 1);
-  const all = wbSectionsOf(sheet).filter(s => s.min <= endR);
-  const docEnd = b.pa ? Math.min(endR, b.pa.e.r) : endR;             // the printed document stops here
-  const main = b.inPA && b.inPA.length ? b.inPA : b.cols;
-  const secs = all.filter(s => s.min <= docEnd), below = all.filter(s => s.min > docEnd);
-  let html = '', prev = b.r0 - 1;
-  if (!secs.length) html = wbCardHtml(sheet, b.r0, docEnd, null, main);
-  else {
-    secs.forEach(s => {
-      const start = Math.max(prev + 1, s.min - 2);                  // pick up the section's own heading rows
-      if (start > prev + 1) html += wbCardHtml(sheet, prev + 1, start - 1, null, main);
-      html += wbCardHtml(sheet, start, Math.min(Math.max(s.max, s.row), docEnd), s, main);
-      prev = Math.max(s.max, s.row);
-    });
-    if (prev < docEnd) html += wbCardHtml(sheet, prev + 1, docEnd, null, main);
-  }
-  // sections added past the end of the form — part of the estimate, so drawn as sections, not scaffolding
-  below.forEach(s => { html += wbCardHtml(sheet, Math.max(s.min - 2, docEnd + 1), Math.max(s.max, s.row), s, main); });
-  if (all.length && wbSecSource(sheet)) html += `<div style="padding:2px 2px 12px"><button class="wbbtn sec" onclick="wbAddSection('${esc(sheet).replace(/'/g, "\\'")}')" title="Copy this sheet's last section to the end — a fresh set of lines with its own Exclude and Deduct switches, totalled in with the others">+ Add a section</button></div>`;
+  const bl = wbPageBlocks(sheet, endR);
+  const main = bl.main, docEnd = bl.docEnd;
+  let html = bl.blocks.map(x => wbCardHtml(sheet, x.r0, x.r1, x.sec, main)).join('');
+  if (bl.hasSections && wbSecSource(sheet)) html += `<div style="padding:2px 2px 12px"><button class="wbbtn sec" onclick="wbAddSection('${esc(sheet).replace(/'/g, "\\'")}')" title="Copy this sheet's last section to the end — a fresh set of lines with its own Exclude and Deduct switches, totalled in with the others">+ Add a section</button></div>`;
   html += wbAsideHtml(sheet, b, endR, docEnd);
   let real = b.r1;                                                   // added lines are already drawn, in their place
   wbAdds(wbEntity(), sheet).forEach(x => { if (x.row >= real) real = x.row - 1; });
   { const sm = wbSecMaxRow(wbEntity(), sheet); if (sm >= real) real = docEnd; }
   if (endR < real) html += `<div style="padding:4px 2px 12px"><button class="wbbtn sec" onclick="wbMoreRows()">▼ Show ${Math.min(WB_ROW_STEP, real - endR)} more rows (of ${real - b.r0 + 1})</button></div>`;
   return html;
+}
+/* How a sheet breaks into blocks down the page: plain runs of rows, and section cards carrying
+   their own Exclude switch. One ordering, used by the screen and by the PDF, so the exported
+   document is laid out exactly the way the person who exported it was looking at it. */
+function wbPageBlocks(sheet, endR) {
+  const b = wbSheetBounds(sheet);
+  if (endR == null) endR = b.r1;
+  const docEnd = b.pa ? Math.min(endR, b.pa.e.r) : endR;             // the printed document stops here
+  const main = b.inPA && b.inPA.length ? b.inPA : b.cols;
+  const all = wbSectionsOf(sheet).filter(s => s.min <= endR);
+  const secs = all.filter(s => s.min <= docEnd), below = all.filter(s => s.min > docEnd);
+  const blocks = [];
+  let prev = b.r0 - 1;
+  if (!secs.length) blocks.push({ r0: b.r0, r1: docEnd, sec: null });
+  else {
+    secs.forEach(s => {
+      const start = Math.max(prev + 1, s.min - 2);                  // pick up the section's own heading rows
+      if (start > prev + 1) blocks.push({ r0: prev + 1, r1: start - 1, sec: null });
+      blocks.push({ r0: start, r1: Math.min(Math.max(s.max, s.row), docEnd), sec: s });
+      prev = Math.max(s.max, s.row);
+    });
+    if (prev < docEnd) blocks.push({ r0: prev + 1, r1: docEnd, sec: null });
+  }
+  // sections added past the end of the form — part of the estimate, so drawn as sections, not scaffolding
+  below.forEach(s => blocks.push({ r0: Math.max(s.min - 2, docEnd + 1), r1: Math.max(s.max, s.row), sec: s }));
+  return { blocks, main, docEnd, hasSections: all.length > 0 };
 }
 /* Everything the printed sheet doesn't carry — the columns beside it and any rows below it.
    Kept, and one click away, but folded up so the document reads first. */
@@ -8187,8 +8206,6 @@ function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
   const hide = {};                                        // the switch and the name live on the header bar now
   if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
   const span = cols.length + (subCol ? 1 : 0);
-  const added = wbAddedRowSet(sheet);                     // lines added past the end of a list, drawn in their place
-  const secRows = wbSecRowMap(sheet);                     // rows of an added section, and what each was copied from
   const cfg = wbCfg(), locked = !!(cfg && cfg.locked && cfg.locked(ent));
   /* One row. An added line sits physically below the sheet, so it borrows everything the list's
      last line knows — its merges, its dropdowns, its number formats, and which of its cells you
@@ -8237,7 +8254,33 @@ function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
     }
     return out + '</tr>';
   }
-  let html = '', gap = 0, any0 = false;
+  let html = '';
+  wbRowSeq(sheet, r0, r1, sec, cols, keepAdded).forEach(it => {
+    if (it.t === 'gap') { html += `<tr class="gap"><td colspan="${span}"></td></tr>`; return; }
+    if (it.t === 'row') { html += drawRow(it.r, it.src, it.blk); return; }
+    const blk = it.blk, extra = it.extra;
+    if (!locked) html += `<tr class="wbaddbar"><td colspan="${span}">
+      <button class="wbbtn sec" onclick="wbAddLine('${shEsc}','${esc(blk.key)}')" title="Put another line at the end of this list — it totals in with the rest, in Excel too">+ Add a line</button>
+      ${extra.length ? `<button class="wbbtn sec" onclick="wbRemoveAddedLine('${shEsc}','${esc(blk.key)}',${extra[extra.length - 1].row})" title="Take the last added line back off">✕ Remove added line</button>
+      <span class="wbaddnote">${extra.length} line${extra.length === 1 ? '' : 's'} added past the ${blk.r1 - blk.r0 + 1} the form comes with</span>` : ''}
+    </td></tr>`;
+  });
+  return html;
+}
+/* Which rows a block of the sheet actually shows, in what order, and — for a row that lives
+   below the sheet because it was added — the row it takes its shape from. The screen and the
+   PDF both walk this, so an exported page can't quietly differ from the one on screen. */
+function wbRowSeq(sheet, r0, r1, sec, cols, keepAdded) {
+  const eng = _wbEng, b = wbSheetBounds(sheet), ent = wbEntity();
+  const added = wbAddedRowSet(sheet), secRows = wbSecRowMap(sheet);
+  const covered = {};
+  eng.mergesOf(sheet).forEach(mg => {
+    for (let r = mg.s.r; r <= mg.e.r; r++) for (let c = mg.s.c; c <= mg.e.c; c++) if (!(r === mg.s.r && c === mg.s.c)) covered[r + ',' + c] = 1;
+  });
+  const hide = {};
+  if (sec) { hide[sec.lbl] = 1; hide[sec.sw] = 1; const t = wbSectionTitleCell(sheet, sec); if (t) hide[t] = 1; }
+  const out = [];
+  let gap = 0, any0 = false;
   for (let r = r0; r <= r1; r++) {
     // Added lines and sections are drawn in their place, in the document — but the columns beside
     // the printed sheet (Overtime, Shift, the pay working) carry them too, so keep them there.
@@ -8257,22 +8300,273 @@ function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
     const extra = blk && blk.totals.some(t => b.pos[t.col] != null && cols.indexOf(t.col) >= 0) ? wbAddedFor(ent, sheet, blk.key) : null;
     if (wbHiddenRow(sheet, r) && !extra) { gap++; continue; }         // Excel hides this row; so do we
     if (!any && !extra) { gap++; continue; }                          // collapse blank runs into one thin gap
-    if (gap && any0) html += `<tr class="gap"><td colspan="${span}"></td></tr>`;
+    if (gap && any0) out.push({ t: 'gap' });
     gap = 0; any0 = true;
     if (any && !wbHiddenRow(sheet, r)) {
       const ln = added[r] && wbBlocksOf(sheet)[added[r].key];
-      html += drawRow(r, sr ? sr.src : (ln ? ln.r1 : null), null);
+      out.push({ t: 'row', r, src: sr ? sr.src : (ln ? ln.r1 : null), blk: null });
     }
     if (extra) {
-      extra.forEach(x => { html += drawRow(x.row, blk.r1, blk); });
-      if (!locked) html += `<tr class="wbaddbar"><td colspan="${span}">
-        <button class="wbbtn sec" onclick="wbAddLine('${shEsc}','${esc(blk.key)}')" title="Put another line at the end of this list — it totals in with the rest, in Excel too">+ Add a line</button>
-        ${extra.length ? `<button class="wbbtn sec" onclick="wbRemoveAddedLine('${shEsc}','${esc(blk.key)}',${extra[extra.length - 1].row})" title="Take the last added line back off">✕ Remove added line</button>
-        <span class="wbaddnote">${extra.length} line${extra.length === 1 ? '' : 's'} added past the ${blk.r1 - blk.r0 + 1} the form comes with</span>` : ''}
-      </td></tr>`;
+      extra.forEach(x => out.push({ t: 'row', r: x.row, src: blk.r1, blk }));
+      out.push({ t: 'addbar', blk, extra });
     }
   }
-  return html;
+  return out;
+}
+/* ── Export as PDF ──
+   Pick the pages you want; several come out as one PDF, in workbook order. Each sheet is drawn
+   the way the editor draws it on screen — the print area, laid out in the sheet's own column
+   widths, with its sections, the lines and sections you added, and hidden rows left out — and
+   printed in the orientation Excel is set up to print it in. Vector text, so it is searchable
+   and selectable, and it goes into the job's ShareFile folder like every other document. */
+const WB_PDF_M = 30;                                     // page margin, points
+function wbPdfOrient(sheet) { return (_wbPage[sheet] && _wbPage[sheet].orient) === 'landscape' ? 'landscape' : 'portrait'; }
+function wbPdfWidths(sheet, cols) {                      // the sheet's own column widths, in Excel's pixels
+  const ws = _wbEng.sheetObj(sheet), cs = (ws && ws['!cols']) || [];
+  return cols.map(c => { const o = cs[c] || {}; return Math.max(18, o.wpx != null ? o.wpx : (o.wch != null ? Math.round(o.wch * 7 + 5) : 64)); });
+}
+/* Share the page width out in the sheet's own proportions, but never below what a column needs
+   to be readable — the Proposal has seven columns barely wider than a tick box. Whatever the
+   narrow ones are given back comes off the wide ones, so the row still spans the page exactly. */
+function wbPdfFit(px, avail, min) {
+  const total = px.reduce((a, b) => a + b, 0) || 1;
+  let w = px.map(p => p / total * avail), pinned = px.map(() => false);
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    w.forEach((x, i) => { if (!pinned[i] && x < min) { pinned[i] = true; changed = true; } });
+    if (!changed) break;
+    const need = pinned.reduce((a, p) => a + (p ? min : 0), 0);
+    const free = w.reduce((a, x, i) => a + (pinned[i] ? 0 : x), 0);
+    if (free <= 0) break;
+    const k = (avail - need) / free;
+    if (k <= 0) break;
+    w = w.map((x, i) => pinned[i] ? min : x * k);
+  }
+  return w.map(x => Math.max(min, x));
+}
+/* one cell, classified the way sheet view classifies it — but showing the value the way the
+   workbook FORMATS it, because this is the printed document, not an entry box */
+function wbPdfCell(sheet, r, c, src) {
+  const eng = _wbEng, a = XLSX.utils.encode_cell({ r, c });
+  const raw = eng.raw(sheet, a);
+  const sraw = src != null ? wbOrigRaw(sheet, XLSX.utils.encode_cell({ r: src, c })) : raw;
+  const ov = eng.getOverride(sheet, a);
+  const isF = !!(raw && raw.f != null) && ov == null;
+  const z = (raw && raw.z) || (sraw && sraw.z);
+  const val = eng.get(sheet, a);
+  if (isF) {
+    const bad = (eng.unknown().cells || {})[sheet + '!' + a];
+    return { text: bad ? '—' : wbCellFmt(val, z), kind: 'calc' };
+  }
+  if (typeof val === 'string' && val !== '' && ov == null && !wbIsInputCell(sheet, raw)) return { text: String(val), kind: 'label' };
+  return { text: wbCellFmt(val, z), kind: 'input' };
+}
+/* Merges, resolved one row at a time. A cell merged downward repeats as an empty cell on the
+   rows below rather than a rowSpan: blank runs are collapsed and hidden rows dropped, so a
+   rowSpan could reach past rows that were never drawn and skew the whole table. */
+function wbPdfRowCells(sheet, row, src, cols, pos, hide) {
+  const mr = src != null ? src : row;
+  const spans = {}, skip = {};
+  _wbEng.mergesOf(sheet).forEach(mg => {
+    if (mr < mg.s.r || mr > mg.e.r) return;
+    let n = 0; for (let c = mg.s.c; c <= mg.e.c; c++) if (pos[c] != null) n++;
+    spans[mg.s.c] = { cs: Math.max(1, n), anchor: mr === mg.s.r };
+    for (let c = mg.s.c + 1; c <= mg.e.c; c++) skip[c] = 1;
+  });
+  const out = [];
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i];
+    if (skip[c]) continue;
+    const sp = spans[c];
+    const hidden = hide && hide[XLSX.utils.encode_cell({ r: row, c })];   // shown on the section bar instead
+    const cell = (hidden || (sp && !sp.anchor)) ? { text: '', kind: 'label' } : wbPdfCell(sheet, row, c, src);
+    let cs = sp ? sp.cs : 1;
+    // Excel lets a heading run on across the empty cells to its right — "Proposal", "ARCTIC
+    // SHEET METAL, INC.", the acceptance paragraph. A table would clip each to its own narrow
+    // column, so take the spare ones in. Cells you are meant to write in are never taken.
+    if (!sp && cell.kind === 'label' && String(cell.text).trim() !== '') {
+      let j = i + 1;
+      while (j < cols.length && !spans[cols[j]] && !skip[cols[j]] && wbPdfSpare(sheet, row, cols[j], src)) j++;
+      if (j > i + 1) { cs = j - i; i = j - 1; }
+    }
+    out.push({ text: cell.text, kind: cell.kind, cs });
+  }
+  return out;
+}
+function wbPdfSpare(sheet, row, c, src) {                // empty, and not somewhere to write
+  const raw = _wbEng.raw(sheet, XLSX.utils.encode_cell({ r: row, c }));
+  const sraw = src != null ? wbOrigRaw(sheet, XLSX.utils.encode_cell({ r: src, c })) : raw;
+  if (wbIsInputCell(sheet, raw) || (src != null && wbIsInputCell(sheet, sraw))) return false;
+  return String(wbPdfCell(sheet, row, c, src).text).trim() === '';
+}
+function wbPdfStyle(kind) {
+  if (kind === 'calc') return { halign: 'right', fontStyle: 'bold', textColor: ARCTIC_INK };
+  if (kind === 'label') return { halign: 'left', textColor: ARCTIC_INK };
+  return { halign: 'right', textColor: [40, 46, 58] };
+}
+/* A line of the form nobody filled in reads, on paper, as "0.00  0.00  $-" across the page —
+   the spreadsheet's own noise. On screen those rows are boxes to type in, so they stay; in a
+   document they are left out, and a line with anything real on it always prints. */
+function wbPdfBlank(cell) {
+  const t = String(cell.text).trim();
+  if (t === '') return true;
+  if (cell.kind === 'label') return false;
+  return /^[-–—$(),.0\s]*$/.test(t) && !/[1-9]/.test(t);
+}
+function wbPdfBlockBody(sheet, blk, cols, pos) {
+  const body = [];
+  const hide = {};
+  if (blk.sec) { hide[blk.sec.lbl] = 1; hide[blk.sec.sw] = 1; const t = wbSectionTitleCell(sheet, blk.sec); if (t) hide[t] = 1; }
+  wbRowSeq(sheet, blk.r0, blk.r1, blk.sec, cols, false).forEach(it => {
+    if (it.t !== 'row') return;                          // the thin gaps and the "add a line" bar don't print
+    const cells = wbPdfRowCells(sheet, it.r, it.src, cols, pos, hide);
+    if (cells.every(wbPdfBlank)) return;
+    body.push(cells.map(x => {
+      const st = wbPdfStyle(x.kind);
+      if (typeof x.text === 'string' && x.text !== '' && x.kind !== 'label' && isNaN(Number(String(x.text).replace(/[$,%\s]/g, '')))) st.halign = 'left';
+      return { content: x.text, colSpan: x.cs, styles: st };
+    }));
+  });
+  return body;
+}
+/* one sheet, onto as many pages as it needs */
+function wbPdfSheet(doc, sheet, first, meta) {
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  const avail = pageW - WB_PDF_M * 2;
+  const bl = wbPageBlocks(sheet), cols = bl.main;
+  const pos = {}; cols.forEach((c, i) => { pos[c] = i; });
+  const fit = wbPdfFit(wbPdfWidths(sheet, cols), avail, 21);   // narrow columns still need to hold a short word
+  const colStyles = {};
+  fit.forEach((w, i) => { colStyles[i] = { cellWidth: w }; });
+  // sheet letterhead
+  try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', WB_PDF_M, 18, 34, 34); } catch (x) {}
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor.apply(doc, ARCTIC_INK);
+  doc.text(String(sheet), WB_PDF_M + 42, 34);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110, 116, 128);
+  doc.text(meta.sub, WB_PDF_M + 42, 46);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+  doc.text(meta.total, pageW - WB_PDF_M, 34, { align: 'right' });
+  doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.2); doc.line(WB_PDF_M, 56, pageW - WB_PDF_M, 56);
+  let y = 66;
+  bl.blocks.forEach(blk => {
+    const body = wbPdfBlockBody(sheet, blk, cols, pos);
+    if (!body.length) return;
+    if (blk.sec) {                                       // the section's own bar, as the editor shows it
+      const off = wbSectionExcluded(sheet, blk.sec.sw), ded = wbIsDeducted(sheet, blk.sec);
+      const sums = wbSectionSums(sheet, blk.sec).map(s => s.label + ' ' + s.val).join('   ');
+      const label = blk.sec.n + '.  ' + wbSectionName(sheet, blk.sec) +
+        (off ? '   — EXCLUDED, zeroed in totals' : ded ? '   — DEDUCTED, subtracted from the total' : '');
+      doc.autoTable({
+        startY: y, margin: { left: WB_PDF_M, right: WB_PDF_M }, tableWidth: avail, theme: 'plain',
+        body: [[{ content: label, styles: { fontStyle: 'bold', halign: 'left' } },
+                { content: sums, styles: { halign: 'right' } }]],
+        styles: { font: 'helvetica', fontSize: 8.5, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
+          fillColor: off ? [240, 241, 245] : ded ? [253, 240, 213] : [232, 236, 252],
+          textColor: off ? [110, 116, 128] : ARCTIC_INK },
+        columnStyles: { 0: { cellWidth: avail * 0.62 }, 1: { cellWidth: avail * 0.38 } },
+      });
+      y = doc.lastAutoTable.finalY;
+    }
+    doc.autoTable({
+      startY: y, margin: { top: WB_PDF_M + 8, left: WB_PDF_M, right: WB_PDF_M, bottom: WB_PDF_M + 8 },
+      tableWidth: avail, body, theme: 'grid', columnStyles: colStyles,
+      styles: { font: 'helvetica', fontSize: 7, cellPadding: 2, overflow: 'linebreak',
+        lineColor: [214, 218, 227], lineWidth: 0.4, textColor: ARCTIC_INK, valign: 'middle' },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  });
+  if (y === 66) {                                        // nothing on it — say so rather than a blank page
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(140, 146, 158);
+    doc.text('This page is empty.', WB_PDF_M, 80);
+  }
+}
+async function wbExportPdf() {
+  const cfg = wbCfg(), e = wbEntity(); if (!cfg || !e || !_wbEng) return;
+  const sel = (_wbPdf && _wbPdf.sel) || {};
+  const sheets = _wbEng.visibleSheets.filter(s => sel[s]);
+  if (!sheets.length) { toast('Tick at least one page to export', true); return; }
+  _wbPdf = null; renderWbBody();
+  stickyToast('Building the PDF…');
+  try {
+    const jspdf = await ensureJsPDF();
+    const meta = {
+      sub: [cfg.title(e), job && job.name, job && job.number].filter(Boolean).join('  ·  '),
+      total: 'Total bid ' + (fmtMoney(wbTotalVal()) || '$0'),
+    };
+    let doc = null;
+    sheets.forEach((s, i) => {
+      const orient = wbPdfOrient(s);
+      if (!doc) doc = new jspdf.jsPDF({ orientation: orient, unit: 'pt', format: 'letter' });
+      else doc.addPage('letter', orient);
+      wbPdfSheet(doc, s, i === 0, meta);
+    });
+    const n = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= n; p++) {                        // footer last, once every page exists
+      doc.setPage(p);
+      const w = doc.internal.pageSize.getWidth(), h = doc.internal.pageSize.getHeight();
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 155, 165);
+      doc.text('Generated ' + csvDate(today()) + ' · Arctic Sheet Metal · ' + APP_VERSION, WB_PDF_M, h - 14);
+      doc.text('Page ' + p + ' of ' + n, w - WB_PDF_M, h - 14, { align: 'right' });
+    }
+    const base = wbPdfName(cfg, e, sheets);
+    const blob = doc.output('blob');
+    await wbPdfFile(cfg, e, base, blob);
+    doc.save(base + '.pdf');
+    toast(sheets.length === 1 ? 'Exported ' + sheets[0] + ' as a PDF' : 'Exported ' + sheets.length + ' pages as one PDF (' + n + ' sheet' + (n === 1 ? '' : 's') + ')');
+  } catch (x) { console.error(x); toast('Could not build the PDF: ' + (x.message || x), true); }
+}
+function wbPdfName(cfg, e, sheets) {
+  const who = _wb.kind === 'co' ? ('CO_' + String(e.number == null ? '' : e.number).replace(/[^\w.-]+/g, '-'))
+    : ('Estimate_' + String(e.name || '').replace(/[^\w.-]+/g, '-'));
+  const what = sheets.length === 1 ? sheets[0].replace(/[^\w.-]+/g, '-') : (sheets.length + '-pages');
+  return ((job && job.number) ? job.number + '_' : '') + who + '_' + what;
+}
+/* file it where every other generated document for this record goes */
+async function wbPdfFile(cfg, e, base, blob) {
+  if (!jobFolder) return;
+  try {
+    const dirName = _wb.kind === 'co' ? coDocDir(e)
+      : ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate');
+    const f = new File([blob], base + '.pdf', { type: 'application/pdf' });
+    const { dir, file } = await putFileInDir(f, dirName, base + '.pdf', { overwrite: true });
+    removeNumberedSiblings(dirName, base + '.pdf').catch(() => {});
+    e.docs = (e.docs || []).filter(d => d.file !== file);
+    e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() });
+    if (_wb.kind === 'co') await saveCo(e); else await saveEstimate(e);
+    noteFolderChanged();
+  } catch (x) { console.error(x); }
+}
+/* ── which pages? ── */
+function wbPdfToggle() {
+  if (_wbPdf) { _wbPdf = null; renderWbBody(); return; }
+  const sel = {};
+  if (_wbSheet) sel[_wbSheet] = 1;                       // the one you are looking at, to start
+  _wbPdf = { sel };
+  renderWbBody();
+}
+function wbPdfPick(sheet, on) { if (!_wbPdf) return; if (on) _wbPdf.sel[sheet] = 1; else delete _wbPdf.sel[sheet]; renderWbBody(); }
+function wbPdfAll(on) {
+  if (!_wbPdf) return;
+  _wbPdf.sel = {};
+  if (on) _wbEng.visibleSheets.forEach(s => { _wbPdf.sel[s] = 1; });
+  renderWbBody();
+}
+function wbPdfHtml() {
+  if (!_wbPdf || !_wbEng) return '';
+  const sheets = _wbEng.visibleSheets, n = sheets.filter(s => _wbPdf.sel[s]).length;
+  return `<div class="wbpdfwrap" onclick="if(event.target===this)wbPdfToggle()"><div class="wbpdf">
+    <div class="wbpdfhead"><b>Export as PDF</b><span>Tick the pages you want. Several come out as one PDF, in workbook order.</span>
+      <button class="wbchipb" title="Close" onclick="wbPdfToggle()">✕</button></div>
+    <div class="wbpdflist">${sheets.map(s => `<label class="wbpdfrow${_wbPdf.sel[s] ? ' on' : ''}">
+      <input type="checkbox"${_wbPdf.sel[s] ? ' checked' : ''} onchange="wbPdfPick('${esc(s).replace(/'/g, "\\'")}',this.checked)">
+      <span class="nm">${esc(s)}</span><span class="or">${wbPdfOrient(s) === 'landscape' ? 'landscape' : 'portrait'}</span></label>`).join('')}</div>
+    <div class="wbpdffoot">
+      <button class="wbbtn sec" onclick="wbPdfAll(true)">Select all</button>
+      <button class="wbbtn sec" onclick="wbPdfAll(false)">None</button>
+      <span class="wbpdfn">${n} page${n === 1 ? '' : 's'} selected</span>
+      <button class="wbbtn"${n ? '' : ' disabled'} onclick="wbExportPdf()">Export as PDF</button>
+    </div>
+  </div></div>`;
 }
 function renderWbModal() {
   const cfg = wbCfg(), e = wbEntity(); if (!e || !cfg) { $('modalHost').innerHTML = ''; return; }
@@ -8294,6 +8588,7 @@ function renderWbModal() {
         ${loading ? '' : `<span class="wbtot"><small>Total bid</small><b id="wbTotal">${esc(fmtMoney(wbTotalVal()) || '$0')}</b></span>
         <button class="wbbtn sec" onclick="wbSetView('${cells ? 'sheet' : 'cells'}')" title="${cells ? 'Back to the clean sheet view' : 'Show spreadsheet row/column references'}">${cells ? '▤ Sheet view' : '⌗ Cell view'}</button>
         <button class="wbbtn sec" onclick="wbCmpToggle()" title="Compare two sections and charge only the difference">⇄ Compare sections</button>
+        <button class="wbbtn sec" onclick="wbPdfToggle()" title="Export pages of this workbook as a PDF — pick the pages you want and they come out as one document">⭳ Export as PDF</button>
         <button class="wbbtn sec" onclick="wbCheckAgainstExcel()" title="Recalculate every formula and compare against the filed spreadsheet — proof the website and Excel agree">✓ Check vs Excel</button>
         <button class="wbbtn sec" onclick="wbResetWorkbook()" title="Clear your edits and go back to the original workbook">Reset edits</button>`}
         <button class="wbbtn" onclick="saveWorkbook(true)">Save &amp; close</button>
@@ -8373,6 +8668,21 @@ function renderWbModal() {
     .wbapp table.wbsheet tr.subline td{background:#eef7f0}
     .wbapp table.wbsheet tr.subline td.label{background:#e3f0e7}
     .wbapp table.wbsheet tr.subline input.wbi{background:#f6fbf7}
+    .wbpdfwrap{position:fixed;inset:0;z-index:9999;background:rgba(16,23,63,.42);display:flex;align-items:flex-start;justify-content:center;padding:70px 16px 16px}
+    .wbpdf{background:#fff;border-radius:10px;width:440px;max-width:100%;max-height:100%;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(16,23,63,.32);overflow:hidden}
+    .wbpdfhead{padding:12px 14px 10px;border-bottom:1px solid #e6e8ef;position:relative}
+    .wbpdfhead b{display:block;font-size:14px;color:#16181d}
+    .wbpdfhead span{display:block;font-size:11.5px;color:#6e7480;margin-top:2px;padding-right:22px}
+    .wbpdfhead .wbchipb{position:absolute;top:10px;right:10px}
+    .wbpdflist{overflow-y:auto;padding:6px 8px;flex:1;min-height:60px}
+    .wbpdfrow{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px}
+    .wbpdfrow:hover{background:#f4f5f8}
+    .wbpdfrow.on{background:#eef1fe}
+    .wbpdfrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .wbpdfrow .or{font-size:10.5px;color:#8a92a0;text-transform:uppercase;letter-spacing:.04em}
+    .wbpdffoot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid #e6e8ef;background:#fbfcfe}
+    .wbpdfn{flex:1;font-size:11.5px;color:#6e7480;text-align:right}
+    .wbpdffoot .wbbtn[disabled]{opacity:.45;cursor:default}
     .wbapp table.wbsheet tr.wbadded td:first-child{box-shadow:inset 3px 0 0 #7e8ef0}
     .wbapp table.wbsheet tr.wbaddbar td{background:#fbfcfe;border-color:#eef0f5;padding:5px 6px;text-align:left}
     .wbapp table.wbsheet tr.wbaddbar .wbaddnote{font-size:11px;color:#7a828f;margin-left:8px}
