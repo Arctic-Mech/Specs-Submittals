@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.44';
+const APP_VERSION = 'v7.45';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -7036,7 +7036,9 @@ function wbCellStyle(sheet, addr) {                     // the workbook's own lo
   const i = (_wbXf[sheet] || {})[addr];
   if (i == null || !_wbSty) return null;
   const x = _wbSty.xf[i]; if (!x) return null;
-  return { b: _wbSty.border[x.b] || null, bold: !!(_wbSty.font[x.f] || {}).bold, h: x.h, wrap: x.wrap };
+  const f = _wbSty.font[x.f] || {}, base = (_wbSty.font[0] || {}).sz || 11;
+  return { b: _wbSty.border[x.b] || null, bold: !!f.bold, h: x.h, wrap: x.wrap,
+    rel: (f.sz && base) ? f.sz / base : 1 };            // how much bigger than the sheet's ordinary type
 }
 async function wbLoadValidations(bytes) {
   const out = {};
@@ -7946,6 +7948,7 @@ function wbNoteOutsideBounds(sheet, addr) {
 function wbSetCell(sheet, addr, stored) {
   const e = wbEntity(); if (!e || !_wbEng) return;
   _wbEng.setInput(sheet, addr, stored);
+  _wbHid = {};            // which folded-away rows have earned their place depends on the values
   e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
   wbNoteOutsideBounds(sheet, addr);
   renderWbBody();
@@ -8345,21 +8348,35 @@ function wbHiddenShown(sheet, cols) {
   if (!anyHidden) return (_wbHid[sheet] = show);
   const b = wbSheetBounds(sheet), use = cols && cols.length ? cols : b.cols;
   const kind = {};                                      // 'strong' = has something of its own, 'head' = a heading
+  const look = {};
   for (let r = b.r0; r <= b.r1; r++) {
     if (!wbHiddenRow(sheet, r)) continue;
-    let last = null, words = false, typed = false;
+    let last = null, lastCol = -1, nz = false, words = 0, typed = false;
+    const numAt = {};
     use.forEach(c => {
       const a = XLSX.utils.encode_cell({ r, c });
       const v = _wbEng.get(sheet, a);
-      if (typeof v === 'number' && isFinite(v)) { last = v; return; }   // the amount is the rightmost figure
-      if (typeof v !== 'string' || v.trim() === '') return;
-      words = true;
+      if (typeof v === 'number' && isFinite(v)) { last = v; lastCol = c; numAt[c] = 1; if (v !== 0) nz = true; return; }
+      if (typeof v !== 'string' || v.trim() === '') return;                // the rightmost figure is the amount
+      words++;
       if (wbCellIsTyped(sheet, a)) typed = true;
     });
-    // A line of figures earns its place with an amount — a labour class priced at the standard
-    // rate but with no hours on it is still nothing. A line of words earns its place by being
-    // something somebody entered, rather than a heading the form always carries.
-    kind[r] = (last != null) ? (last !== 0 ? 'strong' : '') : typed ? 'strong' : words ? 'head' : '';
+    look[r] = { amount: last != null && last !== 0, lastCol, numAt, nz, nums: last != null, words, typed };
+  }
+  // A line of figures earns its place with an amount in its last column — a labour class sitting
+  // at the standard rate with no hours against it is still nothing. The hours line above it has
+  // no amount of its own, so it is vouched for by the rate line that does. A line of words earns
+  // its place by being something somebody entered; a band of words across several columns is a
+  // column heading, and comes back with the block it heads.
+  for (const k in look) {
+    const r = +k, L = look[r], next = look[r + 1];
+    // ...and the line it is vouched for by must be the one carrying that amount: an hours line
+    // has nothing at all in the amount column, where a rate line priced at nothing has a zero.
+    const vouched = L.nz && next && next.amount && !L.numAt[next.lastCol];
+    kind[r] = L.amount ? 'strong'
+      : vouched ? 'strong'
+      : (!L.nums && L.typed) ? 'strong'
+      : (!L.nums && L.words >= 2) ? 'head' : '';
   }
   // a heading rejoins the run of hidden rows it belongs to, once any of them has something
   let run = [], live = false;
@@ -8531,6 +8548,9 @@ function wbPdfStyle(sheet, row, c, cell, span) {
   if (st && st.bold) out.fontStyle = 'bold';
   else if (cell.kind === 'calc') out.fontStyle = 'bold';
   if (cell.ov) out.overflow = 'visible';
+  // "Change Proposal", "Bid Summary" — the workbook sets those in bigger type, and a form whose
+  // headings are the same size as its figures doesn't read as a form.
+  if (st && st.rel && st.rel > 1.05 && String(cell.text).trim() !== '') out._rel = Math.min(2.4, st.rel);
   return out;
 }
 /* The ruled lines the form actually has — left edge from the first column a cell spans, right
@@ -8630,8 +8650,10 @@ function wbPdfDraw(doc, sheet, meta, plan, fs) {
         line(b3.r, x + w, cy, x + w, cy + h);
       },
       didParseCell: d => {
-        const f = d.cell.raw && d.cell.raw._f;
-        if (f && !mono) d.cell.styles.fillColor = f;
+        const raw = d.cell.raw; if (!raw) return;
+        if (raw._f && !mono) d.cell.styles.fillColor = raw._f;
+        const rel = raw.styles && raw.styles._rel;
+        if (rel) d.cell.styles.fontSize = Math.min(20, fs * rel);
       },
     });
     y = doc.lastAutoTable.finalY + Math.max(3, fs);
