@@ -326,7 +326,14 @@ header {
 .check-row .ac-due.today { color: var(--amber); background: var(--amber-sf); }
 .check-row .ac-due.overdue { color: var(--red); background: var(--red-sf); }
 .check-row.done .ac-due { opacity: .5; }
-.check-row .ac-has { flex: none; font-size: 12px; opacity: .7; }
+.check-row .ac-has { flex: none; font-size: 11.5px; opacity: .75; color: var(--text-3); white-space: nowrap; }
+.check-row.sel .ct-btn { background: var(--accent-sf); box-shadow: inset 2px 0 0 var(--accent); }
+.check-row.sel .ct { font-weight: 600; }
+.check-row.unfiled { margin-top: 6px; padding-top: 7px; border-top: 1px dashed var(--border-2); }
+.check-row .tick { flex: none; width: 16px; }
+.file-row .trkmove, .note-item .trkmove { flex: 0 0 150px; width: 150px; max-width: 150px;
+  font-size: 11.5px; padding: 3px 6px; height: auto; }
+.note-item .nm { align-items: center; flex-wrap: wrap; }
 .check-row .x { opacity: 0; cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 13px; flex: none; }
 .check-row:hover .x { opacity: 1; }
 .ac-done { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; padding-top: 8px; cursor: pointer; }
@@ -1017,7 +1024,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.45';
+const APP_VERSION = 'v7.46';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2656,6 +2663,7 @@ let openRfi = null;          // RFI open in the drawer
 let rfiQuery = '', rfiStatusFilter = null;
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
 let trackCat = null;         // selected category id
+let trackItem = null;        // selected action item within it ('__unfiled' for what isn't on one)
 let cos = [];                // change-order records for the open job
 let openCo = null;           // change order open in the drawer
 let coQuery = '', coStatusFilter = null;
@@ -2970,7 +2978,7 @@ async function openJob(id) {
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
   ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
-  openRfi = null; trackCat = null; openCo = null; estCompare = [];
+  openRfi = null; trackCat = null; trackItem = null; openCo = null; estCompare = [];
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
   $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
@@ -3665,7 +3673,73 @@ function newTrackCategory() {
   renderTracking();
   saveTrackCat(c);
 }
-function selectTrackCat(id) { trackCat = id; renderTracking(); }
+function selectTrackCat(id) { trackCat = id; trackItem = null; renderTracking(); }
+function selectTrackItem(id) { trackItem = id; renderTracking(); }
+/* An action item owns the emails and the notes that belong to it. Anything saved against the
+   category before there was an item to hang it on stays where it is, under "Unfiled", until
+   somebody files it. */
+const TRACK_UNFILED = '__unfiled';
+function trackItems(c) { return (c && c.checklist) || []; }
+function trackItemById(c, id) { return trackItems(c).filter(i => i.id === id)[0] || null; }
+function trackOwned(list, c, itemId) {
+  const ids = {}; trackItems(c).forEach(i => { ids[i.id] = 1; });
+  return (list || []).filter(x => (itemId === TRACK_UNFILED) ? !(x.item && ids[x.item]) : x.item === itemId);
+}
+function trackFiles(c, itemId) { return trackOwned(c.files, c, itemId); }
+function trackNotes(c, itemId) { return trackOwned(c.notes, c, itemId); }
+function trackUnfiledCount(c) { return trackFiles(c, TRACK_UNFILED).length + trackNotes(c, TRACK_UNFILED).length; }
+/* ── Copy it out as text ──
+   A category is often one conversation — everything we need from the GC, everything owed to the
+   owner. This writes it as something you can paste straight into an email: what is outstanding,
+   what each one is waiting on, and what has already been sent across. */
+function trackCatText(c, opts) {
+  opts = opts || {};
+  const L = [], only = opts.item || null;
+  const head = [job && job.name, job && job.number].filter(Boolean).join('  ·  ');
+  if (!only) {
+    if (head) L.push(head);
+    L.push(c.name);
+    L.push('');
+  }
+  const items = trackItems(c).filter(i => only ? i.id === only : !i.done);
+  if (!items.length) {
+    L.push(only ? '' : (trackItems(c).length ? 'Nothing outstanding.' : 'No action items yet.'));
+  }
+  items.forEach((i, n) => {
+    L.push((only ? '' : (n + 1) + '. ') + i.text + (i.due ? '   (due ' + fmtShort(i.due) + ')' : ''));
+    String(i.detail || '').split('\n').forEach(t => { if (t.trim()) L.push('   ' + t.trim()); });
+    trackNotes(c, i.id).slice().sort((x, y) => (x.created || 0) - (y.created || 0)).forEach(nt => {
+      String(nt.text || '').split('\n').forEach((t, k) => { if (t.trim()) L.push('   ' + (k ? '  ' : '- ') + t.trim()); });
+    });
+    const f = trackFiles(c, i.id);
+    if (f.length) L.push('   Attached: ' + f.map(x => x.name).join(', '));
+    L.push('');
+  });
+  if (!only) {
+    const uf = trackFiles(c, TRACK_UNFILED), un = trackNotes(c, TRACK_UNFILED);
+    if (un.length || uf.length) {
+      L.push('Not tied to an action item');
+      un.slice().sort((x, y) => (x.created || 0) - (y.created || 0))
+        .forEach(nt => String(nt.text || '').split('\n').forEach((t, k) => { if (t.trim()) L.push('   ' + (k ? '  ' : '- ') + t.trim()); }));
+      if (uf.length) L.push('   Attached: ' + uf.map(x => x.name).join(', '));
+      L.push('');
+    }
+  }
+  return L.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+function copyTrackText(catId, itemId) {
+  const c = catById(catId); if (!c) return;
+  const txt = trackCatText(c, itemId ? { item: itemId } : {});
+  const what = itemId ? 'that action item' : '“' + c.name + '”';
+  const done = () => toast('Copied ' + what + ' — paste it into an email');
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, () => { console.log(txt); toast('Couldn’t reach the clipboard — it’s in the browser console instead', true); });
+      return;
+    }
+  } catch (x) {}
+  console.log(txt); toast('It’s in the browser console — copy it from there', true);
+}
 async function renameTrackCat(id) {
   const c = catById(id); if (!c) return;
   const name = prompt('Category name:', c.name || '');
@@ -3706,11 +3780,20 @@ function renderTracking() {
       <button class="btn primary" onclick="newTrackCategory()">+ New category</button></div>`;
     return;
   }
-  const files = c.files || [], notes = c.notes || [], checklist = c.checklist || [];
+  const items = trackItems(c), nUnfiled = trackUnfiledCount(c);
+  if (trackItem !== TRACK_UNFILED && !trackItemById(c, trackItem)) trackItem = null;
+  if (!trackItem) {                                   // land on the first thing still outstanding
+    const first = items.filter(i => !i.done)[0] || items[0];
+    trackItem = first ? first.id : (nUnfiled ? TRACK_UNFILED : null);
+  }
+  const sel = trackItem === TRACK_UNFILED ? null : trackItemById(c, trackItem);
+  const out = items.filter(i => !i.done).length;
   $('trackPanel').innerHTML = `
     <div class="track-head">
       <h3>${esc(c.name)}</h3>
+      <span class="muted" style="font-size:12.5px">${out ? out + ' outstanding' : items.length ? 'all done' : ''}</span>
       <div class="spacer"></div>
+      <button class="btn sm" onclick="copyTrackText('${c.id}')" title="Copy everything outstanding in this category as plain text, ready to paste into an email">⧉ Copy for email</button>
       <button class="btn sm ghost" onclick="renameTrackCat('${c.id}')">Rename</button>
       <button class="btn sm ghost" onclick="deleteTrackCat('${c.id}')">Delete</button>
     </div>
@@ -3718,63 +3801,135 @@ function renderTracking() {
     <div class="track-body">
       <div class="track-col">
         <div class="track-sec">
-          <h4>Emails &amp; files <span class="spacer"></span><button class="btn sm" onclick="pickEmailFiles('${c.id}')">+ Add</button></h4>
-          ${files.length ? `<div class="file-list">` + files.map(f => `
-            <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
-              <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
-              <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
-              <button class="btn sm ghost" title="Rename" onclick="renameEmailDoc('${c.id}','${f.id}')">✎</button>
-              <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
-            </div>`).join('') + `</div>` : `<div class="muted" style="font-size:13px">No emails or files yet.</div>`}
-          <div class="email-drop" id="emailDrop">Drop emails or files here, or click to choose <span class="muted">· .msg, .eml, PDF</span></div>
+          <h4>Action items ${acCountLabel(items)}</h4>
+          <div class="add-row">
+            <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')trackAddItem('${c.id}')">
+            <button class="btn sm" onclick="trackAddItem('${c.id}')">Add</button>
+          </div>
+          ${items.map(i => {
+            const nf = trackFiles(c, i.id).length, nn = trackNotes(c, i.id).length;
+            const bits = [];
+            if (nf) bits.push('✉ ' + nf);
+            if (nn) bits.push('✎ ' + nn);
+            return `<div class="check-row ${i.done ? 'done' : ''} ${trackItem === i.id ? 'sel' : ''}">
+              <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="acToggle('cat','${c.id}','${i.id}',this.checked)"></label>
+              <button class="ct-btn" onclick="selectTrackItem('${i.id}')">
+                <span class="ct">${esc(i.text)}</span>
+                ${i.due ? `<span class="ac-due ${acDueClass(i.due)}">${fmtShort(i.due)}</span>` : ''}
+                ${bits.length ? `<span class="ac-has">${bits.join(' ')}</span>` : ''}
+              </button>
+              <button class="x" title="Remove" onclick="acDelete('cat','${c.id}','${i.id}')">✕</button>
+            </div>`;
+          }).join('') || '<div class="muted" style="font-size:13px">No action items yet. Add the first one above.</div>'}
+          ${nUnfiled ? `<div class="check-row unfiled ${trackItem === TRACK_UNFILED ? 'sel' : ''}">
+            <span class="tick"></span>
+            <button class="ct-btn" onclick="selectTrackItem('${TRACK_UNFILED}')">
+              <span class="ct muted">Unfiled</span><span class="ac-has">${nUnfiled}</span></button></div>` : ''}
         </div>
       </div>
-      <div class="track-col">
-        <div class="track-sec">
-          <h4>Action items ${acCountLabel(checklist)}</h4>
-          <div class="add-row">
-            <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')acAdd('cat','${c.id}','checkInput')">
-            <button class="btn sm" onclick="acAdd('cat','${c.id}','checkInput')">Add</button>
-          </div>
-          ${checklist.length ? checklistHtml('cat', c.id, checklist) + `<div class="muted" style="margin-top:6px">Click an item to add details.</div>` : `<div class="muted" style="font-size:13px">No action items.</div>`}
-        </div>
-        <div class="track-sec">
-          <h4>Notes</h4>
-          <div class="add-row">
-            <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}')">
-            <button class="btn sm" onclick="addNote('${c.id}')">Add</button>
-          </div>
-          ${notes.map(n => `
-            <div class="note-item">
-              <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
-              <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
-                <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
-            </div>`).join('') || '<div class="muted" style="font-size:13px">No notes yet.</div>'}
-        </div>
-      </div>
+      <div class="track-col">${trackDetailHtml(c, sel)}</div>
     </div>`;
 
   const drop = $('emailDrop');
   if (drop) {
+    const owner = sel ? sel.id : '';
     drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
     drop.addEventListener('drop', e => {
       e.preventDefault(); drop.classList.remove('over');
-      addEmailFiles(c.id, Array.from(e.dataTransfer.files));
+      addEmailFiles(c.id, Array.from(e.dataTransfer.files), owner);
     });
-    drop.addEventListener('click', () => pickEmailFiles(c.id));
+    drop.addEventListener('click', () => pickEmailFiles(c.id, owner));
   }
+  autosizeAll($('trackPanel'));
+}
+/* the right-hand pane: one action item with everything that belongs to it */
+function trackDetailHtml(c, it) {
+  const unfiled = trackItem === TRACK_UNFILED;
+  if (!it && !unfiled) return `<div class="track-sec"><div class="muted" style="font-size:13px">Pick an action item on the left to see the emails and notes that go with it.</div></div>`;
+  const id = unfiled ? TRACK_UNFILED : it.id;
+  const files = trackFiles(c, id), notes = trackNotes(c, id);
+  const args = `'cat','${c.id}','${unfiled ? '' : it.id}'`;
+  const moveTo = (kind, thingId) => {
+    const opts = trackItems(c).map(x => `<option value="${x.id}">${esc(x.text).slice(0, 60)}</option>`).join('');
+    if (!opts) return '';
+    return `<select class="input sm trkmove" title="File this under an action item" onchange="trackAssign('${c.id}','${kind}','${thingId}',this.value)">
+      <option value="">File under…</option>${opts}</select>`;
+  };
+  return `
+    <div class="track-sec">
+      ${unfiled ? `<h4>Unfiled <span class="spacer"></span></h4>
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Saved against this category before it had an action item to sit on. File each one under an item, or leave it here.</div>`
+      : `<h4>Action item <span class="spacer"></span>
+          <button class="btn sm ghost" onclick="copyTrackText('${c.id}','${it.id}')" title="Copy just this action item">⧉ Copy</button></h4>
+        <div class="field"><input class="input" value="${esc(it.text)}" onchange="acPatch(${args},{text:this.value.trim()})"></div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Due date</label>
+            <input class="input" type="date" value="${esc(it.due || '')}" onchange="acPatch(${args},{due:this.value})"></div>
+          <div class="field"><label class="fl">Status</label>
+            <label class="ac-done"><input type="checkbox" ${it.done ? 'checked' : ''} onchange="acToggle(${args},this.checked)"> <span>Done</span></label></div>
+        </div>
+        <div class="field"><label class="fl">Details</label>
+          <textarea class="input autosize" rows="3" placeholder="What’s needed, who owns it, what’s blocking it…"
+            onchange="acPatch(${args},{detail:this.value})">${esc(it.detail || '')}</textarea></div>`}
+    </div>
+
+    <div class="track-sec">
+      <h4>Emails &amp; files <span class="spacer"></span>${unfiled ? '' : `<button class="btn sm" onclick="pickEmailFiles('${c.id}','${it.id}')">+ Add</button>`}</h4>
+      ${files.length ? `<div class="file-list">` + files.map(f => `
+        <div class="file-row"><span class="fi">${/\.(msg|eml)$/i.test(f.name) ? '✉️' : '📄'}</span>
+          <span class="fn"><b>${esc(f.name)}</b><small>${f.added ? fmtDate(f.added) : ''}${f.size ? ' · ' + fmtBytes(f.size) : ''}</small></span>
+          ${unfiled ? moveTo('file', f.id) : ''}
+          <button class="btn sm" onclick="viewEmailDoc('${c.id}','${f.id}')">Open</button>
+          <button class="btn sm ghost" title="Rename" onclick="renameEmailDoc('${c.id}','${f.id}')">✎</button>
+          <button class="icon-btn" title="Remove" onclick="removeEmailDoc('${c.id}','${f.id}')">🗑</button>
+        </div>`).join('') + `</div>` : `<div class="muted" style="font-size:13px">Nothing attached${unfiled ? '' : ' to this item'} yet.</div>`}
+      ${unfiled ? '' : `<div class="email-drop" id="emailDrop">Drop emails or files here, or click to choose <span class="muted">· .msg, .eml, PDF</span></div>`}
+    </div>
+
+    <div class="track-sec">
+      <h4>Notes</h4>
+      ${unfiled ? '' : `<div class="add-row">
+        <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}','${it.id}')">
+        <button class="btn sm" onclick="addNote('${c.id}','${it.id}')">Add</button>
+      </div>`}
+      ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => `
+        <div class="note-item">
+          <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
+          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
+            ${unfiled ? moveTo('note', n.id) : ''}
+            <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
+        </div>`).join('') || `<div class="muted" style="font-size:13px">No notes${unfiled ? '' : ' on this item'} yet.</div>`}
+    </div>`;
+}
+function trackAddItem(catId) {
+  const c = catById(catId); if (!c) return;
+  const el = $('checkInput'), text = (el && el.value || '').trim();
+  if (!text) return;
+  const it = { id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now() };
+  c.checklist = (c.checklist || []).concat([it]);
+  trackItem = it.id;                                  // open what you just made
+  renderTracking(); saveTrackCat(c);
+  const ne = $('checkInput'); if (ne) { ne.value = ''; ne.focus(); }
+}
+function trackAssign(catId, kind, thingId, itemId) {
+  const c = catById(catId); if (!c || !itemId) { renderTracking(); return; }
+  const list = kind === 'file' ? (c.files || []) : (c.notes || []);
+  const x = list.filter(y => y.id === thingId)[0]; if (!x) return;
+  x.item = itemId;
+  renderTracking(); saveTrackCat(c);
+  toast('Filed under “' + ((trackItemById(c, itemId) || {}).text || '') + '”');
 }
 
-async function pickEmailFiles(catId) {
+async function pickEmailFiles(catId, itemId) {
   if (!jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
   inp.accept = '.msg,.eml,.pdf,application/pdf,message/rfc822';
-  inp.onchange = () => addEmailFiles(catId, Array.from(inp.files));
+  inp.onchange = () => addEmailFiles(catId, Array.from(inp.files), itemId);
   inp.click();
 }
-async function addEmailFiles(catId, files) {
+async function addEmailFiles(catId, files, itemId) {
   const start = catById(catId); if (!start || !files.length) return;
   if (!jobFolder) { if (!(await loadJobFolder())) return; }
   const catName = start.name;                 // fix the folder path for this upload
@@ -3783,7 +3938,7 @@ async function addEmailFiles(catId, files) {
     try {
       stickyToast(`Saving ${f.name}…`);
       const { dir, file } = await putEmailFile(f, catName);
-      newFiles.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+      newFiles.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, item: itemId || '', added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!newFiles.length) return;
@@ -3917,12 +4072,12 @@ function renderActionModal() {
     </div></div></div>`;
   autosizeAll($('modalHost'));
 }
-function addNote(catId) {
+function addNote(catId, itemId) {
   const c = catById(catId); if (!c) return;
-  const el = $('noteInput'); const text = (el.value || '').trim();
+  const el = $('noteInput'); const text = (el && el.value || '').trim();
   if (!text) return;
   c.notes = c.notes || [];
-  c.notes.unshift({ id: uid('note'), text, created: Date.now() });
+  c.notes.unshift({ id: uid('note'), text, item: itemId || '', created: Date.now() });
   renderTracking();
   saveTrackCat(c);
   const ne = $('noteInput'); if (ne) ne.focus();
