@@ -310,14 +310,16 @@ header {
 .track-sec h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
   margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .track-sec h4 .spacer { flex: 1; }
-.check-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
+.check-row { display: flex; align-items: flex-start; gap: 9px; padding: 3px 0; }
+.check-row .ct-btn { align-items: flex-start; }
+.check-row .tick, .check-row .x { margin-top: 3px; }
 .check-row input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; flex: none; }
 .check-row .ct-btn {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left;
   border: none; background: none; cursor: pointer; padding: 5px 6px; border-radius: 6px; color: inherit;
 }
 .check-row .ct-btn:hover { background: var(--surface-2); }
-.check-row .ct { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-row .ct { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .check-row.done .ct { text-decoration: line-through; color: var(--text-3); }
 .check-row .ac-due {
   flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
@@ -348,7 +350,10 @@ header {
   background: var(--amber-sf); border-left: 3px solid var(--amber); border-radius: 4px; padding: 4px 8px;
 }
 .pin-note { max-width: 60ch; }
-textarea.autosize { overflow: hidden; }
+/* A box that grows to fit what's in it — you should never have to scroll a field to read it. */
+textarea.autosize { overflow: hidden; resize: none; }
+textarea.autosize[rows="1"] { min-height: 0; }
+.add-row { align-items: flex-start; }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -1024,7 +1029,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.46';
+const APP_VERSION = 'v7.47';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3803,7 +3808,8 @@ function renderTracking() {
         <div class="track-sec">
           <h4>Action items ${acCountLabel(items)}</h4>
           <div class="add-row">
-            <input class="input" id="checkInput" placeholder="Add an action item…" onkeydown="if(event.key==='Enter')trackAddItem('${c.id}')">
+            <textarea class="input autosize" rows="1" id="checkInput" placeholder="Add an action item…  (Enter to add, Shift+Enter for a new line)"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();trackAddItem('${c.id}')}"></textarea>
             <button class="btn sm" onclick="trackAddItem('${c.id}')">Add</button>
           </div>
           ${items.map(i => {
@@ -3862,7 +3868,7 @@ function trackDetailHtml(c, it) {
         <div class="muted" style="font-size:13px;margin-bottom:10px">Saved against this category before it had an action item to sit on. File each one under an item, or leave it here.</div>`
       : `<h4>Action item <span class="spacer"></span>
           <button class="btn sm ghost" onclick="copyTrackText('${c.id}','${it.id}')" title="Copy just this action item">⧉ Copy</button></h4>
-        <div class="field"><input class="input" value="${esc(it.text)}" onchange="acPatch(${args},{text:this.value.trim()})"></div>
+        <div class="field"><textarea class="input autosize" rows="1" onchange="acPatch(${args},{text:this.value.trim()})">${esc(it.text)}</textarea></div>
         <div class="grid2">
           <div class="field"><label class="fl">Due date</label>
             <input class="input" type="date" value="${esc(it.due || '')}" onchange="acPatch(${args},{due:this.value})"></div>
@@ -3890,7 +3896,8 @@ function trackDetailHtml(c, it) {
     <div class="track-sec">
       <h4>Notes</h4>
       ${unfiled ? '' : `<div class="add-row">
-        <input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')addNote('${c.id}','${it.id}')">
+        <textarea class="input autosize" rows="1" id="noteInput" placeholder="Add a note…  (Enter to add, Shift+Enter for a new line)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addNote('${c.id}','${it.id}')}"></textarea>
         <button class="btn sm" onclick="addNote('${c.id}','${it.id}')">Add</button>
       </div>`}
       ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => `
@@ -10261,8 +10268,17 @@ function toggleStatusGrid(btn) {
   btn.textContent = g.hidden ? 'Change ▾' : 'Hide ▴';
 }
 /* Textareas marked .autosize grow to fit their content instead of scrolling. */
-function autosize(el) { if (!el) return; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
-function autosizeAll(host) { (host || document).querySelectorAll('textarea.autosize').forEach(autosize); }
+function autosize(el) {
+  if (!el) return;
+  const was = el.style.height;
+  el.style.height = 'auto';
+  const h = el.scrollHeight;
+  // A box that isn't laid out yet — inside a closed <details>, or a panel not on screen — reports
+  // nothing. Leave it as it was rather than collapsing it to nothing.
+  if (!h) { el.style.height = was; return; }
+  el.style.height = (h + 2) + 'px';
+}
+function autosizeAll(host) { try { (host || document).querySelectorAll('textarea.autosize').forEach(autosize); } catch (x) {} }
 
 function renderDrawer() {
   const s = findSection(openKey);
@@ -12147,6 +12163,12 @@ function autoCapField(el) {
 }
 document.addEventListener('change', e => autoCapField(e.target), true);
 document.addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('autosize')) autosize(e.target); });
+// text rewraps when the window changes width, so the boxes have to be measured again
+let _asT = null;
+if (typeof window !== 'undefined' && window.addEventListener)
+  window.addEventListener('resize', () => { clearTimeout(_asT); _asT = setTimeout(() => autosizeAll(), 120); });
+// ...and when a folded-away panel is opened, its boxes get their first chance to measure
+document.addEventListener('toggle', e => { if (e.target && e.target.tagName === 'DETAILS' && e.target.open) autosizeAll(e.target); }, true);
 
 /* ═══════════════════════════════════════════════════════════════════════════
    12. PER-JOB SHAREFILE FOLDER (for PDFs)
