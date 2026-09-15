@@ -1017,7 +1017,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.43';
+const APP_VERSION = 'v7.44';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6908,6 +6908,8 @@ let _wbChk = null;                       // the last check against the filed spr
 let _wbPA = {};                          // print area per sheet — the document, as opposed to the scaffolding
 let _wbBlocks = {};                      // the sheet's fixed-length lists (takeoff lines, subs, additional material)
 let _wbPage = {};                        // how Excel is set up to print each sheet (portrait / landscape)
+let _wbSty = null, _wbXf = {};           // the workbook's real borders, alignment and bold, per cell
+let _wbHid = {};                         // hidden rows that have earned their place back, per sheet
 let _wbPdf = null;                       // the "which pages?" picker, while it is open
 let _wbPushed = false, _wbPopWired = false;    // so the browser Back button closes the editor
 /* ── The workbook editor ──
@@ -7001,20 +7003,63 @@ function wbDvValues(f1) {
   if (!raw || raw.charAt(0) !== '"') return [];                 // only inline lists; a range ref needs the sheet
   return raw.replace(/^"|"$/g, '').split(',').map(v => v.trim()).filter(v => v !== '');
 }
+/* ── What the form actually looks like ──
+   SheetJS hands us values and fills but not the workbook's ruled lines, its alignment or its
+   bold — and those are most of what makes a proposal look like a proposal rather than a grid of
+   boxes. They live in xl/styles.xml: every cell carries an index into cellXfs, which points at a
+   border, a font and an alignment. We read that once, when the workbook is opened. */
+function wbParseStyles(xml) {
+  const sec = (tag) => (xml.match(new RegExp('<' + tag + '\\b[^>]*>([\\s\\S]*?)</' + tag + '>')) || [])[1] || '';
+  const border = [], font = [], xf = [];
+  const edge = (inner, side) => {
+    const m = String(inner).match(new RegExp('<' + side + '\\b([^>]*)(?:/>|>)'));
+    return m ? ((m[1].match(/style="([^"]+)"/) || [])[1] || '') : '';
+  };
+  sec('borders').replace(/<border\b[^>]*?(?:\/>|>([\s\S]*?)<\/border>)/g, (m0, inner) => {
+    border.push({ l: edge(inner, 'left'), r: edge(inner, 'right'), t: edge(inner, 'top'), b: edge(inner, 'bottom') });
+    return m0;
+  });
+  sec('fonts').replace(/<font\b[^>]*?(?:\/>|>([\s\S]*?)<\/font>)/g, (m0, inner) => {
+    font.push({ bold: /<b\s*\/>|<b\s/.test(inner || ''), sz: parseFloat(((inner || '').match(/<sz val="([\d.]+)"/) || [])[1]) || 11 });
+    return m0;
+  });
+  sec('cellXfs').replace(/<xf\b([^>]*?)\s*(?:\/>|>([\s\S]*?)<\/xf>)/g, (m0, attrs, inner) => {
+    const num = (k) => +((attrs.match(new RegExp(k + '="(\\d+)"')) || [])[1] || 0);
+    xf.push({ b: num('borderId'), f: num('fontId'),
+      h: ((inner || '').match(/horizontal="([^"]+)"/) || [])[1] || '',
+      wrap: /wrapText="1"/.test(inner || '') });
+    return m0;
+  });
+  return { border, font, xf };
+}
+function wbCellStyle(sheet, addr) {                     // the workbook's own look for one cell
+  const i = (_wbXf[sheet] || {})[addr];
+  if (i == null || !_wbSty) return null;
+  const x = _wbSty.xf[i]; if (!x) return null;
+  return { b: _wbSty.border[x.b] || null, bold: !!(_wbSty.font[x.f] || {}).bold, h: x.h, wrap: x.wrap };
+}
 async function wbLoadValidations(bytes) {
   const out = {};
-  _wbPage = {};
+  _wbPage = {}; _wbSty = null; _wbXf = {};
   try {
     const JZ = await ensureJSZip();
     const zip = await JZ.loadAsync(bytes);
     const fmap = await zipSheetFileMap(zip);
+    try { if (zip.file('xl/styles.xml')) _wbSty = wbParseStyles(await zip.file('xl/styles.xml').async('string')); } catch (x) {}
     for (const sheet in fmap) {
       const f = zip.file(fmap[sheet]); if (!f) continue;
       const xml = await f.async('string');
       // while we have the sheet's XML: how Excel is set up to PRINT it. The takeoffs are
       // landscape, the proposal and the CP portrait — the exported PDF should agree.
       const ps = (xml.match(/<pageSetup\b[^>]*>/) || [])[0] || '';
-      _wbPage[sheet] = { orient: /orientation="landscape"/.test(ps) ? 'landscape' : 'portrait' };
+      _wbPage[sheet] = { orient: /orientation="landscape"/.test(ps) ? 'landscape' : 'portrait',
+        mono: /blackAndWhite="1"/.test(ps) };
+      if (_wbSty) {                                     // which style each cell uses
+        const m = {}; let c;
+        const re = /<c r="([A-Z]+\d+)"[^>]*\ss="(\d+)"/g;
+        while ((c = re.exec(xml))) m[c[1]] = +c[2];
+        _wbXf[sheet] = m;
+      }
       const list = [];
       const re = /<dataValidation\b([^>]*?)(?:\/>|>([\s\S]*?)<\/dataValidation>)/g;
       let m;
@@ -7351,7 +7396,7 @@ function wbApplyFx(e) {
     ws[m[2]] = { t: 'n', v: 0, f: fx[k] };
   }
   _wbEng.recalc();
-  _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {};   // the overlay can create cells outside the old bounds
+  _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {};   // the overlay can create cells outside the old bounds
   if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
@@ -7843,7 +7888,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
   _wbView = 'sheet';                                // the clean sheet pages are the default view
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -7863,7 +7908,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -7895,7 +7940,7 @@ function wbNoteOutsideBounds(sheet, addr) {
   const b = _wbBounds[sheet]; if (!b) return;
   let cell; try { cell = XLSX.utils.decode_cell(addr); } catch (x) { return; }
   if (cell.r <= b.r1 && b.pos[cell.c] != null) return;
-  delete _wbBounds[sheet]; delete _wbSecs[sheet]; delete _wbFills[sheet]; delete _wbPA[sheet];
+  delete _wbBounds[sheet]; delete _wbSecs[sheet]; delete _wbFills[sheet]; delete _wbPA[sheet]; delete _wbHid[sheet];
 }
 /* store a value exactly as given (no typing rules) — how a section switch is flipped */
 function wbSetCell(sheet, addr, stored) {
@@ -8270,6 +8315,63 @@ function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
 /* Which rows a block of the sheet actually shows, in what order, and — for a row that lives
    below the sheet because it was added — the row it takes its shape from. The screen and the
    PDF both walk this, so an exported page can't quietly differ from the one on screen. */
+/* ── Rows the workbook keeps folded away ──
+   The CP files its whole cost breakout, its labour detail and its spare description lines as
+   hidden rows, and unhides the ones that have something on them. We work out the same thing from
+   the values: a row of figures earns its place with a figure, a row of words with words, and a
+   column heading comes back with the block it heads. */
+/* Did this cell's text come from somebody filling the form in, or is it part of the form? A
+   description line reads through to a cell that was typed; a row label reads through to the
+   template's own words. */
+function wbCellIsTyped(sheet, addr) {
+  if (_wbEng.getOverride(sheet, addr) !== undefined) return true;
+  const raw = _wbEng.raw(sheet, addr);
+  if (!raw || raw.f == null) return false;
+  let hit = false;
+  String(raw.f).replace(/(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_.]*))!(\$?[A-Z]{1,3}\$?\d{1,7})|(\$?[A-Z]{1,3}\$?\d{1,7})/g,
+    (m0, q, p, a1, a2) => {
+      const sh = q || p || sheet, ad = String(a1 || a2 || '').replace(/\$/g, '');
+      if (ad && _wbEng.getOverride(sh, ad) !== undefined) hit = true;
+      return m0;
+    });
+  return hit;
+}
+function wbHiddenShown(sheet, cols) {
+  if (_wbHid[sheet]) return _wbHid[sheet];
+  const ws = _wbEng.sheetObj(sheet), rs = (ws && ws['!rows']) || [];
+  const show = {};
+  let anyHidden = false;
+  for (let i = 0; i < rs.length; i++) if (rs[i] && rs[i].hidden) { anyHidden = true; break; }
+  if (!anyHidden) return (_wbHid[sheet] = show);
+  const b = wbSheetBounds(sheet), use = cols && cols.length ? cols : b.cols;
+  const kind = {};                                      // 'strong' = has something of its own, 'head' = a heading
+  for (let r = b.r0; r <= b.r1; r++) {
+    if (!wbHiddenRow(sheet, r)) continue;
+    let last = null, words = false, typed = false;
+    use.forEach(c => {
+      const a = XLSX.utils.encode_cell({ r, c });
+      const v = _wbEng.get(sheet, a);
+      if (typeof v === 'number' && isFinite(v)) { last = v; return; }   // the amount is the rightmost figure
+      if (typeof v !== 'string' || v.trim() === '') return;
+      words = true;
+      if (wbCellIsTyped(sheet, a)) typed = true;
+    });
+    // A line of figures earns its place with an amount — a labour class priced at the standard
+    // rate but with no hours on it is still nothing. A line of words earns its place by being
+    // something somebody entered, rather than a heading the form always carries.
+    kind[r] = (last != null) ? (last !== 0 ? 'strong' : '') : typed ? 'strong' : words ? 'head' : '';
+  }
+  // a heading rejoins the run of hidden rows it belongs to, once any of them has something
+  let run = [], live = false;
+  const flush = () => { if (live) run.forEach(r => { if (kind[r]) show[r] = 1; }); run = []; live = false; };
+  for (let r = b.r0; r <= b.r1 + 1; r++) {
+    if (kind[r] === undefined) { flush(); continue; }
+    run.push(r);
+    if (kind[r] === 'strong') { live = true; show[r] = 1; }
+  }
+  flush();
+  return (_wbHid[sheet] = show);
+}
 function wbRowSeq(sheet, r0, r1, sec, cols, keepAdded) {
   const eng = _wbEng, b = wbSheetBounds(sheet), ent = wbEntity();
   const added = wbAddedRowSet(sheet), secRows = wbSecRowMap(sheet);
@@ -8298,11 +8400,14 @@ function wbRowSeq(sheet, r0, r1, sec, cols, keepAdded) {
     }
     const blk = wbBlockEnding(sheet, r);                              // is this the last line of a list?
     const extra = blk && blk.totals.some(t => b.pos[t.col] != null && cols.indexOf(t.col) >= 0) ? wbAddedFor(ent, sheet, blk.key) : null;
-    if (wbHiddenRow(sheet, r) && !extra) { gap++; continue; }         // Excel hides this row; so do we
+    // A row Excel hides is hidden because there is nothing on it yet — the CP's whole cost
+    // breakout is filed away like this until the numbers arrive. So hide it while it computes
+    // to nothing, and show it the moment it doesn't, which is what the workbook's own macro does.
+    if (wbHiddenRow(sheet, r) && !extra && !wbHiddenShown(sheet, cols)[r]) { gap++; continue; }
     if (!any && !extra) { gap++; continue; }                          // collapse blank runs into one thin gap
     if (gap && any0) out.push({ t: 'gap' });
     gap = 0; any0 = true;
-    if (any && !wbHiddenRow(sheet, r)) {
+    if (any) {                                                        // the hidden-row decision was made above
       const ln = added[r] && wbBlocksOf(sheet)[added[r].key];
       out.push({ t: 'row', r, src: sr ? sr.src : (ln ? ln.r1 : null), blk: null });
     }
@@ -8384,12 +8489,18 @@ function wbPdfRowCells(sheet, row, src, cols, pos, hide) {
     // Excel lets a heading run on across the empty cells to its right — "Proposal", "ARCTIC
     // SHEET METAL, INC.", the acceptance paragraph. A table would clip each to its own narrow
     // column, so take the spare ones in. Cells you are meant to write in are never taken.
+    let ov = false;
     if (!sp && cell.kind === 'label' && String(cell.text).trim() !== '') {
       let j = i + 1;
       while (j < cols.length && !spans[cols[j]] && !skip[cols[j]] && wbPdfSpare(sheet, row, cols[j], src)) j++;
       if (j > i + 1) { cs = j - i; i = j - 1; }
+      // A short label in a column too narrow for it — "Authorized", "Signature" — is written
+      // across the blank to its right rather than broken in half, which is what Excel does. The
+      // blank stays a blank, so the line you sign on is still there.
+      else if (String(cell.text).trim().length <= 14 && j < cols.length &&
+        String(wbPdfCell(sheet, row, cols[i + 1], src).text).trim() === '') ov = true;
     }
-    out.push({ text: cell.text, kind: cell.kind, cs });
+    out.push({ text: cell.text, kind: cell.kind, cs, c, ov });
   }
   return out;
 }
@@ -8399,10 +8510,39 @@ function wbPdfSpare(sheet, row, c, src) {                // empty, and not somew
   if (wbIsInputCell(sheet, raw) || (src != null && wbIsInputCell(sheet, sraw))) return false;
   return String(wbPdfCell(sheet, row, c, src).text).trim() === '';
 }
-function wbPdfStyle(kind) {
-  if (kind === 'calc') return { halign: 'right', fontStyle: 'bold', textColor: ARCTIC_INK };
-  if (kind === 'label') return { halign: 'left', textColor: ARCTIC_INK };
-  return { halign: 'right', textColor: [40, 46, 58] };
+const WB_PDF_LW = { hair: 0.3, thin: 0.5, medium: 0.9, thick: 1.3, double: 0.9, dotted: 0.4, dashed: 0.4 };
+/* the shading the form itself carries — a heading band, a highlighted total */
+function wbPdfFill(sheet, row, c) {
+  const raw = _wbEng.raw(sheet, XLSX.utils.encode_cell({ r: row, c }));
+  const rgb = raw && raw.s && raw.s.patternType === 'solid' && raw.s.fgColor && raw.s.fgColor.rgb;
+  if (!rgb || typeof rgb !== 'string' || rgb.length < 6) return null;
+  const h = rgb.slice(-6);
+  const v = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  if (v.some(isNaN) || (v[0] > 248 && v[1] > 248 && v[2] > 248)) return null;   // white is not shading
+  return v;
+}
+function wbPdfStyle(sheet, row, c, cell, span) {
+  const st = wbCellStyle(sheet, XLSX.utils.encode_cell({ r: row, c }));
+  const numeric = cell.text !== '' && !isNaN(Number(String(cell.text).replace(/[$,%()\s-]/g, ''))) && /[0-9]/.test(cell.text);
+  let halign = cell.kind === 'label' ? 'left' : (numeric ? 'right' : 'left');
+  if (st && st.h) halign = (st.h === 'center' || st.h === 'centerContinuous') ? 'center'
+    : st.h === 'right' ? 'right' : st.h === 'left' ? 'left' : halign;
+  const out = { halign, textColor: ARCTIC_INK };
+  if (st && st.bold) out.fontStyle = 'bold';
+  else if (cell.kind === 'calc') out.fontStyle = 'bold';
+  if (cell.ov) out.overflow = 'visible';
+  return out;
+}
+/* The ruled lines the form actually has — left edge from the first column a cell spans, right
+   edge from the last. Drawing a box round every cell is what made the proposal look like a
+   spreadsheet dump instead of the document it is. */
+function wbPdfBorder(sheet, row, c, cs, cols, pos) {
+  if (!_wbSty) return { l: 'thin', r: 'thin', t: 'thin', b: 'thin' };      // no styles: fall back to a grid
+  const i = cols.indexOf(c), last = cols[Math.min(i + cs - 1, cols.length - 1)];
+  const a = wbCellStyle(sheet, XLSX.utils.encode_cell({ r: row, c })) || {};
+  const z = wbCellStyle(sheet, XLSX.utils.encode_cell({ r: row, c: last })) || {};
+  const ab = a.b || {}, zb = z.b || {};
+  return { l: ab.l || '', r: zb.r || '', t: ab.t || '', b: ab.b || '' };
 }
 /* A line of the form nobody filled in reads, on paper, as "0.00  0.00  $-" across the page —
    the spreadsheet's own noise. On screen those rows are boxes to type in, so they stay; in a
@@ -8421,64 +8561,140 @@ function wbPdfBlockBody(sheet, blk, cols, pos) {
     if (it.t !== 'row') return;                          // the thin gaps and the "add a line" bar don't print
     const cells = wbPdfRowCells(sheet, it.r, it.src, cols, pos, hide);
     if (cells.every(wbPdfBlank)) return;
-    body.push(cells.map(x => {
-      const st = wbPdfStyle(x.kind);
-      if (typeof x.text === 'string' && x.text !== '' && x.kind !== 'label' && isNaN(Number(String(x.text).replace(/[$,%\s]/g, '')))) st.halign = 'left';
-      return { content: x.text, colSpan: x.cs, styles: st };
-    }));
+    body.push(cells.map(x => ({
+      content: x.text, colSpan: x.cs,
+      styles: wbPdfStyle(sheet, it.r, x.c, x, x.cs),
+      _b: wbPdfBorder(sheet, it.r, x.c, x.cs, cols, pos),
+      _f: wbPdfFill(sheet, it.r, x.c),
+    })));
   });
   return body;
 }
 /* one sheet, onto as many pages as it needs */
-function wbPdfSheet(doc, sheet, first, meta) {
+function wbPdfDraw(doc, sheet, meta, plan, fs) {
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
   const avail = pageW - WB_PDF_M * 2;
-  const bl = wbPageBlocks(sheet), cols = bl.main;
-  const pos = {}; cols.forEach((c, i) => { pos[c] = i; });
-  const fit = wbPdfFit(wbPdfWidths(sheet, cols), avail, 21);   // narrow columns still need to hold a short word
-  const colStyles = {};
-  fit.forEach((w, i) => { colStyles[i] = { cellWidth: w }; });
-  // sheet letterhead
-  try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', WB_PDF_M, 18, 34, 34); } catch (x) {}
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor.apply(doc, ARCTIC_INK);
-  doc.text(String(sheet), WB_PDF_M + 42, 34);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110, 116, 128);
-  doc.text(meta.sub, WB_PDF_M + 42, 46);
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor.apply(doc, ARCTIC_BLUE);
-  doc.text(meta.total, pageW - WB_PDF_M, 34, { align: 'right' });
-  doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.2); doc.line(WB_PDF_M, 56, pageW - WB_PDF_M, 56);
-  let y = 66;
-  bl.blocks.forEach(blk => {
-    const body = wbPdfBlockBody(sheet, blk, cols, pos);
-    if (!body.length) return;
-    if (blk.sec) {                                       // the section's own bar, as the editor shows it
-      const off = wbSectionExcluded(sheet, blk.sec.sw), ded = wbIsDeducted(sheet, blk.sec);
-      const sums = wbSectionSums(sheet, blk.sec).map(s => s.label + ' ' + s.val).join('   ');
-      const label = blk.sec.n + '.  ' + wbSectionName(sheet, blk.sec) +
-        (off ? '   — EXCLUDED, zeroed in totals' : ded ? '   — DEDUCTED, subtracted from the total' : '');
+  const mono = !!(_wbPage[sheet] && _wbPage[sheet].mono);
+  const pad = Math.max(0.8, fs * 0.28);
+  // The sheet's letterhead, on every page it needs — a sheet too long for one page still says
+  // which sheet it is on page four.
+  const headed = {};
+  const header = () => {
+    let pn = 1; try { pn = doc.internal.getCurrentPageInfo().pageNumber; } catch (x) {}
+    if (headed[pn]) return; headed[pn] = 1;
+    try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', WB_PDF_M, 18, 34, 34); } catch (x) {}
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor.apply(doc, ARCTIC_INK);
+    doc.text(String(sheet), WB_PDF_M + 42, 34);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110, 116, 128);
+    doc.text(meta.sub, WB_PDF_M + 42, 46);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+    doc.text(meta.total, pageW - WB_PDF_M, 34, { align: 'right' });
+    doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.2); doc.line(WB_PDF_M, 56, pageW - WB_PDF_M, 56);
+  };
+  header();
+  const top = 66;
+  let y = top;
+  plan.blocks.forEach(b2 => {
+    if (b2.sec) {                                        // the section's own bar, as the editor shows it
       doc.autoTable({
         startY: y, margin: { left: WB_PDF_M, right: WB_PDF_M }, tableWidth: avail, theme: 'plain',
-        body: [[{ content: label, styles: { fontStyle: 'bold', halign: 'left' } },
-                { content: sums, styles: { halign: 'right' } }]],
-        styles: { font: 'helvetica', fontSize: 8.5, cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
-          fillColor: off ? [240, 241, 245] : ded ? [253, 240, 213] : [232, 236, 252],
-          textColor: off ? [110, 116, 128] : ARCTIC_INK },
+        body: [[{ content: b2.sec.label, styles: { fontStyle: 'bold', halign: 'left' } },
+                { content: b2.sec.sums, styles: { halign: 'right' } }]],
+        styles: { font: 'helvetica', fontSize: Math.max(6.5, fs + 1), cellPadding: { top: pad + 1.5, bottom: pad + 1.5, left: 5, right: 5 },
+          fillColor: b2.sec.off ? [240, 241, 245] : b2.sec.ded ? [253, 240, 213] : [232, 236, 252],
+          textColor: b2.sec.off ? [110, 116, 128] : ARCTIC_INK },
         columnStyles: { 0: { cellWidth: avail * 0.62 }, 1: { cellWidth: avail * 0.38 } },
       });
       y = doc.lastAutoTable.finalY;
     }
     doc.autoTable({
-      startY: y, margin: { top: WB_PDF_M + 8, left: WB_PDF_M, right: WB_PDF_M, bottom: WB_PDF_M + 8 },
-      tableWidth: avail, body, theme: 'grid', columnStyles: colStyles,
-      styles: { font: 'helvetica', fontSize: 7, cellPadding: 2, overflow: 'linebreak',
-        lineColor: [214, 218, 227], lineWidth: 0.4, textColor: ARCTIC_INK, valign: 'middle' },
+      startY: y, margin: { top: 66, left: WB_PDF_M, right: WB_PDF_M, bottom: WB_PDF_M + 8 },
+      tableWidth: avail, body: b2.body, theme: 'plain', columnStyles: plan.colStyles,
+      didDrawPage: () => header(),
+      styles: { font: 'helvetica', fontSize: fs, cellPadding: pad, overflow: 'linebreak',
+        textColor: ARCTIC_INK, valign: 'middle', lineWidth: 0 },
+      // the workbook's own ruled lines, drawn edge by edge — not a box round every cell
+      didDrawCell: d => {
+        const b3 = d.cell.raw && d.cell.raw._b; if (!b3 || d.section !== 'body') return;
+        const { x, y: cy, width: w, height: h } = d.cell;
+        doc.setDrawColor(90, 96, 108);
+        const line = (kind, x1, y1, x2, y2) => {
+          if (!kind) return;
+          doc.setLineWidth(WB_PDF_LW[kind] || 0.5);
+          doc.line(x1, y1, x2, y2);
+          if (kind === 'double') { doc.setLineWidth(0.4); doc.line(x1, y1 + 1.4, x2, y2 + 1.4); }
+        };
+        line(b3.t, x, cy, x + w, cy);
+        line(b3.b, x, cy + h, x + w, cy + h);
+        line(b3.l, x, cy, x, cy + h);
+        line(b3.r, x + w, cy, x + w, cy + h);
+      },
+      didParseCell: d => {
+        const f = d.cell.raw && d.cell.raw._f;
+        if (f && !mono) d.cell.styles.fillColor = f;
+      },
     });
-    y = doc.lastAutoTable.finalY + 8;
+    y = doc.lastAutoTable.finalY + Math.max(3, fs);
   });
-  if (y === 66) {                                        // nothing on it — say so rather than a blank page
+  if (y === top) {                                       // nothing on it — say so rather than a blank page
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(140, 146, 158);
     doc.text('This page is empty.', WB_PDF_M, 80);
   }
+  return y;
+}
+/* Everything about the sheet that doesn't depend on the type size, worked out once so the
+   fitting pass can re-draw it cheaply at different sizes. */
+function wbPdfPlan(sheet, avail) {
+  const bl = wbPageBlocks(sheet), cols = bl.main;
+  const pos = {}; cols.forEach((c, i) => { pos[c] = i; });
+  const fit = wbPdfFit(wbPdfWidths(sheet, cols), avail, 21);   // narrow columns still need to hold a short word
+  const colStyles = {};
+  fit.forEach((w, i) => { colStyles[i] = { cellWidth: w }; });
+  const blocks = [];
+  bl.blocks.forEach(blk => {
+    const body = wbPdfBlockBody(sheet, blk, cols, pos);
+    if (!body.length) return;
+    let sec = null;
+    if (blk.sec) {
+      const off = wbSectionExcluded(sheet, blk.sec.sw), ded = wbIsDeducted(sheet, blk.sec);
+      sec = { off, ded,
+        sums: wbSectionSums(sheet, blk.sec).map(s => s.label + ' ' + s.val).join('   '),
+        label: blk.sec.n + '.  ' + wbSectionName(sheet, blk.sec) +
+          (off ? '   — EXCLUDED, zeroed in totals' : ded ? '   — DEDUCTED, subtracted from the total' : '') };
+    }
+    blocks.push({ sec, body });
+  });
+  return { blocks, colStyles };
+}
+/* A tab is a page. Excel fits each sheet to one page when it prints; so do we — measure the
+   sheet, and if it runs over, set the type smaller until it lands on one. There is a floor:
+   below about 4pt nobody can read it, so a genuinely long sheet (a 900-line inventory) is
+   allowed to run on rather than be shrunk into nothing. */
+const WB_PDF_FS = 7, WB_PDF_FS_MIN = 4.2;
+function wbPdfSheet(doc, sheet, first, meta, jspdf) {
+  const pageW = doc.internal.pageSize.getWidth();
+  const plan = wbPdfPlan(sheet, pageW - WB_PDF_M * 2);
+  const orient = wbPdfOrient(sheet);
+  const measure = fs => {
+    const t = new jspdf.jsPDF({ orientation: orient, unit: 'pt', format: 'letter' });
+    const endY = wbPdfDraw(t, sheet, meta, plan, fs);
+    return { pages: t.internal.getNumberOfPages(), endY };
+  };
+  // Most sheets are nowhere near a full page; only the ones that might spill are worth measuring.
+  const rows = plan.blocks.reduce((a, b2) => a + b2.body.length + (b2.sec ? 1 : 0), 0);
+  const roomy = doc.internal.pageSize.getHeight() - 66 - WB_PDF_M - 8;
+  let fs = WB_PDF_FS, pages = 1;
+  if (rows * (WB_PDF_FS + 2 * Math.max(0.8, WB_PDF_FS * 0.28) + 1.2) > roomy * 0.8) {
+    let m = measure(fs);
+    for (let i = 0; i < 4 && m.pages > 1 && fs > WB_PDF_FS_MIN; i++) {
+      const guess = fs * (i === 0 ? 1 / Math.sqrt(m.pages) : 0.85);
+      fs = Math.max(WB_PDF_FS_MIN, Math.round(guess * 10) / 10);
+      m = measure(fs);
+    }
+    pages = m.pages;
+  }
+  wbPdfDraw(doc, sheet, meta, plan, fs);
+  return { fs, pages };
 }
 async function wbExportPdf() {
   const cfg = wbCfg(), e = wbEntity(); if (!cfg || !e || !_wbEng) return;
@@ -8494,11 +8710,13 @@ async function wbExportPdf() {
       total: 'Total bid ' + (fmtMoney(wbTotalVal()) || '$0'),
     };
     let doc = null;
+    const long = [];
     sheets.forEach((s, i) => {
       const orient = wbPdfOrient(s);
       if (!doc) doc = new jspdf.jsPDF({ orientation: orient, unit: 'pt', format: 'letter' });
       else doc.addPage('letter', orient);
-      wbPdfSheet(doc, s, i === 0, meta);
+      const r = wbPdfSheet(doc, s, i === 0, meta, jspdf);
+      if (r.pages > 1) long.push(s + ' (' + r.pages + ')');
     });
     const n = doc.internal.getNumberOfPages();
     for (let p = 1; p <= n; p++) {                        // footer last, once every page exists
@@ -8512,7 +8730,9 @@ async function wbExportPdf() {
     const blob = doc.output('blob');
     await wbPdfFile(cfg, e, base, blob);
     doc.save(base + '.pdf');
-    toast(sheets.length === 1 ? 'Exported ' + sheets[0] + ' as a PDF' : 'Exported ' + sheets.length + ' pages as one PDF (' + n + ' sheet' + (n === 1 ? '' : 's') + ')');
+    const tail = long.length ? ' — ' + long.join(', ') + ' had too many lines for one page' : '';
+    toast(sheets.length === 1 ? 'Exported ' + sheets[0] + ' as a PDF' + tail
+      : 'Exported ' + sheets.length + ' pages as one ' + n + '-page PDF' + tail);
   } catch (x) { console.error(x); toast('Could not build the PDF: ' + (x.message || x), true); }
 }
 function wbPdfName(cfg, e, sheets) {
