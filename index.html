@@ -1029,7 +1029,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.49';
+const APP_VERSION = 'v7.50';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2009,16 +2009,26 @@ let jobUnassigned = [];            // PDFs found in the folder that no section r
 const DOCS_DIR = 'Dingus Documents';   // the root folder (inside "The Dingus") that holds every PDF, sorted into subfolders
 const DOCS_DIR_OLDS = ['files'];       // earlier name — migrated into DOCS_DIR on load
 const SUBMITTALS_DIR = 'Submittals';
+/* Several statuses can share one folder: a revision you've sent is with the GC just as much as
+   the original submittal was, so both file under "Submitted to GC". The register still tracks the
+   exact status — the folder only answers "where is this in the process". */
 const STATUS_DIR = {
   submitted_gc:     'Submittals/Submitted to GC',
+  revision_sent:    'Submittals/Submitted to GC',
   partial_approval: 'Submittals/Partial Approval',
   approved:         'Submittals/Approved',
   revise_resubmit:  'Submittals/Revise and Resubmit',
-  revision_requested: 'Submittals/Revision Requested',
-  revision_sent:    'Submittals/Revision Sent',
   waiting_vendor:   'Submittals/Waiting on Vendor',
+  revision_requested: 'Submittals/Waiting on Vendor',
   na:               'Submittals/Not Required',
   spec:             'Submittals/Specs'
+};
+/* Folders that used to hold a status of their own and now share one. Their contents are moved
+   into the folder that took over and the empty folder is removed, so nobody is left browsing a
+   folder that no longer fills up. */
+const RETIRED_SUB_DIRS = {
+  'Submittals/Revision Sent': 'Submittals/Submitted to GC',
+  'Submittals/Revision Requested': 'Submittals/Waiting on Vendor',
 };
 function statusDirName(id) { return STATUS_DIR[id] || (SUBMITTALS_DIR + '/Filed'); }
 const EMAIL_DIR = 'Emails';
@@ -12608,12 +12618,26 @@ function folderReadmeText() {
     '        "' + REGISTER_CSV + '"  the register as a spreadsheet you can open or send.',
     '        "' + FOLDER_README + '"  this file.',
     '  • the "' + DOCS_DIR + '" folder — every PDF, sorted into subfolders:',
-    '        ' + DOCS_DIR + '/Submittals/<status>/        current submittals & responses, by status',
+    '        ' + DOCS_DIR + '/Submittals/<where it is>/  current submittals & responses — see below',
     '        ' + DOCS_DIR + '/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        ' + DOCS_DIR + '/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        ' + DOCS_DIR + '/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
     '        ' + DOCS_DIR + '/Change Orders/<CO# - desc>/  one folder per change order — its PDFs + an "Emails" subfolder',
     '        ' + DOCS_DIR + '/Emails/<category>/          saved emails & attachments',
+    '',
+    'The Submittals folders say who we are waiting on, not the exact status — the',
+    'register in the tool always has that. A few statuses share a folder:',
+    '        Submitted to GC       sent to the GC — including a revision we have sent',
+    '        Waiting on Vendor     waiting on the vendor — including a revision we have asked them for',
+    '        Revise and Resubmit   back from the GC, marked revise and resubmit',
+    '        Partial Approval      back from the GC, approved in part',
+    '        Approved              approved',
+    '        Not Required          no submittal needed',
+    '        Specs                 the spec sections themselves',
+    '',
+    'A PDF moves between these folders as the job moves. If you need a copy that',
+    'stays put, use ' + DOCS_DIR + '/Submittals/All Submittals/<section>/ — there is one',
+    'folder per spec section and it never moves, whatever the status does.',
     '',
     'When a PDF is replaced by a newer revision, the old one is renamed with an',
     '"OLD - " prefix and moved into ' + DOCS_DIR + '/Submittals/Archive/ — so the live',
@@ -12993,6 +13017,44 @@ async function cleanupEmptyOldDirs(filesRoot) {
   return touched;
 }
 
+/* Empty out a folder whose status now files somewhere else, then remove it. Same care as the
+   flat-layout cleanup: an identical file already at the destination is not copied twice, and a
+   name that would collide gets a free one rather than overwriting anything. */
+async function cleanupRetiredSubDirs(filesRoot) {
+  let touched = 0;
+  for (const rel in RETIRED_SUB_DIRS) {
+    const targetRel = RETIRED_SUB_DIRS[rel];
+    if (targetRel === rel) continue;
+    let dh;
+    try { dh = await walkDir(filesRoot, rel); } catch (e) { continue; }            // not present
+    const names = [];
+    try { for await (const e of dh.values()) if (e.kind === 'file') names.push(e.name); } catch (e) {}
+    for (const fn of names) {
+      try {
+        const srcBlob = await (await dh.getFileHandle(fn)).getFile();
+        const targetDh = await walkDirCreate(filesRoot, targetRel);
+        let dup = false;
+        try { const tf = await (await targetDh.getFileHandle(fn)).getFile(); if (tf.size === srcBlob.size) dup = true; } catch (e) {}
+        if (!dup) {
+          const want = await uniqueFileName(targetDh, fn);
+          const fh = await targetDh.getFileHandle(want, { create: true });
+          const w = await fh.createWritable(); await w.write(srcBlob); await w.close();
+        }
+        await dh.removeEntry(fn);
+        touched++;
+      } catch (e) {}
+    }
+    try {
+      let empty = true; for await (const _ of dh.values()) { empty = false; break; }
+      if (empty) {
+        const parts = rel.split('/');
+        const parent = parts.length > 1 ? await walkDir(filesRoot, parts.slice(0, -1).join('/')) : filesRoot;
+        await parent.removeEntry(parts[parts.length - 1], { recursive: false });
+      }
+    } catch (e) {}
+  }
+  return touched;
+}
 /* Mirror every section that has a PDF into files/Submittals/All Submittals/<section>/:
    the current (most recent, non-archived) PDF sits at the top of the section folder,
    named by its status (e.g. "Approved - Valve.pdf"), and a nested "Archive" subfolder
@@ -13186,7 +13248,8 @@ async function maybeAutoOrganize() {
     const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     let n = 0;
     if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
-    const stray = await cleanupEmptyOldDirs(filesRoot);   // also catches leftovers even when records are fine
+    let stray = await cleanupEmptyOldDirs(filesRoot);     // also catches leftovers even when records are fine
+    stray += await cleanupRetiredSubDirs(filesRoot);      // folders whose status now files somewhere else
     await ensureSubmittalCategoryFolders(filesRoot);       // keep all the submittal category folders visible, even empty ones
     await syncRfiFolders();                               // per-RFI folders (+ Question/Answered) after any moves
     await syncCoFolders();                                // per-CO folders after any moves
