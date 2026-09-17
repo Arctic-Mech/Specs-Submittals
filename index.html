@@ -1029,7 +1029,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.48';
+const APP_VERSION = 'v7.49';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11416,8 +11416,14 @@ async function deleteSection(key) {
   if (!s) return;
   const files = (s.submittals || []).length + (s.responses || []).length;
   if (!confirm(`Remove ${s.number} from the register${files ? ` and delete its ${files} uploaded file(s)` : ''}?\n\nThis affects everyone on this job.`)) return;
+  // Same two cases every other removal handles: a file staged in the register, or one in
+  // ShareFile. This used to call a function that was never written, so deleting a section that
+  // had anything uploaded to it threw before it removed the section.
   for (const d of (s.submittals || []).concat(s.responses || [])) {
-    if (!isLink(d)) await deleteStoredFile(d.fileId);
+    try {
+      if (d.staged && d.stagedId) await deleteStaged(d.stagedId);
+      else if (!isLink(d)) await deleteStoredDoc(d);
+    } catch (e) { console.error(e); }
   }
   job.sections = job.sections.filter(x => x.key !== key);
   closeDrawer(); renderJob();
