@@ -1029,7 +1029,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.50';
+const APP_VERSION = 'v7.51';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6638,9 +6638,10 @@ function xlSetCell(xml, ref, spec) {
   const m = xml.match(reFull);
   // NB: replace with a function, never a string — a "$29" in a formula or a typed "$2" in text
   // would otherwise be read as a capture-group reference and mangle the cell.
-  if (m) { const s = (m[1].match(/\ss="\d+"/) || [''])[0]; const rep = '<c r="' + ref + '"' + s + tattr + '>' + inner + '</c>'; return xml.replace(reFull, () => rep); }
+  if (m) { const s = spec.s != null ? ' s="' + spec.s + '"' : (m[1].match(/\ss="\d+"/) || [''])[0]; const rep = '<c r="' + ref + '"' + s + tattr + '>' + inner + '</c>'; return xml.replace(reFull, () => rep); }
   const reRow = new RegExp('(<row r="' + row + '"[^>]*>)([\\s\\S]*?)(</row>)');
-  const rm = xml.match(reRow); const cellXml = '<c r="' + ref + '"' + tattr + '>' + inner + '</c>';
+  const rm = xml.match(reRow);
+  const cellXml = '<c r="' + ref + '"' + (spec.s != null ? ' s="' + spec.s + '"' : '') + tattr + '>' + inner + '</c>';
   if (rm) {
     const cells = [...rm[2].matchAll(/<c r="([A-Z]+)\d+"[\s\S]*?(?:\/>|<\/c>)/g)]; let out = '', placed = false;
     for (const cm of cells) { if (!placed && xlColToNum(cm[1]) > xlColToNum(col)) { out += cellXml; placed = true; } out += cm[0]; }
@@ -6694,6 +6695,19 @@ function wbDvRowsFor(e) {
     for (let r = x.s0; r <= x.s1; r++) (out[x.sheet] = out[x.sheet] || []).push([r + 1, r + x.off + 1]);
   });
   return out;
+}
+/* Excel keeps fonts and cell formats in xl/styles.xml, and a cell's s="" indexes into cellXfs.
+   Add alternates print in red, so we append one red font and one format pointing at it and give
+   those cells that index — the rest of the workbook's styling is untouched. */
+function xlRedStyle(xml) {
+  const fm = xml.match(/<fonts[^>]*\bcount="(\d+)"/), xm = xml.match(/<cellXfs[^>]*\bcount="(\d+)"/);
+  if (!fm || !xm || xml.indexOf('</fonts>') < 0 || xml.indexOf('</cellXfs>') < 0) return null;
+  const fi = +fm[1], xi = +xm[1];
+  let out = xml.replace(/(<fonts[^>]*\bcount=")\d+(")/, (m0, a, b) => a + (fi + 1) + b)
+    .replace('</fonts>', '<font><b/><color rgb="FFC00000"/><sz val="11"/><name val="Calibri"/></font></fonts>')
+    .replace(/(<cellXfs[^>]*\bcount=")\d+(")/, (m0, a, b) => a + (xi + 1) + b)
+    .replace('</cellXfs>', '<xf numFmtId="0" fontId="' + fi + '" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf></cellXfs>');
+  return { xml: out, idx: xi };
 }
 function xlClearCell(xml, ref) {
   const reFull = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>[\\s\\S]*?</c>)'); const m = xml.match(reFull);
@@ -6777,7 +6791,7 @@ async function zipSheetFileMap(zip) {
 /* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
    value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
    recomputes, drop the calc chain, and stamp the Dingus marker. */
-async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dvRows) {
+async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dvRows, redCells) {
   const JZ = await ensureJSZip();
   const zip = await JZ.loadAsync(templateBytes);
   const fmap = await zipSheetFileMap(zip);
@@ -6798,6 +6812,20 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dv
     const f = fmap[sh]; if (!f || !zip.file(f)) continue;
     zip.file(f, xlAddValidationRows(await zip.file(f).async('string'), dvRows[sh]));
   }
+  if (redCells && Object.keys(redCells).length && zip.file('xl/styles.xml')) {   // add alternates, in red
+    const red = xlRedStyle(await zip.file('xl/styles.xml').async('string'));
+    if (red) {
+      zip.file('xl/styles.xml', red.xml);
+      const byRed = {};
+      for (const k in redCells) { const mm = k.match(/^(.+)!([A-Z]+\d+)$/); if (mm) (byRed[mm[1]] = byRed[mm[1]] || []).push([mm[2], redCells[k]]); }
+      for (const sh in byRed) {
+        const f = fmap[sh]; if (!f || !zip.file(f)) continue;
+        let xml = await zip.file(f).async('string');
+        byRed[sh].forEach(pr => { xml = xlSetCell(xml, pr[0], { str: String(pr[1]), s: red.idx }); });
+        zip.file(f, xml);
+      }
+    }
+  }
   if (marker) { const mf = fmap[marker.sheet]; if (mf && zip.file(mf)) { let xml = await zip.file(mf).async('string'); for (const a in marker.cells) xml = xlSetCell(xml, a, { str: String(marker.cells[a] == null ? '' : marker.cells[a]) }); zip.file(mf, xml); } }
   let wbx = await zip.file('xl/workbook.xml').async('string');
   wbx = wbx.replace(/<calcPr([^/]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\sfullCalcOnLoad="[^"]*"/, '') + ' fullCalcOnLoad="1"/>');
@@ -6810,7 +6838,7 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dv
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c), wbDvRowsFor(c));
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c), wbDvRowsFor(c), c.wbAltLines);
 }
 async function buildEstWorkbookXlsm(e) {
   return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbFormulasFor(e), wbDvRowsFor(e));
@@ -7038,6 +7066,11 @@ function makeWbEngine(wb) {
       if (name === 'WEEKDAY') { const p = wbDateParts(num(A(0))); return new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay() + 1; }
       if (name === 'CONCATENATE') { return args.map(a => { const d = deref(a); return d == null ? '' : String(d); }).join(''); }
       if (name === 'TRIM') { return String(A(0) == null ? '' : A(0)).replace(/\s+/g, ' ').trim(); }
+      if (name === 'LEN') { return String(A(0) == null ? '' : A(0)).length; }
+      if (name === 'LEFT') { const s = String(A(0) == null ? '' : A(0)), n = args.length > 1 ? num(A(1)) : 1; return n <= 0 ? '' : s.slice(0, n); }
+      if (name === 'RIGHT') { const s = String(A(0) == null ? '' : A(0)), n = args.length > 1 ? num(A(1)) : 1; return n <= 0 ? '' : s.slice(Math.max(0, s.length - n)); }
+      if (name === 'MID') { const s = String(A(0) == null ? '' : A(0)), st = num(A(1)), n = num(A(2)); return (st < 1 || n <= 0) ? '' : s.slice(st - 1, st - 1 + n); }
+      if (name === 'SUBSTITUTE') { const s = String(A(0) == null ? '' : A(0)), f = String(A(1) == null ? '' : A(1)), r = String(A(2) == null ? '' : A(2)); if (f === '') return s; if (args.length > 3) { const k = num(A(3)); let i = -1, c = 0; while (c < k) { i = s.indexOf(f, i + 1); if (i < 0) return s; c++; } return s.slice(0, i) + r + s.slice(i + f.length); } return s.split(f).join(r); }
       if (name === 'UPPER') { return String(A(0) == null ? '' : A(0)).toUpperCase(); }
       if (name === 'LOWER') { return String(A(0) == null ? '' : A(0)).toLowerCase(); }
       if (name === 'VLOOKUP') { const lv = A(0); if (!args[1] || !args[1].__ref) return 0; const tbl = refToCells(args[1].sheet, args[1].body); const col = num(A(2)); const approx = args.length > 3 ? (A(3) === true || num(A(3)) !== 0) : true; if (tbl.kind !== 'range') return 0; const rows = {}; tbl.cells.forEach(x => { const dc = XL.utils.decode_cell(x[1]); (rows[dc.r] = rows[dc.r] || {})[dc.c] = getCell(x[0], x[1]); }); const rkeys = Object.keys(rows).map(Number).sort((a, b) => a - b); const cols = tbl.cells.map(x => XL.utils.decode_cell(x[1]).c); const c0 = Math.min.apply(null, cols); let best = 0; for (let k = 0; k < rkeys.length; k++) { const rk = rkeys[k]; const first = rows[rk][c0]; if (approx) { if (num(first) <= num(lv)) best = rows[rk][c0 + col - 1]; else break; } else { if (String(first) === String(lv)) return rows[rk][c0 + col - 1]; } } return best != null ? best : 0; }
@@ -7483,6 +7516,205 @@ function wbDeductFxSheet(sheet, e, base) {
   }
   return out;
 }
+/* ── Add alternates ──
+   An add alternate is a price the customer can take or leave: it is out of the base proposal and
+   quoted underneath it, in red, so nobody reads it as part of the number. The workbook already
+   knows how to leave a section out — its own Exclude switch — so an alternate IS an excluded
+   section, plus a note of what putting it back would cost. That cost is the honest one: the
+   difference the whole workbook makes with the section in against with it out, so the labour
+   Crew Mix works out, every markup, the bond and the tax are all counted in it. Excel opens the
+   filed .xlsm with the section excluded and totals the base price to the same cent. */
+const WB_ALT = { sheet: 'Proposal', rows: [18, 37], col: 'B' };   // the proposal's own scope lines, B19:S38
+let _wbAltPx = {}, _wbAltAt = null;
+function wbAltKey(sheet, sec) { return sheet + '!' + sec.sw; }
+function wbIsAlt(sheet, sec) { const e = wbEntity(); return !!(e && e.wbAlt && e.wbAlt[wbAltKey(sheet, sec)]); }
+/* what this section would add back to the total — the workbook's own answer, both ways round */
+function wbAltPrice(sheet, sec) {
+  const k = wbAltKey(sheet, sec);
+  if (_wbAltPx[k] != null) return _wbAltPx[k];
+  const eng = _wbEng; if (!eng) return 0;
+  const tot = () => { const v = eng.get(CO_FORM.sheet, CO_FORM.bottom); return typeof v === 'number' && isFinite(v) ? v : 0; };
+  const out = tot();                                                   // the base price, without it
+  const prev = eng.getOverride(sheet, sec.sw);
+  eng.setInput(sheet, sec.sw, sec.bool ? false : 'No');                // put it back in
+  eng.recalc();
+  const inn = tot();
+  if (prev === undefined) eng.clearInput(sheet, sec.sw); else eng.setInput(sheet, sec.sw, prev);
+  eng.recalc();
+  return (_wbAltPx[k] = round2(inn - out));
+}
+function wbAltList() {
+  const out = [], e = wbEntity();
+  if (!_wbEng || !e || !e.wbAlt) return out;
+  _wbEng.visibleSheets.forEach(sh => wbSectionsOf(sh).forEach(s => {
+    if (!e.wbAlt[sh + '!' + s.sw]) return;
+    if (!wbSectionExcluded(sh, s.sw)) return;              // taken back into the base price, in Excel or here
+    out.push({ sheet: sh, sec: s, name: wbSectionName(sh, s), price: wbAltPrice(sh, s) });
+  }));
+  return out;
+}
+function wbAltLineText(a) { return 'ADD ALTERNATE — ' + a.name + ': ' + (fmtMoney(a.price) || '$0'); }
+/* Where the alternates print: the proposal's own scope lines, filled from the bottom up so they
+   sit under the scope of work and above the exclusions, with a blank line between. One map, read
+   by the screen, by the PDF and by the .xlsm, so the three can never disagree. */
+function wbAltCells() {
+  if (_wbAltAt) return _wbAltAt;
+  const out = {};
+  const keep = () => {                                   // the .xlsm is built from this, open or not
+    const e = wbEntity();
+    if (e) { if (Object.keys(out).length) e.wbAltLines = wbAltMirrorFrom(out); else delete e.wbAltLines; }
+    return (_wbAltAt = out);
+  };
+  if (!_wbEng || _wbEng.visibleSheets.indexOf(WB_ALT.sheet) < 0) return keep();
+  const alts = wbAltList(); if (!alts.length) return keep();
+  const free = [];
+  for (let r = WB_ALT.rows[0]; r <= WB_ALT.rows[1]; r++) {
+    const v = _wbEng.get(WB_ALT.sheet, WB_ALT.col + (r + 1));
+    if (v === '' || v == null) free.push(r);
+  }
+  const rows = free.length > alts.length ? free.slice(free.length - alts.length) : free;   // hard against the exclusions
+  alts.forEach((a, i) => { if (rows[i] != null) out[WB_ALT.col + (rows[i] + 1)] = wbAltLineText(a); });
+  return keep();
+}
+function wbAltCellText(sheet, addr) { return sheet === WB_ALT.sheet ? (wbAltCells()[addr] || '') : ''; }
+function wbAltMirrorFrom(m) { const out = {}; for (const a in m) out[WB_ALT.sheet + '!' + a] = m[a]; return out; }
+function wbToggleAlt(sheet, sw, bool) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to change sections', true); renderWbBody(); return; }
+  const key = sheet + '!' + sw;
+  e.wbAlt = e.wbAlt || {};
+  const on = !e.wbAlt[key];
+  if (on) { e.wbAlt[key] = 1; if (e.wbDeduct) delete e.wbDeduct[key]; }   // it cannot be both
+  else delete e.wbAlt[key];
+  if (!Object.keys(e.wbAlt).length) delete e.wbAlt;
+  e.wbMode = true;
+  _wbAltPx = {}; _wbAltAt = null;
+  wbApplyFx(e);                                                          // the deduct may have gone with it
+  // an alternate is out of the base price; taken back in, it is part of the work again
+  if (wbSectionExcluded(sheet, sw) !== on) wbToggleSection(sheet, sw, bool);
+  else { renderWbBody(); scheduleWbSave(); }
+  toast(on ? 'Quoted as an add alternate — out of the base price, priced under it in red'
+           : 'Back in the base price');
+}
+/* ── The proposal's exclusions ──
+   The Proposal sheet carries its own picker: two columns of short standard exclusions, each with
+   an entry cell beside it, and one long formula that strings together whichever you ticked. We
+   read that formula to learn the pairs rather than hard-coding them, so renaming an exclusion in
+   Excel — which the sheet invites you to do — carries straight through. A custom exclusion gets
+   a fresh pair below the list and the formula is widened to take it in, the same way a takeoff
+   list takes an extra line: Excel opens the file and reads the sentence the same way. */
+const WB_EXCL = { sheet: 'Proposal', out: 'D39', label: 'Exclusions' };
+function wbExclFormula() {
+  if (!_wbEng) return '';
+  const raw = wbOrigRaw(WB_EXCL.sheet, WB_EXCL.out);
+  return raw && raw.f != null ? String(raw.f) : '';
+}
+/* every (tick cell → label cell) pair the sheet's own formula joins together */
+function wbExclPairs() {
+  const f = wbExclFormula(), out = [];
+  if (!f) return out;
+  const re = /IF\(\$?([A-Z]{1,3})\$?(\d+)="","",(?:", "&)?\$?([A-Z]{1,3})\$?(\d+)\)/g;
+  let m;
+  while ((m = re.exec(f))) out.push({ tick: m[1] + m[2], label: m[3] + m[4], row: (+m[2]) - 1 });
+  return out;
+}
+/* A label the sheet lists but its formula never reads — an entry slot that went unwired. We take
+   it in rather than leave a standing exclusion you cannot pick. */
+function wbExclOrphans() {
+  const pairs = wbExclPairs(); if (!pairs.length || !_wbEng) return [];
+  const have = {}, cols = {}, rows = [];
+  pairs.forEach(p => { have[p.label] = 1; cols[p.label.match(/[A-Z]+/)[0]] = p.tick.match(/[A-Z]+/)[0]; rows.push(p.row); });
+  const lo = Math.min.apply(null, rows), hi = Math.max.apply(null, rows), out = [];
+  for (const lc in cols) for (let r = lo; r <= hi; r++) {
+    const label = lc + (r + 1); if (have[label]) continue;
+    const v = _wbEng.get(WB_EXCL.sheet, label);
+    if (typeof v !== 'string' || !v.trim()) continue;
+    out.push({ tick: cols[lc] + (r + 1), label, row: r });
+  }
+  return out;
+}
+function wbExclAdds(e) { return ((e && e.wbExcl) || []).slice().sort((a, b) => a.row - b.row); }
+/* the slots the sheet has, the ones it forgot, and the ones you added — one list, in reading order */
+function wbExclSlots() {
+  const e = wbEntity();
+  const all = wbExclPairs().concat(wbExclOrphans()).concat(wbExclAdds(e));
+  return all.map(p => Object.assign({}, p, {
+    text: String(_wbEng.get(WB_EXCL.sheet, p.label) || '').trim(),
+    on: String(_wbEng.get(WB_EXCL.sheet, p.tick) || '').trim() !== '',
+  })).filter(p => p.text);
+}
+/* Widen the sheet's own sentence to take in the slots it never wired up, and the ones you added.
+   The sheet leaves the ", " off its FIRST slot, so leaving that one unticked prints a proposal
+   whose exclusions begin with a stray comma. Every slot gets its separator here and the leading
+   two characters come off the finished sentence, which also reads as nothing when nothing is
+   ticked. It stays one formula, so Excel arrives at the same words on its own. */
+function wbExclFx(e) {
+  const base = wbExclFormula(); if (!base) return {};
+  const extra = wbExclOrphans().concat(wbExclAdds(e));
+  const chain = base.replace(/^IF\((\$?[A-Z]{1,3}\$?\d+)="","",(\$?[A-Z]{1,3}\$?\d+)\)/, 'IF($1="","",", "&$2)')
+    + extra.map(p => '&IF(' + p.tick + '="","",", "&' + p.label + ')').join('');
+  return { [WB_EXCL.sheet + '!' + WB_EXCL.out]: 'MID(' + chain + ',3,32000)' };
+}
+/* the long-form standard exclusions and clarifications the sheet keeps beside the picker */
+let _wbExclStd = null;
+function wbExclStandard() {
+  if (_wbExclStd) return _wbExclStd;
+  if (!_wbEng || _wbEng.visibleSheets.indexOf(WB_EXCL.sheet) < 0) return [];
+  const rg = _wbEng.range(WB_EXCL.sheet), picked = {};
+  wbExclPairs().concat(wbExclOrphans()).forEach(p => { picked[p.label] = 1; });
+  const groups = [];
+  for (let c = rg.e.c; c >= 0; c--) {
+    let head = -1;
+    for (let r = 0; r <= rg.e.r; r++) {
+      const a = XLSX.utils.encode_cell({ r, c }), v = _wbEng.get(WB_EXCL.sheet, a);
+      if (typeof v !== 'string' || !v.trim()) continue;
+      if (picked[a]) { head = -1; break; }                       // this is the short picker, not the reference list
+      if (head < 0 && /^(exclusions|clarifications)$/i.test(v.trim())) { head = r; groups.push({ t: v.trim(), items: [] }); continue; }
+      if (head >= 0 && groups.length) {
+        if (/^(exclusions|clarifications)$/i.test(v.trim())) { groups.push({ t: v.trim(), items: [] }); continue; }
+        groups[groups.length - 1].items.push(v.trim());
+      }
+    }
+    if (groups.length) break;
+  }
+  return (_wbExclStd = groups.filter(g => g.items.length));
+}
+function wbExclToggle(tick) {
+  const on = String(_wbEng.get(WB_EXCL.sheet, tick) || '').trim() !== '';
+  wbSetCell(WB_EXCL.sheet, tick, on ? '' : 'x');
+}
+/* a custom exclusion takes a fresh pair of cells below the picker, and the sentence widens for it */
+function wbExclAdd(text) {
+  const t = String(text == null ? '' : text).trim(); if (!t) return;
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to change the exclusions', true); return; }
+  const slots = wbExclSlots();
+  const same = slots.filter(s => s.text.toLowerCase() === t.toLowerCase())[0];
+  if (same) { if (!same.on) wbExclToggle(same.tick); else toast('That exclusion is already on the proposal'); return; }
+  const pairs = wbExclPairs(); if (!pairs.length) return;
+  const tc = pairs[0].tick.match(/[A-Z]+/)[0], lc = pairs[0].label.match(/[A-Z]+/)[0];
+  let row = Math.max.apply(null, pairs.concat(wbExclOrphans()).map(p => p.row)) + 1;
+  wbExclAdds(e).forEach(p => { if (p.row >= row) row = p.row + 1; });
+  const slot = { tick: tc + (row + 1), label: lc + (row + 1), row };
+  e.wbExcl = (e.wbExcl || []).concat([slot]);
+  e.wbMode = true;
+  wbApplyFx(e);
+  _wbEng.setInput(WB_EXCL.sheet, slot.label, t); _wbEng.setInput(WB_EXCL.sheet, slot.tick, 'x');
+  e.wbInputs = e.wbInputs || {};
+  e.wbInputs[WB_EXCL.sheet + '!' + slot.label] = t; e.wbInputs[WB_EXCL.sheet + '!' + slot.tick] = 'x';
+  _wbEng.recalc(); _wbHid = {};
+  renderWbBody(); scheduleWbSave();
+}
+function wbExclRemove(tick, label) {
+  const e = wbEntity(); if (!e || !_wbEng) return;
+  const mine = wbExclAdds(e).filter(p => p.tick === tick)[0];
+  if (!mine) { wbExclToggle(tick); return; }                     // a standard one just gets un-ticked
+  e.wbExcl = e.wbExcl.filter(p => p.tick !== tick);
+  if (!e.wbExcl.length) delete e.wbExcl;
+  [tick, label].forEach(a => { delete e.wbInputs[WB_EXCL.sheet + '!' + a]; _wbEng.clearInput(WB_EXCL.sheet, a); });
+  wbApplyFx(e);
+  renderWbBody(); scheduleWbSave();
+}
 /* ── Marking a takeoff line as a subcontractor ──
    A subcontracted line is a lump sum, not our material: its cost belongs in the Subcontractors
    block on CP Backup (D98:D103), where the workbook's own Sub Markup (B105) is applied to it.
@@ -7562,7 +7794,7 @@ function wbApplyFx(e) {
   // Added lines widen their subtotals; an added section brings its own, and is totalled in with
   // the rest; deducting works off whatever those two left, and the sub overflow off all of it.
   const add = Object.assign({}, wbAddFx(e), wbSecAddFx(e));
-  const fx = Object.assign({}, add, wbDeductFx(e, add), wbSubFx(e, add));
+  const fx = Object.assign({}, add, wbDeductFx(e, add), wbSubFx(e, add), wbExclFx(e));
   for (const k in fx) {
     const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
     const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
@@ -7571,6 +7803,7 @@ function wbApplyFx(e) {
   }
   _wbEng.recalc();
   _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {};   // the overlay can create cells outside the old bounds
+  _wbAltPx = {}; _wbAltAt = null;
   if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
@@ -8062,7 +8295,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null;
   _wbView = (kind === 'co') ? 'form' : 'sheet';     // a change order is filled in as a form, not a grid
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -8084,7 +8317,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -8148,6 +8381,7 @@ function wbSetCell(sheet, addr, stored) {
   const e = wbEntity(); if (!e || !_wbEng) return;
   _wbEng.setInput(sheet, addr, stored);
   _wbHid = {};            // which folded-away rows have earned their place depends on the values
+  _wbAltPx = {}; _wbAltAt = null;                                        // and so does what an alternate is worth
   e.wbInputs = e.wbInputs || {}; e.wbInputs[sheet + '!' + addr] = stored; e.wbMode = true;
   wbNoteOutsideBounds(sheet, addr);
   renderWbBody();
@@ -8184,8 +8418,13 @@ const CO_FORM = {
       ['B5', 'Change order no.', 'text'], ['B3', 'Project manager', 'text'], ['B4', 'Date', 'date'],
       ['B6', 'Location', 'text', 2],
     ] },
-    { t: 'Description of the change', lines: { rows: [7, 13], cols: { B: 'Description' }, ph: 'What the change covers' } },
-    { t: 'Exclusions', lines: { rows: [14, 20], cols: { B: 'Exclusion' }, ph: 'What this price does not include' } },
+    { prop: true },
+    { t: 'Backup — description of the change', fold: true,
+      note: 'The backup page’s own note of what the change covers. It stays on CP Backup and does not print on the proposal.',
+      lines: { rows: [7, 13], cols: { B: 'Description' }, ph: 'What the change covers' } },
+    { t: 'Backup — exclusions & orphans', fold: true,
+      note: 'What CP Backup records as left out or unaccounted for. The exclusions the customer sees are the ones picked above.',
+      lines: { rows: [14, 20], cols: { B: 'Exclusion' }, ph: 'What this price does not include' } },
     { t: 'Additional material', note: 'Material from the takeoffs is added in automatically.',
       lines: { rows: [25, 30], cols: { A: 'Description', D: 'Cost' }, ph: 'Material not on a takeoff' },
       after: [['B32', 'Material markup', 'pct']], totals: ['D24', 'D31', 'D32', 'D33'] },
@@ -8340,29 +8579,83 @@ function wbFormCrewHtml() {
   });
   return out;
 }
+/* ── The proposal page ──
+   What the customer actually reads: the scope of work, the exclusions, and any add alternates.
+   All three live on the Proposal sheet, and all three are filled in here rather than hunted for
+   in a grid — the scope lines are plain merged rows the sheet never colours as entry cells, so
+   without this they could only be typed in Excel. */
+const WB_PROP = { sheet: 'Proposal', scope: { rows: [19, 38], cols: { B: 'Scope of work' }, ph: 'What we are proposing to do' } };
+function wbExclStdAdd(gi, ii) {
+  const g = wbExclStandard()[gi]; if (!g) return;
+  wbExclAdd(g.items[ii]);
+}
+function wbExclHtml() {
+  const slots = wbExclSlots(); if (!slots.length) return '';
+  const e = wbEntity(), mine = {};
+  wbExclAdds(e).forEach(p => { mine[p.tick] = 1; });
+  const chips = slots.map(s => {
+    const own = !!mine[s.tick];
+    const act = own ? `wbExclRemove('${s.tick}','${s.label}')` : `wbExclToggle('${s.tick}')`;
+    return `<button class="wbxchip${s.on ? ' on' : ''}${own ? ' mine' : ''}" onclick="${act}"
+      title="${own ? 'Your own exclusion — click to take it off the proposal' : 'A standard exclusion off the Proposal sheet'}">${esc(s.text)}</button>`;
+  }).join('');
+  const sentence = String(_wbEng.get(WB_EXCL.sheet, WB_EXCL.out) || '').trim();
+  let html = `<h5>Exclusions</h5>
+    <div class="wbxchips">${chips}</div>
+    <div class="wbxadd"><input class="input" id="wbExclNew" placeholder="Write your own exclusion…"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();wbExclAdd(this.value);this.value='';}">
+      <button class="wbbtn sec" onclick="var i=document.getElementById('wbExclNew');if(i){wbExclAdd(i.value);i.value='';}">+ Add</button></div>
+    <div class="wbxsent">${sentence ? esc(sentence) : '<i>Nothing excluded yet — the proposal prints without an exclusions line.</i>'}</div>`;
+  const std = wbExclStandard();
+  if (std.length) html += `<details class="wbxmore"><summary>The long-form list the sheet keeps beside the picker</summary>
+    ${std.map((g, gi) => `<h5>${esc(g.t)}</h5><div class="wbxchips">${g.items.map((t, ii) =>
+      `<button class="wbxchip" onclick="wbExclStdAdd(${gi},${ii})">${esc(t)}</button>`).join('')}</div>`).join('')}
+  </details>`;
+  return html;
+}
+function wbPropHtml() {
+  const sh = WB_PROP.sheet;
+  if (!_wbEng || _wbEng.visibleSheets.indexOf(sh) < 0) return '';
+  let html = `<section class="wbfsec"><h4>The proposal</h4>
+    <div class="wbfnote">What the customer reads — these print on the Proposal page, above the price.</div>`;
+  html += wbFormLines(sh, WB_PROP.scope);
+  html += wbExclHtml();
+  const alts = wbAltList();
+  if (alts.length) html += `<div class="wbfalts">
+    ${alts.map(a => `<div class="r"><span>ADD ALTERNATE — ${esc(a.name)}</span><span>${esc(fmtMoney(a.price) || '$0')}</span></div>`).join('')}
+    <div class="wbfnote">Printed under the price in red, and out of the base total.</div></div>`;
+  else html += `<div class="wbfnote" style="margin-top:10px">Tick <b>Add alt</b> on a takeoff section to quote it separately — it comes out of the base price and prints underneath it in red.</div>`;
+  return html + `</section>`;
+}
 function wbFormHtml() {
   const sheet = CO_FORM.sheet;
   if (!_wbEng || _wbEng.visibleSheets.indexOf(sheet) < 0) return wbSheetHtml(_wbSheet);
   let html = '<div class="wbform">';
   CO_FORM.groups.forEach(g => {
-    html += `<section class="wbfsec"><h4>${esc(g.t)}</h4>`;
-    if (g.note) html += `<div class="wbfnote">${esc(g.note)}</div>`;
-    if (g.fields) html += `<div class="wbfgrid">${g.fields.map(f => wbFormField(sheet, f[0], f[1], f[2], f[3])).join('')}</div>`;
-    if (g.lines) html += wbFormLines(sheet, g.lines);
-    if (g.labour) html += wbFormLabour(sheet);
-    if (g.after) html += `<div class="wbfgrid">${g.after.map(f => wbFormField(sheet, f[0], f[1], f[2], f[3])).join('')}</div>`;
+    if (g.prop) { html += wbPropHtml(); return; }
+    let inner = '';
+    if (g.note) inner += `<div class="wbfnote">${esc(g.note)}</div>`;
+    if (g.fields) inner += `<div class="wbfgrid">${g.fields.map(f => wbFormField(sheet, f[0], f[1], f[2], f[3])).join('')}</div>`;
+    if (g.lines) inner += wbFormLines(sheet, g.lines);
+    if (g.labour) inner += wbFormLabour(sheet);
+    if (g.after) inner += `<div class="wbfgrid">${g.after.map(f => wbFormField(sheet, f[0], f[1], f[2], f[3])).join('')}</div>`;
     if (g.totals) {
-      const bits = g.totals.map(a => {
-        const v = wbFormNum(sheet, a);
-        return `<span><i>${esc(wbFormLabel(sheet, a))}</i><b>${esc(fmtMoney(v) || '$0')}</b></span>`;
-      }).join('');
-      html += `<div class="wbfsub">${bits}</div>`;
+      inner += `<div class="wbfsub">${g.totals.map(a =>
+        `<span><i>${esc(wbFormLabel(sheet, a))}</i><b>${esc(fmtMoney(wbFormNum(sheet, a)) || '$0')}</b></span>`).join('')}</div>`;
     }
-    html += `</section>`;
+    // Backup-page notes are for the file, not the customer — folded away unless there's something in them
+    if (g.fold) {
+      const used = g.lines && (() => { for (let r = g.lines.rows[0]; r <= g.lines.rows[1]; r++)
+        for (const c in g.lines.cols) { const v = _wbEng.get(sheet, c + r); if (v !== '' && v != null) return true; } return false; })();
+      html += `<details class="wbfsec wbffold"${used ? ' open' : ''}><summary>${esc(g.t)}</summary>${inner}</details>`;
+      return;
+    }
+    html += `<section class="wbfsec"><h4>${esc(g.t)}</h4>${inner}</section>`;
   });
   html += `<section class="wbfsec wbftotal"><h4>Total</h4>
     <div class="wbfbig"><span>${esc(wbFormLabel(sheet, CO_FORM.bottom))}</span><b>${esc(fmtMoney(wbFormNum(sheet, CO_FORM.bottom)) || '$0')}</b></div>
-    <div class="wbfnote">This is the workbook's own total, off the same formulas Excel uses — the spreadsheet in ShareFile and the PDF both come out at this number.</div>
+    ${wbAltList().map(a => `<div class="wbfbig wbfalt"><span>Add alternate — ${esc(a.name)}</span><b>${esc(fmtMoney(a.price) || '$0')}</b></div>`).join('')}
+    <div class="wbfnote">This is the workbook's own total, off the same formulas Excel uses — the spreadsheet in ShareFile and the PDF both come out at this number.${wbAltList().length ? ' Add alternates are quoted on top of it, never in it.' : ''}</div>
   </section></div>`;
   return html;
 }
@@ -8615,19 +8908,25 @@ function wbCardHtml(sheet, r0, r1, sec, colList) {
   const shEsc = String(sheet).replace(/'/g, "\\'");
   const key = wbSecKey(sheet, sec);
   const ded = wbIsDeducted(sheet, sec);
+  const alt = wbIsAlt(sheet, sec);
   const title = wbSectionTitleCell(sheet, sec);
   const name = wbSectionName(sheet, sec);
   const nameHtml = title
     ? `<input class="tgname" value="${esc(name)}" placeholder="Name this section" title="Names the section in the workbook itself — Excel shows it too" onclick="event.stopPropagation()" onchange="wbEdit('${shEsc}','${title}',this.value)">`
     : `<span class="tgname">${esc(name)}</span>`;
-  return `<details class="togroup${off ? ' excluded' : ded ? ' deducted' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
+  const bool = sec.bool ? 'true' : 'false';
+  const boxes = alt ? '' :
+    `<label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${bool})"> Exclude</label>
+     <label class="tgex" title="Subtract this section instead of adding it — how you charge only the difference between two options"><input type="checkbox"${ded ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleDeduct('${shEsc}','${sec.sw}')"> Deduct</label>`;
+  return `<details class="togroup${alt ? ' altsec' : off ? ' excluded' : ded ? ' deducted' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
     <summary>
       <span class="caret">▸</span>
       <span class="tgnum">${sec.n}.</span>
       ${nameHtml}
-      <label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${sec.bool ? 'true' : 'false'})"> Exclude</label>
-      <label class="tgex" title="Subtract this section instead of adding it — how you charge only the difference between two options"><input type="checkbox"${ded ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleDeduct('${shEsc}','${sec.sw}')"> Deduct</label>
-      ${off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ded ? '<span class="ded-note">DEDUCTED — subtracted from the total</span>' : ''}
+      ${boxes}
+      <label class="tgex" title="Quote this section separately — out of the base price, and printed under it on the proposal in red"><input type="checkbox"${alt ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleAlt('${shEsc}','${sec.sw}',${bool})"> Add alt</label>
+      ${alt ? `<span class="alt-note">ADD ALTERNATE — ${esc(fmtMoney(wbAltPrice(sheet, sec)) || '$0')}, quoted under the base price</span>`
+        : off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ded ? '<span class="ded-note">DEDUCTED — subtracted from the total</span>' : ''}
       ${wbSecAdds(wbEntity(), sheet).some(x => x.sw === sec.sw) ? `<button class="wbchipb" title="Remove this added section and everything in it" onclick="event.stopPropagation();event.preventDefault();wbRemoveSection('${shEsc}','${sec.sw}')">✕</button>` : ''}
       <span class="sums">${sums}</span>
     </summary>
@@ -8674,6 +8973,8 @@ function wbRowsHtml(sheet, r0, r1, sec, colList, keepAdded) {
       const cs = mg ? ` colspan="${mg.cs}" rowspan="${src != null ? 1 : mg.rs}"` : '';
       const fil = (b.filler && b.filler[c] && !mg) ? ' filler' : '';
       if (hide[a]) { out += `<td${cs}></td>`; continue; }
+      const altTxt = wbAltCellText(sheet, a);            // an add alternate prints here, in red
+      if (altTxt) { out += `<td${cs} class="label wbalt${fil}" title="An add alternate — out of the base price, printed here on the proposal">${esc(altTxt)}</td>`; continue; }
       const raw = eng.raw(sheet, a);
       const sa = src != null ? XLSX.utils.encode_cell({ r: src, c }) : a;
       const sraw = src != null ? ((entry && entry[c]) || wbOrigRaw(sheet, sa)) : raw;   // what the list's own lines have here
@@ -8868,6 +9169,8 @@ function wbPdfFit(px, avail, min) {
    workbook FORMATS it, because this is the printed document, not an entry box */
 function wbPdfCell(sheet, r, c, src) {
   const eng = _wbEng, a = XLSX.utils.encode_cell({ r, c });
+  const alt = wbAltCellText(sheet, a);
+  if (alt) return { text: alt, kind: 'alt' };            // an add alternate, printed in red
   const raw = eng.raw(sheet, a);
   const sraw = src != null ? wbOrigRaw(sheet, XLSX.utils.encode_cell({ r: src, c })) : raw;
   const ov = eng.getOverride(sheet, a);
@@ -8943,6 +9246,7 @@ function wbPdfStyle(sheet, row, c, cell, span) {
   if (st && st.h) halign = (st.h === 'center' || st.h === 'centerContinuous') ? 'center'
     : st.h === 'right' ? 'right' : st.h === 'left' ? 'left' : halign;
   const out = { halign, textColor: ARCTIC_INK };
+  if (cell.kind === 'alt') { out.textColor = [192, 0, 0]; out.fontStyle = 'bold'; out.halign = 'left'; return out; }
   if (st && st.bold) out.fontStyle = 'bold';
   else if (cell.kind === 'calc') out.fontStyle = 'bold';
   if (cell.ov) out.overflow = 'visible';
@@ -9244,6 +9548,17 @@ function renderWbModal() {
     .wbapp{position:fixed;inset:0;z-index:9998;display:flex;background:#f4f5f8;color:#16181d;
       font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
     .wbapp *{box-sizing:border-box}
+    /* The workbook is its own light-paper app — it must not inherit the page's dark palette,
+       or the entry boxes come out black on black. Everything in here is stated outright. */
+    .wbapp input.input,.wbapp select.input,.wbapp textarea.input,
+    .wbapp input:not(.wbi):not([type=checkbox]):not([type=radio]),
+    .wbapp select:not(.wbi):not(.wbcmpsel),.wbapp textarea:not(.wbi){
+      background:#fffef2;color:#16181d;border:1px solid #c8cede;border-radius:5px}
+    .wbapp .input::placeholder,.wbapp textarea::placeholder{color:#a4abb8;opacity:1}
+    .wbapp .input:focus,.wbapp input:focus,.wbapp select:focus,.wbapp textarea:focus{
+      border-color:#7e8ef0;box-shadow:0 0 0 3px rgba(126,142,240,.22);outline:none}
+    .wbapp .input[disabled],.wbapp input[disabled],.wbapp select[disabled]{background:#f2f3f7;color:#7a828f}
+    .wbapp input[type=checkbox],.wbapp input[type=radio]{accent-color:#1d2f9e}
     .wbside{width:218px;flex:0 0 218px;background:#10173f;color:#d7dcf5;display:flex;flex-direction:column;overflow:hidden}
     .wbbrand{padding:12px 14px;border-bottom:1px solid #2a3468}
     .wbbrand b{display:block;color:#fff;font-size:13.5px;line-height:1.3}
@@ -9306,6 +9621,36 @@ function renderWbModal() {
     .wbapp .tgex{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:12.5px;color:#5c6470;cursor:pointer;text-decoration:none}
     .wbapp .excl-note{color:#b02a37;font-size:12px;font-weight:600;text-decoration:none}
     .wbapp .ded-note{color:#8a5a00;font-size:12px;font-weight:600}
+    .wbapp .alt-note{color:#c00000;font-size:12px;font-weight:700}
+    .wbapp details.togroup.altsec>summary{background:#fdecec}
+    .wbapp details.togroup.altsec>summary .tgnum::after{content:' ALT';color:#c00000;font-size:10px;letter-spacing:.04em}
+    .wbapp td.wbalt,.wbapp .wbfalt{color:#c00000;font-weight:700}
+    .wbfalts{display:flex;flex-direction:column;gap:4px;margin-top:10px;padding-top:9px;border-top:1px solid #f0d3d3}
+    .wbfalts .r{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:#c00000;font-weight:600}
+    .wbxchips{display:flex;flex-wrap:wrap;gap:6px}
+    .wbxchip{border:1px solid #c8cede;background:#fff;color:#3a4152;border-radius:14px;padding:4px 11px;font:inherit;font-size:12.5px;cursor:pointer;line-height:1.3;text-align:left}
+    .wbxchip:hover{border-color:#7e8ef0;color:#14206e}
+    .wbxchip.on{background:#1d2f9e;border-color:#1d2f9e;color:#fff;font-weight:600}
+    .wbxchip.mine{border-style:dashed}
+    .wbxchip.on.mine{border-style:dashed;border-color:#fff}
+    .wbxsent{font-size:12.5px;color:#3a4152;background:#f7f8fa;border:1px solid #eceef3;border-radius:7px;padding:8px 10px;margin-top:10px;line-height:1.5}
+    .wbxsent i{font-style:normal;color:#9aa1ad}
+    .wbxadd{display:flex;gap:8px;align-items:center;margin-top:10px}
+    .wbxadd .input{flex:1}
+    .wbxmore{margin-top:11px}
+    .wbxmore>summary{cursor:pointer;font-size:12px;color:#5c6470;font-weight:600;list-style:none}
+    .wbxmore>summary::-webkit-details-marker{display:none}
+    .wbxmore>summary::before{content:'▸ ';font-size:10px}
+    .wbxmore[open]>summary::before{content:'▾ '}
+    .wbxmore h5{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#7a828f;margin:11px 0 6px}
+    .wbapp details.wbffold>summary{cursor:pointer;list-style:none;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#5c6470;font-weight:600}
+    .wbapp details.wbffold>summary::-webkit-details-marker{display:none}
+    .wbapp details.wbffold>summary::before{content:'▸ ';font-size:10px}
+    .wbapp details.wbffold[open]>summary::before{content:'▾ '}
+    .wbapp details.wbffold[open]>summary{margin-bottom:11px}
+    .wbfbig.wbfalt{margin-top:7px;padding-top:7px;border-top:1px solid #d9dcf0}
+    .wbfbig.wbfalt span{font-size:12.5px;color:#c00000}
+    .wbfbig.wbfalt b{font-size:17px;color:#c00000}
     .wbapp table.wbsheet td.wbsubc{width:34px;text-align:center;background:#f4f5f8;padding:2px}
     .wbapp table.wbsheet td.wbsubc.hd{font-size:10px;color:#5c6470;font-weight:600}
     .wbapp table.wbsheet tr.subline td{background:#eef7f0}
@@ -9437,14 +9782,15 @@ function wbResetWorkbook() {
 const _wbPristine = {}, WB_MARK = { co: { sheet: 'CP Backup', cells: ['T1', 'T2', 'T4', 'T5'] }, est: { sheet: 'MCAA RECAP', cells: ['AB1', 'AB2'] } };
 function wbInputsSig(o) { o = o || {}; return JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]])); }
 async function wbPristineWb(kind) { if (_wbPristine[kind]) return _wbPristine[kind]; const XL = await loadSheetJS(); _wbPristine[kind] = XL.read(new Uint8Array(await WB_KINDS[kind].tpl()), { type: 'array', cellFormula: true }); return _wbPristine[kind]; }
-function readWorkbookInputsDiff(mirror, pristine, markerSheet, markerCells) {
-  const inputs = {};
+function readWorkbookInputsDiff(mirror, pristine, markerSheet, markerCells, skip) {
+  const inputs = {}, no = skip || {};
   const eq = (a, b) => { if (a == null && b == null) return true; if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-9; return String(a == null ? '' : a) === String(b == null ? '' : b); };
   (mirror.SheetNames || []).forEach(sh => {
     const mws = mirror.Sheets[sh]; if (!mws) return; const pws = pristine.Sheets[sh] || {};
     for (const addr in mws) {
       if (addr[0] === '!') continue;
       if (sh === markerSheet && markerCells.indexOf(addr) >= 0) continue;
+      if (no[sh + '!' + addr] !== undefined) continue;                   // an add alternate we printed, not an edit
       const m = mws[addr]; if (m.f != null) continue;                   // still a formula → not an override
       const p = pws[addr]; const mv = (m.v == null ? '' : m.v);
       if (p && p.f != null) { inputs[sh + '!' + addr] = mv; }           // user replaced a formula with a value
@@ -9471,7 +9817,7 @@ async function reconcileWorkbookFile(kind, e, opts) {
     const XL = await loadSheetJS();
     const mirror = XL.read(new Uint8Array(bytes), { type: 'array', cellFormula: true });
     const mk = WB_MARK[kind];
-    const newInputs = readWorkbookInputsDiff(mirror, await wbPristineWb(kind), mk.sheet, mk.cells);
+    const newInputs = readWorkbookInputsDiff(mirror, await wbPristineWb(kind), mk.sheet, mk.cells, e.wbAltLines);
     if (wbInputsSig(newInputs) === wbInputsSig(e.wbInputs)) { if (kind === 'co') e.coFileSyncedAt = mtime; else e.fileSyncedAt = mtime; return false; }
     e.wbInputs = newInputs; e.wbMode = true;
     const eng = makeWbEngine(mirror);
