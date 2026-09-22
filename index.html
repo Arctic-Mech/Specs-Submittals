@@ -1029,7 +1029,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.51';
+const APP_VERSION = 'v7.52';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -6684,6 +6684,22 @@ function xlAddValidationRows(xml, pairs) {
     return pre + (extra.length ? sq + ' ' + extra.join(' ') : sq) + post;
   });
 }
+/* Give a cell the workbook's own kind of dropdown: a real Excel list validation, so the choice is
+   offered in the spreadsheet exactly as it is on the website. */
+function xlAddValidation(xml, sqref, list) {
+  if (!sqref || !list) return xml;
+  const dv = '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="'
+    + xlEsc(sqref) + '"><formula1>"' + xlEsc(list) + '"</formula1></dataValidation>';
+  if (/<dataValidations\b[^>]*>/.test(xml)) {
+    return xml.replace(/(<dataValidations\b[^>]*\bcount=")(\d+)(")/, (m0, a, n, b2) => a + ((+n) + 1) + b2)
+      .replace(/<\/dataValidations>/, dv + '</dataValidations>');
+  }
+  const blk = '<dataValidations count="1">' + dv + '</dataValidations>';
+  // it must come after sheetData, and before pageMargins / pageSetup if those are there
+  if (/<pageMargins\b/.test(xml)) return xml.replace(/<pageMargins\b/, blk + '<pageMargins');
+  if (/<\/sheetData>/.test(xml)) return xml.replace('</sheetData>', '</sheetData>' + blk);
+  return xml;
+}
 /* every (row it was copied from → row it now lives on) this estimate has created */
 function wbDvRowsFor(e) {
   const out = {};
@@ -6791,7 +6807,7 @@ async function zipSheetFileMap(zip) {
 /* Build the mirror .xlsm from the CO's live-workbook edits: inject each edited cell
    value into its sheet (keeping every formula elsewhere), set fullCalcOnLoad so Excel
    recomputes, drop the calc chain, and stamp the Dingus marker. */
-async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dvRows, redCells) {
+async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dvRows, redCells, dvLists) {
   const JZ = await ensureJSZip();
   const zip = await JZ.loadAsync(templateBytes);
   const fmap = await zipSheetFileMap(zip);
@@ -6811,6 +6827,10 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dv
   for (const sh in (dvRows || {})) {                        // copied rows get the same dropdowns
     const f = fmap[sh]; if (!f || !zip.file(f)) continue;
     zip.file(f, xlAddValidationRows(await zip.file(f).async('string'), dvRows[sh]));
+  }
+  for (const sh in (dvLists || {})) {                       // the crew picker beside each Exclude switch
+    const f = fmap[sh]; if (!f || !zip.file(f)) continue;
+    zip.file(f, xlAddValidation(await zip.file(f).async('string'), dvLists[sh].sqref, dvLists[sh].list));
   }
   if (redCells && Object.keys(redCells).length && zip.file('xl/styles.xml')) {   // add alternates, in red
     const red = xlRedStyle(await zip.file('xl/styles.xml').async('string'));
@@ -6838,7 +6858,7 @@ async function buildWorkbookMirror(templateBytes, wbInputs, marker, formulas, dv
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
 }
 async function buildCoWorkbookXlsm(c) {
-  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c), wbDvRowsFor(c), c.wbAltLines);
+  return buildWorkbookMirror(await coTemplateBytes(), c.wbInputs, { sheet: 'CP Backup', cells: { T1: CO_TPL_MARKER, T2: c.id || '', T4: c.mod || '', T5: c.rfiCcdAsi || '' } }, wbFormulasFor(c), wbDvRowsFor(c), c.wbAltLines, c.wbCrewDv);
 }
 async function buildEstWorkbookXlsm(e) {
   return buildWorkbookMirror(await estTemplateBytes(), e.wbInputs, { sheet: 'MCAA RECAP', cells: { AB1: EST_TPL_MARKER, AB2: e.id || '' } }, wbFormulasFor(e), wbDvRowsFor(e));
@@ -7285,6 +7305,7 @@ async function wbLoadValidations(bytes) {
   return out;
 }
 function wbDvFor(sheet, addr) {
+  const crew = wbCrewDvAt(sheet, addr); if (crew) return crew;   // the crew picker we put beside the Exclude switch
   const list = _wbDV[sheet]; if (!list) return null;
   let cell; try { cell = XLSX.utils.decode_cell(addr); } catch (x) { return null; }
   for (let i = 0; i < list.length; i++) {
@@ -7715,6 +7736,341 @@ function wbExclRemove(tick, label) {
   wbApplyFx(e);
   renderWbBody(); scheduleWbSave();
 }
+/* ── Charging a section's field labour to another crew ──
+   A sheet-metal takeoff sometimes needs a pipefitter for an hour — to break a pipe connection
+   before the duct comes out — and making a whole second takeoff for that is absurd. So every
+   section names the crew its FIELD labour is charged to. The hours leave their own trade's block
+   on Crew Mix and land in the chosen trade's, where THAT crew's ratio splits them across its
+   classes and THAT crew's rates price them, at its own overtime, double time and shift premiums.
+   Material never moves: it stays on the sheet it was taken off.
+
+   Nothing is stamped. The choice lives in the workbook — a cell beside the section's own Exclude
+   switch, carrying the same kind of dropdown Excel already puts on that switch — and every figure
+   it changes is a formula Excel works out for itself. The section's NOTES cell, which is inside
+   the printed area, carries a banner naming the crew and the hours, and CP Backup carries the
+   same above its labour block, so neither the page nor the spreadsheet can keep it quiet. */
+const WB_CREW_SHEET = 'Crew Mix';
+let _wbCrewB = null, _wbToCols = {}, _wbCrewMir = {};
+function wbQuoteSh(s) { return "'" + String(s).replace(/'/g, "''") + "'!"; }
+/* a takeoff sheet's columns, by what its own headings call them */
+function wbToCols(sheet) {
+  if (_wbToCols[sheet]) return _wbToCols[sheet];
+  const out = {};
+  if (!_wbEng) return out;
+  const rg = _wbEng.range(sheet);
+  for (let c = 0; c <= rg.e.c; c++) {
+    const v = _wbEng.get(sheet, XLSX.utils.encode_cell({ r: 0, c }));
+    if (typeof v !== 'string') continue;
+    const t = v.trim().toLowerCase();
+    if (/^field lab(o|ou)r total$/.test(t)) out.field = c;
+    else if (/^shop lab(o|ou)r total$/.test(t)) out.shop = c;
+    else if (t === 'notes') out.notes = c;
+    else if (t === 'overtime') out.ot = c;
+    else if (t === 'shift') out.shift = c;
+  }
+  return (_wbToCols[sheet] = out);
+}
+/* The hours out of a hook formula. Each of Crew Mix's five hooks wraps the trade's hours in the
+   class's share of them; we keep the wrapper and work on what is inside it. */
+function wbCrewSrc(addr, kind) {
+  const raw = wbOrigRaw(WB_CREW_SHEET, addr); if (!raw || raw.f == null) return '';
+  const f = String(raw.f).trim();
+  if (kind === 'plain') return /^'?[^'!]+'?!\$?[A-Z]{1,3}\$?\d+$/.test(f) ? f : '';
+  const m = kind === 'byB' ? f.match(/^ROUND\(B\d+\*(.+),2\)$/) : f.match(/^ROUND\((.+)\*B\d+,2\)$/);
+  return m ? m[1] : '';
+}
+/* the per-line column behind a sheet-wide total like 'SM Takeoff'!$Q$1 = SUM(Q2:Q90) */
+function wbColBehind(ref) {
+  const m = String(ref).match(/^'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$/); if (!m) return null;
+  const raw = wbOrigRaw(m[1], m[2] + m[3]); if (!raw || raw.f == null) return null;
+  const s = String(raw.f).match(/^SUM\(\$?([A-Z]{1,3})\$?\d+:\$?[A-Z]{1,3}\$?\d+\)$/);
+  return s ? XLSX.utils.decode_col(s[1]) : null;
+}
+/* Crew Mix's own blocks, read off the sheet: a trade name in column A, its four classes below it,
+   and the five cells that pull that trade's hours out of a takeoff sheet. A block we cannot read
+   in full is left out entirely — half-understood is how you charge the wrong crew. */
+function wbCrewBlocks() {
+  if (_wbCrewB) return _wbCrewB;
+  const sh = WB_CREW_SHEET, out = [];
+  if (!_wbEng || _wbEng.visibleSheets.indexOf(sh) < 0) return (_wbCrewB = out);
+  const rg = _wbEng.range(sh);
+  for (let r = 0; r + 17 <= rg.e.r; r++) {
+    const name = _wbEng.get(sh, 'A' + (r + 1));
+    if (typeof name !== 'string' || !name.trim()) continue;
+    const st0 = r + 5, ot0 = r + 10, dt0 = r + 15;          // the name row, then +4 ST, +9 OT, +14 DT
+    if (!/general\s+foreman/i.test(String(_wbEng.get(sh, 'A' + st0) || ''))) continue;
+    const L = wbCrewSrc('L' + st0, 'plain'); if (!L) continue;
+    const M = wbCrewSrc('M' + st0, 'byB'), N = wbCrewSrc('N' + st0, 'byB');
+    const OT = wbCrewSrc('J' + ot0, 'mulB'), DT = wbCrewSrc('J' + dt0, 'mulB');
+    if (!M || !N || !OT || !DT) continue;
+    const m = L.match(/^'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$/);
+    const shH = wbColBehind(M), shP = wbColBehind(N);
+    if (!m || shH == null || shP == null) continue;
+    out.push({ name: name.trim(), nameRow: r + 1, st0, ot0, dt0, L, M, N, OT, DT,
+      sheet: m[1], col: XLSX.utils.decode_col(m[2]), shH, shP, prem: r + 3 });
+  }
+  return (_wbCrewB = out);
+}
+function wbCrewByName(n) { const a = wbCrewBlocks().filter(b => b.name === n); return a.length ? a[0] : null; }
+/* the crew a sheet's FIELD labour goes to when nobody says otherwise */
+function wbHomeCrew(sheet) {
+  const c = wbToCols(sheet); if (c.field == null || c.ot == null || c.shift == null) return null;
+  const a = wbCrewBlocks().filter(b => b.sheet === sheet && b.col === c.field);
+  return a.length ? a[0] : null;
+}
+/* how many people the crew has on it — a crew with nobody on it splits no hours */
+function wbCrewSize(b) {
+  let n = 0;
+  for (let r = b.st0; r <= b.st0 + 3; r++) { const v = _wbEng.get(WB_CREW_SHEET, 'C' + r); if (typeof v === 'number') n += v; }
+  return n;
+}
+/* Where the control lives on a section: the two free cells after its own Exclude switch, and the
+   banner in its NOTES cell, which is inside the printed area. */
+function wbCrewCells(sheet, sec) {
+  const sw = XLSX.utils.decode_cell(sec.sw), c = wbToCols(sheet);
+  const at = n => XLSX.utils.encode_cell({ r: sw.r, c: sw.c + n });
+  // The banner goes on the section's TITLE row, not its subtotal row: the subtotal is hoisted
+  // onto the section's header bar and never printed as a row, and the title row's NOTES cell is
+  // merged two columns wide inside the print area — so Excel prints it and so do we.
+  const note = (c.notes != null && sec.min > 0) ? XLSX.utils.encode_cell({ r: sec.min - 1, c: c.notes }) : '';
+  return { lbl: at(1), pick: at(2), note };
+}
+/* only where the workbook actually has room for it, and the crew it would come off is readable */
+function wbCrewUsable(sheet, sec) {
+  if (!wbHomeCrew(sheet) || wbCrewBlocks().length < 2) return null;
+  const cc = wbCrewCells(sheet, sec); if (!cc.note) return null;
+  for (const a of [cc.lbl, cc.pick, cc.note]) {
+    const raw = wbOrigRaw(sheet, a);                       // must be free in the workbook itself
+    if (raw && (raw.f != null || (raw.v !== '' && raw.v != null))) return null;
+  }
+  return cc;
+}
+/* the rows a section owns, as Excel row pairs — its own lines, plus any added past the end */
+function wbSecRowSpans(sheet, sec) {
+  const e = wbEntity(), out = [[sec.min + 1, sec.row]];     // first line … the row above the subtotal
+  wbAdds(e, sheet).forEach(x => {
+    const bl = wbBlocksOf(sheet)[x.key];
+    if (bl && bl.r1 >= sec.min && bl.r1 <= sec.max) out.push([x.row + 1, x.row + 1]);
+  });
+  return out.filter(p => p[1] >= p[0]);
+}
+/* What this section puts into its trade, written as formulas Excel works out for itself. The pay
+   at shift differential is taken off the source at the premium the source charged, and put back
+   on the destination at the DESTINATION's own premiums — an hour worked swing for the pipefitters
+   is paid at the pipefitters' swing rate, not at sheet metal's. */
+function wbSecLabour(sheet, sec, dest) {
+  const c = wbToCols(sheet), spans = wbSecRowSpans(sheet, sec), q = wbQuoteSh(sheet);
+  const rng = (col, p) => { const x = XLSX.utils.encode_col(col); return q + '$' + x + '$' + p[0] + ':$' + x + '$' + p[1]; };
+  const sumifs = crit => spans.map(p => 'SUMIFS(' + rng(c.field, p) + ',' + rng(c.ot, p) + ',"' + crit + '")').join('+');
+  const sumCol = col => spans.map(p => 'SUM(' + rng(col, p) + ')').join('+');
+  const home = wbHomeCrew(sheet);
+  const prem = k => wbQuoteSh(WB_CREW_SHEET) + '$' + k + '$' + dest.prem;
+  const shiftPay = ['Swing', 'Graveyard', 'Special'].map((w, i) =>
+    '(' + spans.map(p => 'SUMIF(' + rng(c.shift, p) + ',"' + w + '",' + rng(c.field, p) + ')').join('+') + ')*' + prem('JKL'[i])
+  ).join('+');
+  return {
+    hrs: q + '$' + XLSX.utils.encode_col(c.field) + '$' + (sec.row + 1),   // the section's own subtotal
+    ot: sumifs('OT'), dt: sumifs('DBLT'),
+    shH: sumCol(home.shH), shPout: sumCol(home.shP), shPin: shiftPay,
+  };
+}
+/* every section that has been told to charge its field labour somewhere else */
+function wbCrewMoves() {
+  const out = [];
+  if (!_wbEng || wbCrewBlocks().length < 2) return out;
+  _wbEng.visibleSheets.forEach(sh => {
+    const home = wbHomeCrew(sh); if (!home) return;
+    wbSectionsOf(sh).forEach(sec => {
+      const cc = wbCrewUsable(sh, sec); if (!cc) return;
+      const v = String(_wbEng.get(sh, cc.pick) || '').trim(); if (!v) return;
+      const to = wbCrewByName(v); if (!to || to.name === home.name) return;
+      if (!wbSecRowSpans(sh, sec).length) return;          // a section with no lines moves nothing
+      out.push({ sheet: sh, sec, cc, from: home, to, sign: wbIsDeducted(sh, sec) ? -1 : 1 });
+    });
+  });
+  return out;
+}
+/* the other places a trade's takeoff hours are read — CP Backup's "Hrs From Takeoff" column,
+   which is what the percentage adders and its own reconciliation are worked out against */
+function wbCrewMirrors(b) {
+  if (_wbCrewMir[b.name]) return _wbCrewMir[b.name];
+  const want = String(b.L).replace(/\$/g, ''), out = [];
+  _wbEng.visibleSheets.forEach(sh => {
+    if (sh === WB_CREW_SHEET || wbCrewBlocks().some(x => x.sheet === sh)) return;
+    const rg = _wbEng.range(sh);
+    for (let r = 0; r <= rg.e.r; r++) for (let cc = 0; cc <= rg.e.c; cc++) {
+      const a = XLSX.utils.encode_cell({ r, c: cc }), raw = wbOrigRaw(sh, a);
+      if (raw && raw.f != null && String(raw.f).replace(/\$/g, '') === want) out.push(sh + '!' + a);
+    }
+  });
+  return (_wbCrewMir[b.name] = out);
+}
+/* where CP Backup can say so in print: the empty row above its Labor heading */
+function wbCrewNoteCell() {
+  const sh = CO_FORM.sheet;
+  if (!_wbEng || _wbEng.visibleSheets.indexOf(sh) < 0) return '';
+  const rg = _wbEng.range(sh);
+  for (let r = 1; r <= rg.e.r; r++) {
+    if (String(_wbEng.get(sh, 'A' + (r + 1)) || '').trim().toLowerCase() !== 'labor') continue;
+    const above = 'A' + r, raw = wbOrigRaw(sh, above);
+    if (raw && (raw.f != null || (raw.v !== '' && raw.v != null))) return '';
+    return sh + '!' + above;
+  }
+  return '';
+}
+const WB_CREW_LBL = 'Field Labor Crew';
+/* The overlay. The picker and its banner go in whether or not anything has been re-routed, so the
+   choice is there to make in Excel too; the arithmetic only changes when a section names a crew. */
+function wbCrewFx(e) {
+  const out = {}, blocks = wbCrewBlocks();
+  if (!_wbEng || blocks.length < 2) return out;
+  const banners = [];
+  _wbEng.visibleSheets.forEach(sh => {
+    const home = wbHomeCrew(sh); if (!home) return;
+    const c = wbToCols(sh);
+    wbSectionsOf(sh).forEach(sec => {
+      const cc = wbCrewUsable(sh, sec); if (!cc) return;
+      out[sh + '!' + cc.lbl] = '"' + WB_CREW_LBL + '"';
+      const p = '$' + cc.pick.replace(/^([A-Z]+)/, '$1$');                 // $M$29
+      const hrs = '$' + XLSX.utils.encode_col(c.field) + '$' + (sec.row + 1);
+      out[sh + '!' + cc.note] = 'IF(' + p + '="","",IF(' + p + '="' + home.name + '","",'
+        + '">> FIELD LABOR ON THIS SECTION IS CHARGED TO "&UPPER(' + p + ')&" - "&ROUND(' + hrs + ',1)&" HRS"))';
+      banners.push(wbQuoteSh(sh) + cc.note);
+    });
+  });
+  const note = wbCrewNoteCell();
+  if (note && banners.length) {
+    const chain = banners.map(b => 'IF(' + b + '="","",", "&' + b + ')').join('&');
+    out[note] = 'MID(' + chain + ',3,32000)';
+  }
+  const dv = wbCrewDvFor(e);
+  if (e) { if (Object.keys(dv).length) e.wbCrewDv = dv; else delete e.wbCrewDv; }
+  const moves = wbCrewMoves();
+  if (!moves.length) return out;
+  const d = {};                                                            // per crew, what it gains and loses
+  const put = (b, k, term) => { (d[b.name] = d[b.name] || { b, hrs: '', ot: '', dt: '', shH: '', shP: '' })[k] += term; };
+  moves.forEach(mv => {
+    const t = wbSecLabour(mv.sheet, mv.sec, mv.to);
+    const s = mv.sign > 0 ? ['-', '+'] : ['+', '-'];                       // a deducted section moves the other way
+    put(mv.from, 'hrs', s[0] + '(' + t.hrs + ')'); put(mv.to, 'hrs', s[1] + '(' + t.hrs + ')');
+    put(mv.from, 'ot', s[0] + '(' + t.ot + ')'); put(mv.to, 'ot', s[1] + '(' + t.ot + ')');
+    put(mv.from, 'dt', s[0] + '(' + t.dt + ')'); put(mv.to, 'dt', s[1] + '(' + t.dt + ')');
+    put(mv.from, 'shH', s[0] + '(' + t.shH + ')'); put(mv.to, 'shH', s[1] + '(' + t.shH + ')');
+    put(mv.from, 'shP', s[0] + '(' + t.shPout + ')'); put(mv.to, 'shP', s[1] + '(' + t.shPin + ')');
+  });
+  for (const k in d) {
+    const x = d[k], b = x.b, Q = wbQuoteSh(WB_CREW_SHEET);
+    out[WB_CREW_SHEET + '!L' + b.st0] = b.L + x.hrs;
+    for (let i = 0; i < 4; i++) {
+      out[WB_CREW_SHEET + '!J' + (b.ot0 + i)] = 'ROUND((' + b.OT + x.ot + ')*B' + (b.ot0 + i) + ',2)';
+      out[WB_CREW_SHEET + '!J' + (b.dt0 + i)] = 'ROUND((' + b.DT + x.dt + ')*B' + (b.dt0 + i) + ',2)';
+      out[WB_CREW_SHEET + '!M' + (b.st0 + i)] = 'ROUND(B' + (b.st0 + i) + '*(' + b.M + x.shH + '),2)';
+      out[WB_CREW_SHEET + '!N' + (b.st0 + i)] = 'ROUND(B' + (b.st0 + i) + '*(' + b.N + x.shP + '),2)';
+    }
+    wbCrewMirrors(b).forEach(a => { out[a] = b.L + x.hrs; });              // CP Backup's hours-from-takeoff
+  }
+  return out;
+}
+/* the crew a section's field labour is charged to, and what that is worth in hours */
+function wbSecCrew(sheet, sec) {
+  const cc = wbCrewUsable(sheet, sec); if (!cc) return null;
+  const home = wbHomeCrew(sheet);
+  const v = String(_wbEng.get(sheet, cc.pick) || '').trim();
+  const to = v ? wbCrewByName(v) : null;
+  const c = wbToCols(sheet);
+  const hv = _wbEng.get(sheet, XLSX.utils.encode_col(c.field) + (sec.row + 1));
+  return { cc, home, name: (to ? to.name : home.name), away: !!(to && to.name !== home.name),
+    to, hrs: typeof hv === 'number' ? hv : 0 };
+}
+function wbSetSecCrew(sheet, sw, val) {
+  const cfg = wbCfg(), e = wbEntity(); if (!e || !_wbEng) return;
+  if (cfg.locked && cfg.locked(e)) { toast('This estimate is locked — unlock it to change the crew', true); renderWbBody(); return; }
+  const secs = wbSectionsOf(sheet).filter(s => s.sw === sw); if (!secs.length) return;
+  const sec = secs[0], cc = wbCrewUsable(sheet, sec); if (!cc) return;
+  const home = wbHomeCrew(sheet), v = String(val || '').trim();
+  const to = v ? wbCrewByName(v) : null;
+  if (to && to.name !== home.name && wbCrewSize(to) <= 0) {
+    toast('There is nobody on the ' + to.name + ' crew — put a crew on it in Crew Mix first, or the hours would price at nothing', true);
+    renderWbBody(); return;
+  }
+  wbSetCell(sheet, cc.pick, (!to || to.name === home.name) ? '' : to.name);
+  wbApplyFx(e); renderWbBody(); scheduleWbSave();
+  if (to && to.name !== home.name) toast('This section’s field labour is charged to the ' + to.name + ' crew — its rates, its crew mix');
+  else toast('Back on the ' + home.name + ' crew');
+}
+/* Which cells carry the crew picker, so the grid offers the same list the .xlsm does */
+function wbCrewDvCells(sheet) {
+  const out = [];
+  if (!_wbEng || wbCrewBlocks().length < 2 || !wbHomeCrew(sheet)) return out;
+  wbSectionsOf(sheet).forEach(sec => { const cc = wbCrewUsable(sheet, sec); if (cc) out.push(cc.pick); });
+  return out;
+}
+function wbCrewDvAt(sheet, addr) {
+  if (wbCrewDvCells(sheet).indexOf(addr) < 0) return null;
+  return wbCrewBlocks().map(b => b.name);
+}
+/* the same list, as Excel's own data validation, for every sheet that has a picker on it */
+function wbCrewDvFor(e) {
+  const out = {}, names = wbCrewBlocks().map(b => b.name);
+  if (names.length < 2 || !_wbEng) return out;
+  const list = names.join(',');
+  if (list.length > 250) return out;                       // Excel will not take a longer inline list
+  _wbEng.visibleSheets.forEach(sh => {
+    const cells = wbCrewDvCells(sh);
+    if (cells.length) out[sh] = { sqref: cells.join(' '), list };
+  });
+  return out;
+}
+/* The picker on the section's header bar. It names the crew even when it is the section's own —
+   a change order where three sections say "Sheet Metal Field" and one says "Pipe Fitter" reads at
+   a glance, where a control that only appears once it is set does not. */
+function wbCrewPickHtml(sheet, sec) {
+  const cr = wbSecCrew(sheet, sec); if (!cr) return '';
+  const shEsc = String(sheet).replace(/'/g, "\\'");
+  const opts = wbCrewBlocks().map(b => {
+    const home = b.name === cr.home.name, none = !home && wbCrewSize(b) <= 0;
+    return `<option value="${esc(b.name)}"${b.name === cr.name ? ' selected' : ''}${none ? ' disabled' : ''}>`
+      + `${esc(b.name)}${home ? ' (this sheet)' : none ? ' — no crew set' : ''}</option>`;
+  }).join('');
+  const warn = cr.away && wbCrewSize(cr.to) <= 0;
+  return `<label class="tgcrew${cr.away ? ' away' : ''}" onclick="event.stopPropagation()"
+      title="Which crew this section's FIELD labour is charged to. The hours leave this sheet's trade and are split and priced by the crew you pick — in the spreadsheet too. Material never moves.">
+      <span>Field labor</span>
+      <select onchange="wbSetSecCrew('${shEsc}','${sec.sw}',this.value)">${opts}</select>
+    </label>${cr.away ? `<span class="crew-note${warn ? ' bad' : ''}">▲ FIELD LABOR → ${esc(cr.name.toUpperCase())} · ${esc(wbFmtNum(cr.hrs))} hrs at ${esc(cr.name)} rates${warn ? ' · NOBODY ON THAT CREW' : ''}</span>` : ''}`;
+}
+/* Where the control CANNOT be offered, and why. A picker that is quietly missing is worse than
+   one that is missing loudly: the estimator has no way to tell "this cannot be moved" from
+   "nobody moved it", and that is exactly how the wrong crew ends up on the job. */
+function wbCrewOffReasons() {
+  const out = [];
+  if (!_wbEng) return out;
+  if (wbCrewBlocks().length < 2) {
+    return ['Crew Mix does not read here as a set of trade blocks, so field labour cannot be charged to another crew. Check it in sheet view.'];
+  }
+  _wbEng.visibleSheets.forEach(sh => {
+    const secs = wbSectionsOf(sh); if (!secs.length) return;
+    if (wbToCols(sh).field == null) return;                          // not a field-labour takeoff at all
+    if (!wbHomeCrew(sh)) {
+      out.push(esc(sh) + ' — no Crew Mix block reads this sheet’s Field Labor Total column, so its sections cannot name a crew.');
+      return;
+    }
+    const bad = secs.filter(s => !wbCrewUsable(sh, s)).length;
+    if (bad) out.push(esc(sh) + ' — ' + bad + ' section' + (bad === 1 ? '' : 's') +
+      ' cannot carry the picker: the cells beside the Exclude switch, or the NOTES cell, are already used in the workbook.');
+  });
+  return out;
+}
+/* every re-route in the workbook, for the form and the section cards */
+function wbCrewMoveList() {
+  return wbCrewMoves().map(mv => {
+    const c = wbToCols(mv.sheet);
+    const hv = _wbEng.get(mv.sheet, XLSX.utils.encode_col(c.field) + (mv.sec.row + 1));
+    return { sheet: mv.sheet, sec: mv.sec, name: wbSectionName(mv.sheet, mv.sec),
+      from: mv.from.name, to: mv.to.name, hrs: typeof hv === 'number' ? hv : 0,
+      empty: wbCrewSize(mv.to) <= 0 };
+  });
+}
 /* ── Marking a takeoff line as a subcontractor ──
    A subcontracted line is a lump sum, not our material: its cost belongs in the Subcontractors
    block on CP Backup (D98:D103), where the workbook's own Sub Markup (B105) is applied to it.
@@ -7795,15 +8151,27 @@ function wbApplyFx(e) {
   // the rest; deducting works off whatever those two left, and the sub overflow off all of it.
   const add = Object.assign({}, wbAddFx(e), wbSecAddFx(e));
   const fx = Object.assign({}, add, wbDeductFx(e, add), wbSubFx(e, add), wbExclFx(e));
-  for (const k in fx) {
-    const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
-    const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
-    _wbFxOrig[k] = ws[m[2]] ? Object.assign({}, ws[m[2]]) : null;
-    ws[m[2]] = { t: 'n', v: 0, f: fx[k] };
-  }
+  const write = m2 => {
+    for (const k in m2) {
+      const m = k.match(/^(.+)!([A-Z]+\d+)$/); if (!m) continue;
+      const ws = _wbEng.sheetObj(m[1]); if (!ws) continue;
+      if (!(k in _wbFxOrig)) _wbFxOrig[k] = ws[m[2]] ? Object.assign({}, ws[m[2]]) : null;
+      ws[m[2]] = { t: 'n', v: 0, f: m2[k] };
+    }
+  };
+  write(fx);
   _wbEng.recalc();
   _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {};   // the overlay can create cells outside the old bounds
   _wbAltPx = {}; _wbAltAt = null;
+  // A section added below the sheet only becomes a section once the overlay above is in, so the
+  // crew a section charges its labour to is worked out against the finished workbook, not a
+  // half-built one. Nothing above reads Crew Mix, so there is nothing for this to disturb.
+  const crew = wbCrewFx(e);
+  if (Object.keys(crew).length) {
+    write(crew); Object.assign(fx, crew);
+    _wbEng.recalc();
+    _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {};
+  }
   if (Object.keys(fx).length) e.wbFx = fx; else delete e.wbFx;
   delete e.wbTotalsF;                                                    // superseded by the single overlay
 }
@@ -8134,7 +8502,8 @@ function wbSheetSnapshot() {
   const dropped = [];
   for (let c = rg.s.c; c <= rg.e.c; c++) if (!kept[c]) dropped.push(XLSX.utils.encode_col(c));
   const secs = wbSectionsOf(sheet).map(s => s.n + ':' + s.sw + ' rows ' + (s.min + 1) + '-' + (s.max + 1) +
-    (wbSectionExcluded(sheet, s.sw) ? ' EXCLUDED' : '') + (wbIsDeducted(sheet, s) ? ' DEDUCTED' : ''));
+    (wbSectionExcluded(sheet, s.sw) ? ' EXCLUDED' : '') + (wbIsDeducted(sheet, s) ? ' DEDUCTED' : '') +
+    (function () { const cr = wbSecCrew(sheet, s); return cr && cr.away ? ' FIELD LABOR -> ' + cr.name : ''; })());
   const L = [];
   L.push('DINGUS ' + APP_VERSION + ' — sheet snapshot');
   L.push('workbook: ' + (cfg ? cfg.docLabel : '?') + '   sheet: ' + sheet + '   view: ' + (_wbView || 'sheet'));
@@ -8295,7 +8664,7 @@ function openCoWorkbook(id) { return openWorkbook('co', id); }
 function openEstimateWorkbook(id) { return openWorkbook('est', id); }
 async function openWorkbook(kind, id) {
   const cfg = WB_KINDS[kind]; const e = cfg && cfg.entity(id); if (!e) return;
-  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null;
+  _wb = { kind, id }; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null; _wbCrewB = null; _wbToCols = {}; _wbCrewMir = {};
   _wbView = (kind === 'co') ? 'form' : 'sheet';     // a change order is filled in as a form, not a grid
   wireWbPop(); wireWbClipboard();
   if (!_wbPushed) { try { history.pushState({ __dingusWb: true }, ''); _wbPushed = true; } catch (x) {} }
@@ -8317,7 +8686,7 @@ async function openWorkbook(kind, id) {
     renderWbModal();
   } catch (err) { console.error(err); requestCloseWb(); toast('Could not open the workbook: ' + (err.message || err), true); }
 }
-function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null; _wbView = null; $('modalHost').innerHTML = ''; }
+function closeWb() { _wb = null; _wbEng = null; _wbSheet = null; _wbRows = {}; _wbBounds = {}; _wbSecs = {}; _wbFills = {}; _wbPA = {}; _wbHid = {}; _wbBlocks = {}; _wbDV = {}; _wbSecOpen = {}; _wbFxOrig = {}; _wbCmp = null; _wbSel = null; _wbChk = null; _wbAltPx = {}; _wbAltAt = null; _wbExclStd = null; _wbCrewB = null; _wbToCols = {}; _wbCrewMir = {}; _wbView = null; $('modalHost').innerHTML = ''; }
 /* Back / Save & close / ✕ — consume the history entry opening pushed, so the browser lands back
    on The Dingus instead of whatever page came before it. */
 function wireWbPop() {
@@ -8552,12 +8921,32 @@ function wbFormLabour(sheet) {
       <td>${esc(wbFmtNum(st))}</td><td>${esc(wbFmtNum(ot))}</td><td>${esc(wbFmtNum(dt))}</td><td>${esc(wbFmtNum(sh))}</td>
       <td class="cost">${esc(fmtMoney(cost) || '')}</td></tr>`);
   });
-  const crew = wbFormCrewHtml();
+  const crew = wbCrewMovesHtml() + wbFormCrewHtml();
   const src = wbFormulaSource(sheet, 'B' + (CO_LABOR_ROW[(estLaborRows()[0] || {}).key] || 48)) || 'worked out from Crew Mix';
   if (!rows.length) return `<div class="wbfnote">No hours yet — they are ${esc(src)}, which splits the labour on your takeoff lines across the crew below.</div>${crew}`;
   return `<table class="wbftbl"><thead><tr><th class="l">Class</th><th>ST</th><th>OT</th><th>DT</th><th>Shift</th><th>Cost</th></tr></thead>
     <tbody>${rows.join('')}</tbody></table>
     <div class="wbfnote">Hours are ${esc(src)} — the labour on your takeoff lines, split across the crew below.</div>${crew}`;
+}
+/* Any section whose field labour has been sent to another trade, said plainly on the form — so
+   the hours below, which are already split by the crew that is charging them, are never a puzzle. */
+function wbCrewMovesHtml() {
+  const mv = wbCrewMoveList(), off = wbCrewOffReasons();
+  if (!mv.length) {
+    return off.length ? `<div class="wbfcrewmv off"><h5>Field labour cannot be moved here</h5>
+      ${off.map(r => `<div class="r"><span>${r}</span></div>`).join('')}
+      <div class="wbfnote">Everything else works as usual — this is only about charging a section’s field labour to a different trade.</div></div>` : '';
+  }
+  return `<div class="wbfcrewmv">
+    <h5>Field labour charged to another crew</h5>
+    ${mv.map(m => `<div class="r${m.empty ? ' bad' : ''}">
+      <span>${esc(m.sheet)} · ${esc(m.name)}</span>
+      <i>${esc(m.from)} → <b>${esc(m.to)}</b></i>
+      <em>${esc(wbFmtNum(m.hrs))} hrs</em>
+      ${m.empty ? '<strong>NOBODY ON THAT CREW — these hours price at nothing</strong>' : ''}
+    </div>`).join('')}
+    <div class="wbfnote">These hours are out of ${esc(mv[0].from)} and into the crew named, split by that crew's own mix and priced at its own straight, overtime, double-time and shift rates. The material stays on its own sheet. The spreadsheet says so on the takeoff page and above this block on CP Backup.</div>
+  </div>`;
 }
 /* the crew ratios on Crew Mix that decide how the takeoff's hours split across the classes */
 const CO_CREW = [
@@ -8918,13 +9307,15 @@ function wbCardHtml(sheet, r0, r1, sec, colList) {
   const boxes = alt ? '' :
     `<label class="tgex" title="${off ? 'Put this section back into the total' : 'Leave this section out of the total — the workbook zeroes it, exactly as it does in Excel'}"><input type="checkbox"${off ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleSection('${shEsc}','${sec.sw}',${bool})"> Exclude</label>
      <label class="tgex" title="Subtract this section instead of adding it — how you charge only the difference between two options"><input type="checkbox"${ded ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleDeduct('${shEsc}','${sec.sw}')"> Deduct</label>`;
-  return `<details class="togroup${alt ? ' altsec' : off ? ' excluded' : ded ? ' deducted' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
+  const cw = wbSecCrew(sheet, sec);
+  return `<details class="togroup${alt ? ' altsec' : off ? ' excluded' : ded ? ' deducted' : ''}${cw && cw.away ? ' crewaway' : ''}"${_wbSecOpen[key] ? ' open' : ''} ontoggle="wbSecOpenSet('${esc(key).replace(/'/g, "\\'")}',this.open)">
     <summary>
       <span class="caret">▸</span>
       <span class="tgnum">${sec.n}.</span>
       ${nameHtml}
       ${boxes}
       <label class="tgex" title="Quote this section separately — out of the base price, and printed under it on the proposal in red"><input type="checkbox"${alt ? ' checked' : ''} onclick="event.stopPropagation()" onchange="wbToggleAlt('${shEsc}','${sec.sw}',${bool})"> Add alt</label>
+      ${wbCrewPickHtml(sheet, sec)}
       ${alt ? `<span class="alt-note">ADD ALTERNATE — ${esc(fmtMoney(wbAltPrice(sheet, sec)) || '$0')}, quoted under the base price</span>`
         : off ? '<span class="excl-note">EXCLUDED — zeroed in totals</span>' : ded ? '<span class="ded-note">DEDUCTED — subtracted from the total</span>' : ''}
       ${wbSecAdds(wbEntity(), sheet).some(x => x.sw === sec.sw) ? `<button class="wbchipb" title="Remove this added section and everything in it" onclick="event.stopPropagation();event.preventDefault();wbRemoveSection('${shEsc}','${sec.sw}')">✕</button>` : ''}
@@ -9384,7 +9775,9 @@ function wbPdfPlan(sheet, avail) {
       sec = { off, ded,
         sums: wbSectionSums(sheet, blk.sec).map(s => s.label + ' ' + s.val).join('   '),
         label: blk.sec.n + '.  ' + wbSectionName(sheet, blk.sec) +
-          (off ? '   — EXCLUDED, zeroed in totals' : ded ? '   — DEDUCTED, subtracted from the total' : '') };
+          (off ? '   — EXCLUDED, zeroed in totals' : ded ? '   — DEDUCTED, subtracted from the total' : '') +
+          (function () { const cr = wbSecCrew(sheet, blk.sec); return cr && cr.away
+            ? '   >> FIELD LABOR CHARGED TO ' + cr.name.toUpperCase() + ' - ' + wbFmtNum(cr.hrs) + ' HRS' : ''; })() };
     }
     blocks.push({ sec, body });
   });
@@ -9559,6 +9952,13 @@ function renderWbModal() {
       border-color:#7e8ef0;box-shadow:0 0 0 3px rgba(126,142,240,.22);outline:none}
     .wbapp .input[disabled],.wbapp input[disabled],.wbapp select[disabled]{background:#f2f3f7;color:#7a828f}
     .wbapp input[type=checkbox],.wbapp input[type=radio]{accent-color:#1d2f9e}
+    /* The page's own table styling is dark-theme aware, and its headings stick to the page's top
+       bar — neither belongs in here. :where() keeps this weaker than each table's own rules, so
+       it undoes the page's defaults without overriding anything the workbook sets for itself. */
+    .wbapp :where(thead th){background:transparent;color:#5c6470;position:static;top:auto;z-index:auto;border-bottom-color:#e2e4e9}
+    .wbapp :where(tbody td){border-bottom-color:#eceef3}
+    .wbapp :where(tbody tr){cursor:default}
+    .wbapp :where(tbody tr:hover td){background:transparent}
     .wbside{width:218px;flex:0 0 218px;background:#10173f;color:#d7dcf5;display:flex;flex-direction:column;overflow:hidden}
     .wbbrand{padding:12px 14px;border-bottom:1px solid #2a3468}
     .wbbrand b{display:block;color:#fff;font-size:13.5px;line-height:1.3}
@@ -9651,6 +10051,23 @@ function renderWbModal() {
     .wbfbig.wbfalt{margin-top:7px;padding-top:7px;border-top:1px solid #d9dcf0}
     .wbfbig.wbfalt span{font-size:12.5px;color:#c00000}
     .wbfbig.wbfalt b{font-size:17px;color:#c00000}
+    .wbapp .tgcrew{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;color:#5c6470;white-space:nowrap}
+    .wbapp .tgcrew select{border:1px solid #c8cede;background:#fffef2;border-radius:5px;padding:2px 5px;font:inherit;font-size:12px;color:#16181d;max-width:190px}
+    .wbapp .tgcrew.away select{border-color:#c47b00;background:#fff6e2;color:#8a5a00;font-weight:700}
+    .wbapp .crew-note{color:#8a5a00;font-size:12px;font-weight:700;white-space:nowrap}
+    .wbapp .crew-note.bad{color:#b02a37}
+    .wbapp details.togroup.crewaway>summary{background:#fdf3e0;box-shadow:inset 4px 0 0 #c47b00}
+    .wbfcrewmv{background:#fff6e2;border:1px solid #e8cf9d;border-radius:8px;padding:10px 12px;margin:10px 0}
+    .wbfcrewmv h5{margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#8a5a00}
+    .wbfcrewmv .r{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;font-size:13px;color:#16181d;padding:3px 0}
+    .wbfcrewmv .r i{font-style:normal;color:#8a5a00}
+    .wbfcrewmv .r i b{color:#8a5a00}
+    .wbfcrewmv .r em{font-style:normal;color:#5c6470;font-variant-numeric:tabular-nums}
+    .wbfcrewmv .r strong{color:#b02a37}
+    .wbfcrewmv .wbfnote{margin-top:6px}
+    .wbfcrewmv.off{background:#fdf1f2;border-color:#e8b9bd}
+    .wbfcrewmv.off h5{color:#b02a37}
+    .wbfcrewmv.off .r span{color:#b02a37}
     .wbapp table.wbsheet td.wbsubc{width:34px;text-align:center;background:#f4f5f8;padding:2px}
     .wbapp table.wbsheet td.wbsubc.hd{font-size:10px;color:#5c6470;font-weight:600}
     .wbapp table.wbsheet tr.subline td{background:#eef7f0}
