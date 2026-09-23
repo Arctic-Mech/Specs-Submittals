@@ -1079,7 +1079,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.54';
+const APP_VERSION = 'v7.55';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1356,24 +1356,15 @@ function smartTitleCase(str) {
     }).join('');
   }).join('');
 }
-/* ── Typing in capitals ──
-   Specs arrive SHOUTING and so does half of what a vendor pastes into an email. Anything that
-   comes in as full capitals is put back into normal case on its way into the register, using the
-   same casing the spec import has always used — the trades' own acronyms left standing, the
-   small words kept small. Anything already carrying a lower-case letter is left exactly as
-   typed, so this can only ever quieten a shout, never overrule a deliberate choice. Numbers —
-   spec, RFI, CO, PO — are never touched, and neither is anything that is not words. */
-const CASE_TIDY = { title: 1, vendor: 1, manufacturer: 1, package: 1, name: 1, party: 1,
-  description: 1, notes: 1, note: 1, subject: 1, text: 1, detail: 1, questionText: 1, answerText: 1 };
-function tidyCase(field, v) {
-  if (typeof v !== 'string' || !v.trim() || !CASE_TIDY[field]) return v;
-  return smartTitleCase(v);
-}
-function tidyFields(fields) {
-  if (!fields || typeof fields !== 'object') return fields;
-  const out = {};
-  for (const k in fields) out[k] = tidyCase(k, fields[k]);
-  return out;
+/* Raise the first letter of each sentence, and nothing else. Never lowers a letter, so CAPS
+   LOCK comes through exactly as typed, and a word that capitalises itself — iPhone, eBay — is
+   left alone rather than becoming IPhone. */
+function autoCap(str) {
+  const s = String(str == null ? '' : str);
+  if (!s) return s;
+  // the rest of the word only — swallowing the full stop would hide the next sentence
+  return s.replace(/(^\s*|[.!?]["')\]]?\s+|\n[ \t]*)([a-z])([A-Za-z0-9'’-]*)/g,
+    (m, lead, first, rest) => /[A-Z]/.test(rest) ? m : lead + first.toUpperCase() + rest);
 }
 const titleKey = s => String(s || '').toUpperCase().replace(/&/g, ' AND ').replace(/[^A-Z0-9]+/g, ' ').trim();
 function titleSim(a, b) {
@@ -3196,7 +3187,7 @@ function newJob() { jobFormModal(null); }
 function editJob() { if (job) jobFormModal(job); }
 
 async function submitJobForm(id) {
-  const name = tidyCase('name', $('jfName').value.trim());
+  const name = titleCaseWords($('jfName').value.trim());
   const number = $('jfNumber').value.trim();
   const rawFolder = $('jfFolder').value.trim();
   const folderUrl = rawFolder ? normaliseUrl(rawFolder) : '';
@@ -3543,7 +3534,6 @@ function newRfi() {
 }
 async function patchRfi(id, fields) {
   const r = rfiById(id); if (!r) return;
-  fields = tidyFields(fields);
   Object.assign(r, fields);
   renderRfis();
   await saveRfi(r);
@@ -3703,7 +3693,7 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'question')}
         <div class="drop" id="rfiDropQ" onclick="pickRfiFiles('${r.id}','question')">
           Drop the RFI question PDF here<br><span class="muted">The RFI as sent out — saved to this job’s ShareFile folder</span></div>
-        <textarea class="input no-caps autosize" rows="3" style="margin-top:8px" placeholder="…or type the RFI question here, if you don’t have a PDF"
+        <textarea class="input autosize" rows="3" style="margin-top:8px" placeholder="…or type the RFI question here, if you don’t have a PDF"
           onchange="patchRfi('${r.id}',{questionText:this.value})">${esc(r.questionText || '')}</textarea>
       </div>
 
@@ -3712,7 +3702,7 @@ function renderRfiDrawer() {
         ${rfiDocList(r, 'answer')}
         <div class="drop" id="rfiDropA" onclick="pickRfiFiles('${r.id}','answer')">
           Drop the returned / stamped response PDF here</div>
-        <textarea class="input no-caps autosize" rows="3" style="margin-top:8px" placeholder="…or type the response here, if you don’t have a PDF"
+        <textarea class="input autosize" rows="3" style="margin-top:8px" placeholder="…or type the response here, if you don’t have a PDF"
           onchange="patchRfi('${r.id}',{answerText:this.value})">${esc(r.answerText || '')}</textarea>
       </div>
 
@@ -3755,7 +3745,7 @@ function newTrackCategory() {
   if (!job) return;
   const name = prompt('Category name (e.g. Change Orders, Scheduling, Owner correspondence):');
   if (!name || !name.trim()) return;
-  const c = { id: uid('cat'), name: tidyCase('name', name.trim()), order: tracking.length,
+  const c = { id: uid('cat'), name: titleCaseWords(name.trim()), order: tracking.length,
     files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
   tracking.push(c);
   trackCat = c.id;
@@ -3833,7 +3823,7 @@ async function renameTrackCat(id) {
   const c = catById(id); if (!c) return;
   const name = prompt('Category name:', c.name || '');
   if (name === null || !name.trim()) return;
-  c.name = tidyCase('name', name.trim());
+  c.name = titleCaseWords(name.trim());
   renderTracking();
   await saveTrackCat(c);
 }
@@ -4000,7 +3990,7 @@ function trackAddItem(catId) {
   const c = catById(catId); if (!c) return;
   const el = $('checkInput'), text = (el && el.value || '').trim();
   if (!text) return;
-  const it = { id: uid('chk'), text: tidyCase('text', text), detail: '', due: '', done: false, created: Date.now(), by: meName() };
+  const it = { id: uid('chk'), text: autoCap(text), detail: '', due: '', done: false, created: Date.now(), by: meName() };
   c.checklist = (c.checklist || []).concat([it]);
   trackItem = it.id;                                  // open what you just made
   renderTracking(); saveTrackCat(c);
@@ -4100,7 +4090,7 @@ function acAdd(type, id, inputId) {
   const el = $(inputId); const text = (el && el.value || '').trim();
   if (!text) return;
   o.checklist = o.checklist || [];
-  o.checklist.push({ id: uid('chk'), text: tidyCase('text', text), detail: '', due: '', done: false, created: Date.now(), by: meName() });
+  o.checklist.push({ id: uid('chk'), text: autoCap(text), detail: '', due: '', done: false, created: Date.now(), by: meName() });
   acRerender(type); acSave(type, o);
   const ne = $(inputId); if (ne) { ne.value = ''; ne.focus(); }
 }
@@ -4121,7 +4111,6 @@ function acDelete(type, id, itemId) {
 function acPatch(type, id, itemId, fields) {
   const o = acOwner(type, id); if (!o) return;
   const it = (o.checklist || []).find(x => x.id === itemId); if (!it) return;
-  fields = tidyFields(fields);
   Object.assign(it, fields);
   acRerender(type); acSave(type, o);
 }
@@ -4173,7 +4162,7 @@ function addNote(catId, itemId) {
   const el = $('noteInput'); const text = (el && el.value || '').trim();
   if (!text) return;
   c.notes = c.notes || [];
-  c.notes.unshift({ id: uid('note'), text: tidyCase('text', text), item: itemId || '', created: Date.now(), by: meName() });
+  c.notes.unshift({ id: uid('note'), text: autoCap(text), item: itemId || '', created: Date.now(), by: meName() });
   renderTracking();
   saveTrackCat(c);
   const ne = $('noteInput'); if (ne) ne.focus();
@@ -4285,7 +4274,6 @@ function newChangeOrder() {
 }
 async function patchCo(id, fields) {
   const c = coById(id); if (!c) return;
-  fields = tidyFields(fields);
   Object.assign(c, fields);
   renderCos();
   await saveCo(c);
@@ -10736,7 +10724,6 @@ function closeContractDrawer() { openContract = null; $('drawerHost').innerHTML 
 function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; renderContractDrawer(); }
 function patchContract(id, fields) {
   const c = contractById(id); if (!c) return;
-  fields = tidyFields(fields);
   Object.assign(c, fields);
   renderContracts(); saveContract(c);
   if (jobFolder && ('party' in fields || 'number' in fields || 'kind' in fields)) maybeAutoOrganize();
@@ -10983,7 +10970,6 @@ function closeLedgerDrawer() { openLedger = { key: null, id: null }; $('drawerHo
 function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; renderLedgerDrawer(); }
 function patchLedger(lk, id, fields) {
   const it = ledgerById(lk, id); if (!it) return;
-  fields = tidyFields(fields);
   Object.assign(it, fields);
   renderLedger(lk);
   saveLedger(lk, it);
@@ -12185,7 +12171,6 @@ const _fieldTimers = new Map();    // key → timeout id
 async function setField(key, field, value) {
   const s = findSection(key);
   if (!s) return;
-  value = tidyCase(field, value);
   s[field] = value;
   markPending(key);                 // protect it across the debounce
   const patch = _fieldPatches.get(key) || {};
@@ -12458,7 +12443,7 @@ async function addSectionManually() {
   if (findSection(key)) { toast('That section is already in the register', true); return; }
   const title = prompt('Section title:') || '';
   const rec = newSectionRecord({
-    key, number: prettyNum(key), division: divOf(key), title: tidyCase('title', title.trim()),
+    key, number: prettyNum(key), division: divOf(key), title: titleCaseWords(title.trim()),
     manual: true, inBody: true, requirements: [], includes: []
   });
   markPending(key);
@@ -13599,28 +13584,38 @@ document.addEventListener('keydown', e => {
   }
 });
 
-/* Title-case single-line text fields when you leave them, so names, subjects,
-   vendors and descriptions read officially. It runs in the capture phase, before
-   the field's own onchange, so the capitalised text is what gets saved. Only the
-   first letter of each word is touched (acronyms like VFD and codes like
-   GC-RFI-042 keep their case); emails and URLs are left alone. Prose textareas,
-   the search boxes and identifier / number / URL fields opt out. */
+/* Capitalise text fields when you leave them, so names, subjects, vendors and
+   descriptions read officially. It runs in the capture phase, before the field's
+   own onchange, so the capitalised text is what gets saved. A one-line field is a
+   name and every word is raised; a box you write prose in — a note, an action item,
+   an RFI question — is a sentence, and only the letter that starts one is. Nothing
+   is ever LOWERED, so caps lock comes through exactly as typed, acronyms like VFD
+   and codes like GC-RFI-042 keep their case, and emails and URLs are left alone.
+   The search boxes and the identifier / number / URL fields opt out. */
 const NO_CAPS_IDS = new Set([
   'searchBox', 'rfiSearch', 'coSearch', 'tagInput',            // search + tags
   'rfiGc', 'rfiNum', 'coNum', 'coAmt', 'jfNumber', 'jfFolder', 'lkUrl',   // identifiers / numbers / URLs
-  'noteInput', 'checkInput', 'rfiCheckInput', 'coCheckInput', 'lkNote'    // freeform prose — notes + action items
+  'lkNote'                                                    // the label on a link, not prose
 ]);
 function titleCaseWords(str) {
   return String(str).replace(/\S+/g, w => (/[@]|:\/\//.test(w) ? w : w.replace(/\p{L}/u, c => c.toUpperCase())));
 }
 function autoCapField(el) {
-  if (!el || el.tagName !== 'INPUT') return;                    // single-line inputs only, not prose textareas
-  if ((el.getAttribute('type') || 'text').toLowerCase() !== 'text') return;
+  if (!el) return;
+  const tag = el.tagName;
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+  if (tag === 'INPUT' && (el.getAttribute('type') || 'text').toLowerCase() !== 'text') return;
   if (el.classList.contains('no-caps') || NO_CAPS_IDS.has(el.id)) return;
   const v = el.value;
   if (!v) return;
-  const t = titleCaseWords(v);
-  if (t !== v) el.value = t;
+  // a one-line field is a name, so every word is raised; a box you write prose in is a
+  // sentence, so only the letter that starts one is
+  const t = tag === 'TEXTAREA' ? autoCap(v) : titleCaseWords(v);
+  if (t === v) return;
+  el.value = t;
+  // A field that saves as you type has no onchange of its own to pick this up, so the box would
+  // show the capital and the register would keep the lower-case letter. Tell it the text moved.
+  if (el.getAttribute('oninput')) el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 document.addEventListener('change', e => autoCapField(e.target), true);
 document.addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('autosize')) autosize(e.target); });
