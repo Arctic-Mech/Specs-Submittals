@@ -211,7 +211,31 @@ header {
   padding: 16px; cursor: pointer; position: relative; transition: border-color .12s, box-shadow .12s;
 }
 .job-card:hover { border-color: var(--border-2); box-shadow: var(--shadow); }
-.job-card h3 { font-size: 15px; font-weight: 650; margin-bottom: 2px; padding-right: 24px; }
+.job-card h3 { font-size: 15px; font-weight: 650; margin-bottom: 2px; padding-right: 52px; }
+.job-card.fav { border-color: var(--amber); }
+.home-work { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; overflow: hidden; }
+.hw-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.hw-head b { font-size: 13.5px; }
+.hw-head .muted { font-size: 12px; }
+.hw-empty { padding: 13px 14px; font-size: 12.5px; }
+.hw-list { max-height: 320px; overflow-y: auto; }
+.hw-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: none;
+  border: none; border-bottom: 1px solid var(--border); padding: 8px 14px; font: inherit; font-size: 13px;
+  color: var(--text); cursor: pointer; }
+.hw-row:last-child { border-bottom: none; }
+.hw-row:hover { background: var(--surface-2); }
+.hw-job { flex: none; width: 88px; font-weight: 650; font-size: 12px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hw-cat { flex: none; width: 150px; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hw-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-due.none { color: var(--text-3); background: var(--surface-2); }
+@media (max-width: 720px) { .hw-cat { display: none; } .hw-job { width: 64px; } }
+.job-star {
+  position: absolute; top: 9px; right: 34px; width: 24px; height: 24px; border-radius: 5px;
+  border: none; background: transparent; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; opacity: .35;
+}
+.job-card:hover .job-star { opacity: 1; }
+.job-card.fav .job-star { opacity: 1; color: var(--amber); }
+.job-star:hover { background: var(--amber-sf); color: var(--amber); }
 .job-card .meta { font-size: 12px; color: var(--text-3); margin-bottom: 12px; }
 .job-del {
   position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 5px;
@@ -301,6 +325,22 @@ header {
 .track-cat .tc-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track-cat .tc-sub { font-size: 11px; color: var(--text-3); }
 .track-cat.on .tc-sub { color: var(--accent); }
+label.tick-row { display: flex; align-items: center; gap: 8px; margin-top: 13px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.me-chip { display: flex; align-items: center; gap: 7px; background: none; border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 11px 3px 3px; font: inherit; font-size: 12.5px; color: var(--text-2);
+  cursor: pointer; max-width: 190px; }
+.me-chip:hover { border-color: var(--border-2); color: var(--text); }
+.me-chip .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-chip .me-dot { flex: none; width: 23px; height: 23px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; letter-spacing: .02em; }
+.me-chip .me-dot.none { background: var(--surface-3); color: var(--text-3); }
+.me-chip.unset { border-color: var(--amber); color: var(--amber); }
+@media (max-width: 720px) { .me-chip .lbl { display: none; } .me-chip { padding: 3px; border-color: transparent; } }
+.by-tag { color: var(--text-3); font-weight: 500; }
+.by-tag::before { content: '· '; }
+.track-cat.alldone .tc-name { text-decoration: line-through; color: var(--text-3); font-weight: 500; }
+.track-head h3.alldone { text-decoration: line-through; color: var(--text-3); }
+.track-cat.alldone .tc-sub { color: var(--green); }
 .track-cat.add { color: var(--text-3); border-style: dashed; align-items: center; margin-top: 2px; font-weight: 500; }
 .track-panel { min-width: 0; }
 .track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
@@ -321,12 +361,12 @@ header {
 .check-row .ct-btn:hover { background: var(--surface-2); }
 .check-row .ct { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .check-row.done .ct { text-decoration: line-through; color: var(--text-3); }
-.check-row .ac-due {
+.check-row .ac-due, .hw-row .ac-due {
   flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
   background: var(--surface-2); color: var(--text-3);
 }
-.check-row .ac-due.today { color: var(--amber); background: var(--amber-sf); }
-.check-row .ac-due.overdue { color: var(--red); background: var(--red-sf); }
+.check-row .ac-due.today, .hw-row .ac-due.today { color: var(--amber); background: var(--amber-sf); }
+.check-row .ac-due.overdue, .hw-row .ac-due.overdue { color: var(--red); background: var(--red-sf); }
 .check-row.done .ac-due { opacity: .5; }
 .check-row .ac-has { flex: none; font-size: 11.5px; opacity: .75; color: var(--text-3); white-space: nowrap; }
 .check-row.sel .ct-btn { background: var(--accent-sf); box-shadow: inset 2px 0 0 var(--accent); }
@@ -876,6 +916,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="Spec files — view, import or remove">📄 <span class="lbl">Spec</span></button>
     <button class="btn ghost" onclick="openExportMenu()" title="Export the submittal register (PDF or CSV)">⤓ <span class="lbl">Export</span></button>
   </div>
+  <button class="me-chip" id="meChip" onclick="askMeName()" title="Who you are on this device — your name goes on what you change"></button>
   <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Light / dark">◐</button>
 </header>
 
@@ -892,6 +933,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     </div>
     <div id="syncBanner"></div>
     <div id="legacyNotice"></div>
+    <div id="homeWork"></div>
     <div class="jobs-grid" id="jobsGrid"></div>
     <div class="storage-note" id="storageNote"></div>
   </section>
@@ -1029,7 +1071,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.52';
+const APP_VERSION = 'v7.53';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2607,8 +2649,7 @@ async function assignUnassigned(i) {
     // record it on the section, then persist BEFORE deleting the loose original
     s[kind] = s[kind] || [];
     const priorIds = new Set(s[kind].map(d => d.id));
-    const doc = { id: uid('doc'), name: item.name, size: blob.size, status, uploaded: Date.now(), dir, file,
-      rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' };
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, status, uploaded: Date.now(), dir, file };
     s[kind].push(doc);
     await markPriorOld(s, kind, priorIds);   // the previous PDFs are now superseded
     applyStatus(s, status);
@@ -3029,7 +3070,7 @@ function renderJobs() {
     return;
   }
   let html = '';
-  for (const j of jobs) {
+  for (const j of jobsInOrder()) {
     const count = jobCount(j);
     const t = jobTally(j);
     const total = count || 1;
@@ -3037,7 +3078,9 @@ function renderJobs() {
       .map(s => `<span style="width:${(t[s.id] / total * 100).toFixed(2)}%;background:${cvar(s.color)}"></span>`).join('');
     const legend = STATUSES.filter(s => t[s.id] && s.id !== 'not_started')
       .map(s => `<span><i style="background:${cvar(s.color)}"></i>${t[s.id]} ${esc(s.short)}</span>`).join('');
-    html += `<div class="job-card" onclick="openJob('${j.id}')">
+    const fav = isFav(j.id);
+    html += `<div class="job-card${fav ? ' fav' : ''}" onclick="openJob('${j.id}')">
+      <button class="job-star" title="${fav ? 'One of your jobs — click to unstar' : 'Star this job so it sits at the front and shows on your home page'}" onclick="toggleFav('${j.id}',event)">${fav ? '★' : '☆'}</button>
       <button class="job-del" title="Delete job" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
       <h3>${esc(j.name)}</h3>
       <div class="meta">${j.number ? '<b>' + esc(j.number) + '</b> · ' : ''}${count} section${count === 1 ? '' : 's'} · ${fmtDate(j.updated || j.created)}</div>
@@ -3049,6 +3092,7 @@ function renderJobs() {
   grid.innerHTML = html;
   renderLegacyNotice();
   renderStorageNote();
+  renderHomeWork();
 }
 
 function renderStorageNote() {
@@ -3777,11 +3821,14 @@ function renderTracking() {
   if (trackCat && !catById(trackCat)) trackCat = null;
   if (!trackCat && tracking.length) trackCat = tracking[0].id;
   $('trackCats').innerHTML = tracking.map(c => {
-    const nf = (c.files || []).length, na = (c.checklist || []).filter(i => !i.done).length;
+    const nf = (c.files || []).length, list = c.checklist || [];
+    const na = list.filter(i => !i.done).length;
+    const done = list.length > 0 && na === 0;          // everything on it is ticked — struck through, and it says so
     const bits = [];
     if (nf) bits.push(nf + ' file' + (nf === 1 ? '' : 's'));
     if (na) bits.push(na + ' to do');
-    return `<button class="track-cat ${trackCat === c.id ? 'on' : ''}" onclick="selectTrackCat('${c.id}')">
+    else if (done) bits.push('all done');
+    return `<button class="track-cat ${trackCat === c.id ? 'on' : ''}${done ? ' alldone' : ''}" onclick="selectTrackCat('${c.id}')">
        <span class="tc-name">${esc(c.name)}</span>
        <span class="tc-sub">${bits.join(' · ') || 'empty'}</span>
      </button>`;
@@ -3805,7 +3852,7 @@ function renderTracking() {
   const out = items.filter(i => !i.done).length;
   $('trackPanel').innerHTML = `
     <div class="track-head">
-      <h3>${esc(c.name)}</h3>
+      <h3${!out && items.length ? ' class="alldone"' : ''}>${esc(c.name)}</h3>
       <span class="muted" style="font-size:12.5px">${out ? out + ' outstanding' : items.length ? 'all done' : ''}</span>
       <div class="spacer"></div>
       <button class="btn sm" onclick="copyTrackText('${c.id}')" title="Copy everything outstanding in this category as plain text, ready to paste into an email">⧉ Copy for email</button>
@@ -3829,7 +3876,7 @@ function renderTracking() {
             if (nn) bits.push('✎ ' + nn);
             return `<div class="check-row ${i.done ? 'done' : ''} ${trackItem === i.id ? 'sel' : ''}">
               <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="acToggle('cat','${c.id}','${i.id}',this.checked)"></label>
-              <button class="ct-btn" onclick="selectTrackItem('${i.id}')">
+              <button class="ct-btn" onclick="selectTrackItem('${i.id}')" title="${acWho(i)}">
                 <span class="ct">${esc(i.text)}</span>
                 ${i.due ? `<span class="ac-due ${acDueClass(i.due)}">${fmtShort(i.due)}</span>` : ''}
                 ${bits.length ? `<span class="ac-has">${bits.join(' ')}</span>` : ''}
@@ -3913,7 +3960,7 @@ function trackDetailHtml(c, it) {
       ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => `
         <div class="note-item">
           <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
-          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}</small>
+          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}${n.by ? ' · ' + esc(n.by) : ''}</small>
             ${unfiled ? moveTo('note', n.id) : ''}
             <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
         </div>`).join('') || `<div class="muted" style="font-size:13px">No notes${unfiled ? '' : ' on this item'} yet.</div>`}
@@ -3923,7 +3970,7 @@ function trackAddItem(catId) {
   const c = catById(catId); if (!c) return;
   const el = $('checkInput'), text = (el && el.value || '').trim();
   if (!text) return;
-  const it = { id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now() };
+  const it = { id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now(), by: meName() };
   c.checklist = (c.checklist || []).concat([it]);
   trackItem = it.id;                                  // open what you just made
   renderTracking(); saveTrackCat(c);
@@ -4010,7 +4057,7 @@ function checklistHtml(type, id, list) {
   return (list || []).map(i => `
     <div class="check-row ${i.done ? 'done' : ''}">
       <label class="tick"><input type="checkbox" ${i.done ? 'checked' : ''} onchange="acToggle('${type}','${id}','${i.id}',this.checked)"></label>
-      <button class="ct-btn" onclick="openActionItem('${type}','${id}','${i.id}')" title="Open to add details">
+      <button class="ct-btn" onclick="openActionItem('${type}','${id}','${i.id}')" title="${acWho(i) || 'Open to add details'}">
         <span class="ct">${esc(i.text)}</span>
         ${i.due ? `<span class="ac-due ${acDueClass(i.due)}">${fmtShort(i.due)}</span>` : ''}
         ${i.detail ? '<span class="ac-has" title="Has details">📝</span>' : ''}
@@ -4023,7 +4070,7 @@ function acAdd(type, id, inputId) {
   const el = $(inputId); const text = (el && el.value || '').trim();
   if (!text) return;
   o.checklist = o.checklist || [];
-  o.checklist.push({ id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now() });
+  o.checklist.push({ id: uid('chk'), text, detail: '', due: '', done: false, created: Date.now(), by: meName() });
   acRerender(type); acSave(type, o);
   const ne = $(inputId); if (ne) { ne.value = ''; ne.focus(); }
 }
@@ -4031,6 +4078,7 @@ function acToggle(type, id, itemId, done) {
   const o = acOwner(type, id); if (!o) return;
   const it = (o.checklist || []).find(x => x.id === itemId); if (!it) return;
   it.done = done;
+  if (done) { it.doneBy = meName(); it.doneAt = Date.now(); } else { delete it.doneBy; delete it.doneAt; }
   acRerender(type); acSave(type, o);
   if (acModal && acModal.itemId === itemId) renderActionModal();
 }
@@ -4094,7 +4142,7 @@ function addNote(catId, itemId) {
   const el = $('noteInput'); const text = (el && el.value || '').trim();
   if (!text) return;
   c.notes = c.notes || [];
-  c.notes.unshift({ id: uid('note'), text, item: itemId || '', created: Date.now() });
+  c.notes.unshift({ id: uid('note'), text, item: itemId || '', created: Date.now(), by: meName() });
   renderTracking();
   saveTrackCat(c);
   const ne = $('noteInput'); if (ne) ne.focus();
@@ -11270,15 +11318,213 @@ function restoreCellFocus(body, f) {
 /* Move a section to a status, recording the transition and its side effects.
    Returns true if the status actually changed. Shared by the dropdown and by
    a PDF upload (which files itself under the status it represents). */
-function applyStatus(s, value) {
+/* ── Who you are on this device ──
+   No accounts, no sign-in: the register is shared live and everyone on it is trusted. But a job
+   handed over on a Friday is unreadable if nothing says who did what, so each machine is asked
+   once for a name and keeps it. It goes on status changes, notes and action items from then on,
+   and it is what "my jobs" means when you favourite one. */
+const ME_KEY = 'sr_me';
+function meName() { try { return (localStorage.getItem(ME_KEY) || '').trim(); } catch (e) { return ''; } }
+function meInitials(n) {
+  const p = String(n || '').trim().split(/\s+/).filter(Boolean);
+  return (p.length > 1 ? p[0][0] + p[p.length - 1][0] : (p[0] || '?').slice(0, 2)).toUpperCase();
+}
+function renderMeChip() {
+  const el = $('meChip'); if (!el) return;
+  const n = meName();
+  el.innerHTML = n
+    ? `<span class="me-dot">${esc(meInitials(n))}</span><span class="lbl">${esc(n)}</span>`
+    : `<span class="me-dot none">?</span><span class="lbl">Who are you?</span>`;
+  el.classList.toggle('unset', !n);
+}
+function setMeName(n) {
+  const v = String(n || '').trim().slice(0, 40);
+  try { if (v) localStorage.setItem(ME_KEY, v); else localStorage.removeItem(ME_KEY); } catch (e) {}
+  renderMeChip(); renderJobs();
+}
+function askMeName() {
+  const cur = meName();
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal" style="width:min(430px,100%)">
+    <div class="modal-head"><h3>Who are you on this device?</h3>
+      ${cur ? '<button class="icon-btn" onclick="closeMeName()">✕</button>' : ''}</div>
+    <div class="modal-body">
+      <div class="muted" style="font-size:12.5px;margin-bottom:13px">Your name goes on the statuses you set, the notes you write and the action items you tick, so whoever picks the job up after you can see who did what. It stays on this computer — it is not a login.</div>
+      <div class="field"><label class="fl">Name</label>
+        <input class="input" id="meInput" placeholder="e.g. Kyle Bennett" value="${esc(cur)}" maxlength="40"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();saveMeName()}"></div>
+      <label class="tick-row"><input type="checkbox" id="meAskDates" ${askDates() ? 'checked' : ''}> Ask me which day it happened when a date gets filled in</label>
+    </div>
+    <div class="modal-foot">
+      ${cur ? '<button class="btn ghost" onclick="closeMeName()">Cancel</button>' : ''}
+      <div class="spacer"></div>
+      <button class="btn primary" onclick="saveMeName()">Save</button>
+    </div></div></div>`;
+  setTimeout(() => { const el = $('meInput'); if (el) { el.focus(); el.select(); } }, 30);
+}
+function closeMeName() { $('modalHost').innerHTML = ''; }
+function saveMeName() {
+  const el = $('meInput'), ck = $('meAskDates');
+  const v = el ? el.value.trim() : '';
+  if (!v) { if (el) el.focus(); return; }
+  if (ck) { try { localStorage.setItem(DATE_ASK_KEY, ck.checked ? 'on' : 'off'); } catch (e) {} }
+  closeMeName();
+  setMeName(v);
+  toast('Hello, ' + v.split(/\s+/)[0] + ' — your name goes on what you change from now on');
+}
+/* asked once, the first time this browser opens the app */
+function nudgeMeName() { if (!meName()) setTimeout(askMeName, 900); }
+/* ── Your jobs ──
+   Everyone sees every job, but you only run some of them. A star is per-device, like your name:
+   it decides what sits at the front of the grid and what "my jobs" means on the home screen. */
+const FAV_KEY = 'sr_favs';
+function favSet() { try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); } catch (e) { return new Set(); } }
+function isFav(id) { return favSet().has(id); }
+function toggleFav(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const f = favSet();
+  if (f.has(id)) f.delete(id); else f.add(id);
+  try { localStorage.setItem(FAV_KEY, JSON.stringify([...f])); } catch (e) {}
+  renderJobs(); renderHomeWork();
+}
+function favJobs() { const f = favSet(); return jobs.filter(j => f.has(j.id)); }
+/* favourites first, then everything else in whatever order the register gave us */
+function jobsInOrder() {
+  const f = favSet();
+  return jobs.slice().sort((a, b) => (f.has(b.id) ? 1 : 0) - (f.has(a.id) ? 1 : 0));
+}
+/* ── Your work, across every job ──
+   A PE runs several jobs at once, and the action items that matter are spread across all of them.
+   The register only streams one job at a time, so this reads the tracking lists for your starred
+   jobs in one go and puts everything still outstanding on the home screen, worst deadline first.
+   It is a snapshot, not a live feed — it says when it was taken and refreshes on demand. */
+let _homeWork = null, _homeWorkAt = 0, _homeWorkBusy = false;
+const HOME_WORK_MAX = 12;
+async function loadHomeWork(force) {
+  if (!FB || !jobsLoaded || _homeWorkBusy) return;
+  if (!force && _homeWork && Date.now() - _homeWorkAt < 180000) return;
+  const favs = favJobs();
+  const list = (favs.length ? favs : jobs).slice(0, HOME_WORK_MAX);
+  if (!list.length) { _homeWork = []; _homeWorkAt = Date.now(); renderHomeWork(); return; }
+  _homeWorkBusy = true; renderHomeWork();
+  const out = [];
+  try {
+    for (const j of list) {
+      let snap = null;
+      try { snap = await FB.getDocs(trackingCol(j.id)); } catch (e) { continue; }
+      snap.forEach(d => {
+        const c = d.data() || {};
+        (c.checklist || []).forEach(i => {
+          if (i.done) return;
+          out.push({ jobId: j.id, jobName: j.name || '', jobNumber: j.number || '',
+            catId: d.id, cat: c.name || 'Untitled', id: i.id, text: i.text || '', due: i.due || '', by: i.by || '' });
+        });
+      });
+    }
+    out.sort((a, b) => {
+      const da = a.due || '9999-99-99', db = b.due || '9999-99-99';
+      return da < db ? -1 : da > db ? 1 : String(a.jobName).localeCompare(String(b.jobName));
+    });
+    _homeWork = out; _homeWorkAt = Date.now();
+  } finally { _homeWorkBusy = false; renderHomeWork(); }
+}
+function renderHomeWork() {
+  const host = $('homeWork'); if (!host) return;
+  const favs = favJobs();
+  if (!jobsLoaded || (!jobs.length && !_homeWork)) { host.innerHTML = ''; return; }
+  const scope = favs.length ? favs.length + ' starred job' + (favs.length === 1 ? '' : 's')
+    : Math.min(jobs.length, HOME_WORK_MAX) + ' job' + (jobs.length === 1 ? '' : 's');
+  const head = (body, extra) => { host.innerHTML = `<div class="home-work">
+    <div class="hw-head"><b>Your work</b><span class="muted">${esc(scope)}${extra || ''}</span>
+      <div class="spacer"></div>
+      <button class="btn sm ghost" onclick="loadHomeWork(true)" ${_homeWorkBusy ? 'disabled' : ''}>${_homeWorkBusy ? 'Loading…' : '↻ Refresh'}</button></div>
+    ${body}</div>`; };
+  if (_homeWorkBusy && !_homeWork) return head('<div class="muted hw-empty">Reading your job tracking…</div>');
+  if (!_homeWork) return head(`<div class="muted hw-empty">Every action item still open across your jobs, in one list. <a href="#" onclick="event.preventDefault();loadHomeWork(true)">Show me</a>${favs.length ? '' : ' — or star the jobs you run and this follows them.'}</div>`);
+  if (!_homeWork.length) return head('<div class="muted hw-empty">Nothing outstanding on your job tracking. </div>', ' · nothing outstanding');
+  const od = _homeWork.filter(w => w.due && w.due < today()).length;
+  const rows = _homeWork.slice(0, 40).map(w => {
+    const cls = acDueClass(w.due);
+    return `<button class="hw-row" onclick="openJobAt('${w.jobId}','${esc(w.catId).replace(/'/g, "\\'")}','${esc(w.id).replace(/'/g, "\\'")}')">
+      <span class="hw-job">${esc(w.jobNumber || w.jobName)}</span>
+      <span class="hw-cat">${esc(w.cat)}</span>
+      <span class="hw-text">${esc(w.text)}</span>
+      ${w.due ? `<span class="ac-due ${cls}">${fmtShort(w.due)}</span>` : '<span class="ac-due none">no date</span>'}
+    </button>`;
+  }).join('');
+  head(`<div class="hw-list">${rows}</div>${_homeWork.length > 40 ? `<div class="muted hw-empty">… and ${_homeWork.length - 40} more</div>` : ''}`,
+    ` · ${_homeWork.length} outstanding${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
+}
+/* straight to the action item you clicked, in its own job */
+async function openJobAt(jobId, catId, itemId) {
+  await openJob(jobId);
+  jobTab = 'tracking'; trackCat = catId || null; trackItem = itemId || null;
+  renderJob();
+}
+/* how a stamped name is shown beside a date */
+function byTag(by) { return by ? `<span class="by-tag">${esc(by)}</span>` : ''; }
+/* who raised an action item and who ticked it — kept to a tooltip so the list stays a list */
+function acWho(i) {
+  const bits = [];
+  if (i.by) bits.push('Raised by ' + i.by);
+  if (i.done && i.doneBy) bits.push('Ticked by ' + i.doneBy + (i.doneAt ? ' on ' + fmtDate(i.doneAt) : ''));
+  return bits.length ? esc(bits.join(' · ')) : '';
+}
+
+/* ── The dates the app fills in for you ──
+   Moving a section to "Submitted to GC" or to one of the returned statuses writes a date. Today
+   is right most of the time and wrong exactly when you are catching up on yesterday's post, so
+   unless you have said otherwise the app asks, with today already filled in. */
+function statusDateField(value) {
+  if (value === 'submitted_gc') return 'submittedDate';
+  if (value === 'approved' || value === 'partial_approval' || value === 'revise_resubmit') return 'returnedDate';
+  return '';
+}
+const DATE_ASK_KEY = 'sr_askdates';
+function askDates() { try { return localStorage.getItem(DATE_ASK_KEY) !== 'off'; } catch (e) { return true; } }
+function setAskDates(on) { try { localStorage.setItem(DATE_ASK_KEY, on ? 'on' : 'off'); } catch (e) {} toast(on ? 'The app will ask which day it happened' : 'Dates will be filled in with today, without asking'); }
+let _stampResolve = null;
+/* Resolves to the date to stamp, '' to leave it blank, or undefined for "carry on as before".
+   Only ever asked when a date is about to be written into a field that is empty. */
+function askStampDate(s, value) {
+  const f = statusDateField(value);
+  if (!f || s[f]) return Promise.resolve(undefined);       // nothing would be written → nothing to ask
+  if (!askDates()) return Promise.resolve(today());
+  const label = f === 'submittedDate' ? 'sent to the GC' : 'returned by the GC';
+  const st = ST[value] || { label: value };
+  return new Promise(resolve => {
+    _stampResolve = resolve;
+    $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal" style="width:min(430px,100%)">
+      <div class="modal-head"><h3>What day was it ${esc(label)}?</h3></div>
+      <div class="modal-body">
+        <div class="muted" style="font-size:12.5px;margin-bottom:13px">${esc(s.key || '')}${s.title ? ' — ' + esc(s.title) : ''} is going to <b>${esc(st.label)}</b>.</div>
+        <div class="field"><label class="fl">Date</label>
+          <input class="input" type="date" id="stampDate" value="${today()}"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();stampDateDone()}"></div>
+        <label class="tick-row"><input type="checkbox" id="stampNoAsk"> Stop asking — just use today from now on</label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" onclick="stampDateDone('')">Leave it blank</button>
+        <div class="spacer"></div>
+        <button class="btn primary" onclick="stampDateDone()">Save</button>
+      </div></div></div>`;
+    setTimeout(() => { const el = $('stampDate'); if (el) el.focus(); }, 30);
+  });
+}
+function stampDateDone(forced) {
+  const el = $('stampDate'), no = $('stampNoAsk');
+  const v = forced !== undefined ? forced : (el && el.value ? el.value : '');
+  if (no && no.checked) { try { localStorage.setItem(DATE_ASK_KEY, 'off'); } catch (e) {} }
+  $('modalHost').innerHTML = '';
+  const r = _stampResolve; _stampResolve = null;
+  if (r) r(v);
+}
+function applyStatus(s, value, stamp) {
   const from = s.status || 'not_started';
   s.history = s.history || [];
-  if (from !== value) s.history.push({ ts: Date.now(), from, to: value });
+  if (from !== value) s.history.push(Object.assign({ ts: Date.now(), from, to: value }, meName() ? { by: meName() } : {}));
   s.status = value;
-  if (value === 'submitted_gc' && !s.submittedDate) s.submittedDate = today();
-  if ((value === 'approved' || value === 'partial_approval' || value === 'revise_resubmit') && !s.returnedDate) {
-    s.returnedDate = today();
-  }
+  const f = statusDateField(value);
+  if (f && !s[f]) s[f] = (stamp === undefined ? today() : stamp);
   // Once it is approved it is ready to go out, unless a release already happened.
   if (value === 'approved' && (s.releaseState || 'not_ready') === 'not_ready') s.releaseState = 'ready';
   return from !== value;
@@ -11287,8 +11533,9 @@ async function setStatus(key, value) {
   const s = findSection(key);
   if (!s) return;
   if ((s.status || 'not_started') === value) return;
+  const stamp = await askStampDate(s, value);
   markPending(key);
-  applyStatus(s, value);
+  applyStatus(s, value, stamp);
   sortSections();
   renderJob();
   if (openKey === key) renderDrawer();
@@ -11455,7 +11702,7 @@ function renderDrawer() {
 
       ${(s.history && s.history.length) ? `<div class="sec"><h4>History</h4>${
         s.history.slice().reverse().map(h =>
-          `<div class="req-item"><span class="rl">${fmtDate(h.ts)}</span><span class="rt">${esc((ST[h.from] || {}).label || h.from)} → ${esc((ST[h.to] || {}).label || h.to)}</span></div>`
+          `<div class="req-item"><span class="rl">${fmtDate(h.ts)}</span><span class="rt">${esc((ST[h.from] || {}).label || h.from)} → ${esc((ST[h.to] || {}).label || h.to)}${byTag(h.by)}</span></div>`
         ).join('')}</div>` : ''}
 
       <div style="text-align:right">
@@ -11646,8 +11893,7 @@ async function saveLink(key, kind, docId) {
   if (existing) {
     Object.assign(existing, { name, url, note });
   } else {
-    s[kind].push({ id: uid('doc'), type: 'link', name, url, note, added: Date.now(),
-      rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' });
+    s[kind].push({ id: uid('doc'), type: 'link', name, url, note, added: Date.now() });
     if (kind === 'submittals' && (s.status || 'not_started') === 'not_started') s.status = 'waiting_vendor';
   }
   closePdf();
@@ -12009,6 +12255,7 @@ async function addFiles(key, kind, files) {
   // A status must be chosen for the upload — this is what tracks history.
   const status = await pickUploadStatus(kind);
   if (!status) return;
+  const stamp = await askStampDate(s, status);
   markPending(key);
   s[kind] = s[kind] || [];
   const priorIds = new Set(s[kind].map(d => d.id));   // the docs this upload supersedes
@@ -12018,10 +12265,7 @@ async function addFiles(key, kind, files) {
     try {
       stickyToast(`Saving ${f.name}…`);
       const { dir, file } = await putFile(f, status);
-      s[kind].push({
-        id: docId, name: f.name, size: f.size, status, uploaded: Date.now(), dir, file,
-        rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : ''
-      });
+      s[kind].push({ id: docId, name: f.name, size: f.size, status, uploaded: Date.now(), dir, file });
       added++;
     } catch (e) {
       console.error(e);
@@ -12030,7 +12274,7 @@ async function addFiles(key, kind, files) {
   }
   if (!added) return;
   await markPriorOld(s, kind, priorIds);   // the previous PDFs are now superseded → "OLD - …"
-  applyStatus(s, status);           // the section's status becomes the newest upload's
+  applyStatus(s, status, stamp);    // the section's status becomes the newest upload's
   sortSections(); renderJob();
   if (openKey === key) renderDrawer();
   try {
@@ -12059,8 +12303,7 @@ async function stageSectionPdfs(key, kind, pdfs) {
     try {
       stickyToast(`Uploading ${f.name}…`);
       const stagedId = await stageBlob(f, f.name);
-      s[kind].push({ id: uid('doc'), name: f.name, size: f.size, status, uploaded: Date.now(), staged: true, stagedId,
-        rev: kind === 'submittals' ? 'Rev ' + s[kind].filter(d => d.rev).length : '' });
+      s[kind].push({ id: uid('doc'), name: f.name, size: f.size, status, uploaded: Date.now(), staged: true, stagedId });
       added++;
     } catch (e) { console.error(e); toast('Upload failed: ' + (e.message || e), true); }
   }
@@ -12204,7 +12447,14 @@ async function deleteSection(key) {
   catch (e) { toast(writeError(e), true); }
 }
 // Division first, then Not Required last inside it, then section number.
+/* Our own work is Divisions 22 and 23. Anything else on the log — firestopping, louvres, the
+   electrical tie-in — is somebody else's section that we are tracking, so it sits underneath
+   ours rather than jumbled through it. */
+const OUR_DIVS = { '22': 1, '23': 2 };
+function divRank(d) { return OUR_DIVS[String(d)] || 9; }
 function sectionOrder(a, b) {
+  const dr = divRank(a.division) - divRank(b.division);
+  if (dr) return dr;
   if (a.division !== b.division) return String(a.division).localeCompare(String(b.division));
   const na = (a.status === 'na' ? 1 : 0) - (b.status === 'na' ? 1 : 0);
   if (na) return na;
@@ -12853,6 +13103,111 @@ function exportCsv() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 20000);
 }
+/* ── The submittal & procurement log, as Excel ──
+   Built on the log Arctic already keeps by hand: a title block, a navy SUBMITTAL band over the
+   spec columns and a PROCUREMENT band over the delivery ones, a two-deep header, Arial
+   throughout, and the sections that are no longer live greyed out. The chrome and every style
+   live in templates/submittal-log-template.xlsx, taken from that workbook, so the export IS the
+   format rather than an imitation of it — we only write the rows. */
+const SUB_LOG_URL = 'templates/submittal-log-template.xlsx';
+const XLOG = {
+  first: 10,                                            // the first data row, under the header
+  cols: ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R'],
+  // the style each column carries on a live row, and on one that has been closed out
+  live:   { A:1, B:1, C:72, D:72, E:1, F:17, G:33, H:1, I:1, J:1, K:19, L:20, M:1, N:1, O:1, P:1, Q:1, R:18 },
+  closed: { A:36, B:36, C:73, D:73, E:36, F:39, G:37, H:36, I:36, J:36, K:38, L:35, M:36, N:36, O:36, P:36, Q:36, R:37 },
+  rowStyle: { live: 16, closed: 22 },
+  ht: 41.25,
+  headMerges: 12,
+};
+/* the GC's word for where a submittal stands — the vocabulary on Arctic's own log */
+const XLOG_RETURNED = {
+  not_started: 'Not Started', waiting_vendor: 'Pending Submittal',
+  submitted_gc: 'Submitted', revision_sent: 'Submitted',
+  partial_approval: 'Approved as Noted', approved: 'Approved',
+  revise_resubmit: 'Revise/Resubmit', revision_requested: 'Revise/Resubmit',
+  na: 'Closed',
+};
+const XLOG_SENT = { submitted_gc: 1, revision_sent: 1, partial_approval: 1, approved: 1, revise_resubmit: 1, revision_requested: 1 };
+function xlogReleases(s) {
+  const rel = (s.releases || []);
+  const out = { released: '', expected: '', delivered: '' };
+  const dates = rel.filter(r => r.date).map(r => fmtShort(r.date));
+  if (dates.length) out.released = 'Released ' + dates.join(', ');
+  else if ((s.releaseState || '') === 'released' || (s.releaseState || '') === 'partial') out.released = 'Released';
+  const due = rel.filter(r => !r.delivered && r.expected).map(r => fmtWindow({ from: r.expected, to: r.expectedTo }));
+  if (due.length) out.expected = due.join('; ');
+  const got = rel.filter(r => r.delivered);
+  if (got.length) out.delivered = got.length === rel.length ? 'Delivered' : got.length + ' of ' + rel.length + ' delivered';
+  return out;
+}
+function xlogRow(s) {
+  const st = s.status || 'not_started';
+  const subs = (s.submittals || []).filter(d => !d.archived).length;
+  const rel = xlogReleases(s);
+  return {
+    A: s.key || '', B: s.title || '', C: s.description || '', D: '',
+    E: s.vendor || '', F: s.manufacturer || '', G: '',
+    H: (st === 'not_started' || st === 'na') ? '' : 'Yes',
+    I: (subs && st !== 'na') ? 'Yes' : '',
+    J: st === 'na' ? '' : (XLOG_SENT[st] ? 'Yes' : (subs ? 'No' : '')),
+    K: XLOG_RETURNED[st] || (ST[st] || {}).label || '',
+    L: '', M: leadLabel(s.leadWeeks) || '', N: rel.released, O: '',
+    P: rel.expected, Q: rel.delivered, R: '',
+  };
+}
+async function buildSubmittalLogXlsx(secs) {
+  {
+    const JZ = await ensureJSZip();
+    const res = await fetch(tplUrl(SUB_LOG_URL), { cache: 'force-cache' });
+    if (!res.ok) throw new Error('template ' + res.status);
+    const zip = await JZ.loadAsync(await res.arrayBuffer());
+    const f = 'xl/worksheets/sheet1.xml';
+    let xml = await zip.file(f).async('string');
+    const cell = (ref, sty, v) => (v === '' || v == null)
+      ? `<c r="${ref}" s="${sty}"/>`
+      : `<c r="${ref}" s="${sty}" t="inlineStr"><is><t xml:space="preserve">${xlEsc(String(v))}</t></is></c>`;
+    let rows = '', merges = '';
+    secs.forEach((s, i) => {
+      const r = XLOG.first + i;
+      const out = (s.status || '') === 'na';              // not required → greyed out, as on the hand-kept log
+      const sty = out ? XLOG.closed : XLOG.live;
+      const v = xlogRow(s);
+      let cells = '';
+      XLOG.cols.forEach(c => { cells += cell(c + r, sty[c], v[c]); });
+      rows += `<row r="${r}" spans="1:18" s="${out ? XLOG.rowStyle.closed : XLOG.rowStyle.live}" customFormat="1" ht="${XLOG.ht}" customHeight="1">${cells}</row>`;
+      merges += `<mergeCell ref="C${r}:D${r}"/>`;          // the description runs across C and D
+    });
+    const last = XLOG.first + secs.length - 1;
+    xml = xml.replace('</sheetData>', rows + '</sheetData>');
+    xml = xml.replace('</mergeCells>', merges + '</mergeCells>');
+    xml = xml.replace(/(<mergeCells count=")\d+(")/, (m, a, b) => a + (XLOG.headMerges + secs.length) + b);
+    xml = xml.replace(/(<dimension ref="A1:)[A-Z]+\d+(")/, (m, a, b) => a + 'R' + last + b);
+    xml = xlSetCell(xml, 'A1', { str: 'Arctic / ' + (job.name || '') + (job.number ? '  (Project #' + job.number + ')' : '') });
+    zip.file(f, xml);
+    return zip.generateAsync({ type: 'uint8array' });
+  }
+}
+async function exportSubmittalXlsx() {
+  if (!job) return;
+  const secs = visibleSections();
+  if (!secs.length) { toast('Nothing to export — clear the filters or add a section first', true); return; }
+  try {
+    stickyToast('Building the submittal log…');
+    const bytes = await buildSubmittalLogXlsx(secs);
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = jobFileBase() + '_submittal_log.xlsx'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+    const all = sectionsOf(job).length;
+    toast(secs.length < all
+      ? 'Submittal log created — ' + secs.length + ' of ' + all + ' sections, matching the filter you have set'
+      : 'Submittal log created — ' + secs.length + ' sections');
+  } catch (e) {
+    console.error(e);
+    toast('Could not build the log: ' + (e.message || e), true);
+  }
+}
 /* Pick PDF (branded register) or CSV (spreadsheet). */
 function openExportMenu() {
   if (!job) return;
@@ -12864,9 +13219,13 @@ function openExportMenu() {
           <b>📄 PDF register</b>
           <span>A clean, branded submittal register on Arctic letterhead — grouped by division, ready to send to a GC or PM.</span>
         </button>
+        <button class="choice-btn" onclick="closePdf();exportSubmittalXlsx()">
+          <b>▦ Excel submittal &amp; procurement log</b>
+          <span>The log Arctic keeps by hand — title block, SUBMITTAL and PROCUREMENT bands, lead times and delivery dates. Follows whatever filter you have set.</span>
+        </button>
         <button class="choice-btn" onclick="closePdf();exportCsv()">
           <b>⤓ CSV spreadsheet</b>
-          <span>The same register as a spreadsheet (Excel) they can sort and edit.</span>
+          <span>The same register as a plain spreadsheet they can sort and edit.</span>
         </button>
       </div>
     </div></div>`;
@@ -14129,6 +14488,7 @@ async function ensureFirebase() {
 
 async function boot() {
   go('jobs');
+  renderMeChip(); nudgeMeName();
   let ready = null;
   try {
     ready = await Promise.race([
