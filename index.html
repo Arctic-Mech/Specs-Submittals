@@ -1079,7 +1079,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.55';
+const APP_VERSION = 'v7.56';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3262,6 +3262,7 @@ function searchHay(s) {
   return [s.number, s.key, s.title, s.vendor, s.spec, s.description, s.manufacturer, s.package, s.notes,
     (s.tags || []).join(' '),
     (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
+    (s.history || []).map(h => h.text || '').join(' '),     // so you can find what you logged
     (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
   ].filter(Boolean).join(' ').toLowerCase();
 }
@@ -3284,7 +3285,9 @@ function latestResponseTs(s) {
    history with a timestamp; release-category changes stamp releaseChangedAt. */
 function sectionChangeTs(s) {
   let t = 0;
-  for (const h of (s.history || [])) if ((h.ts || 0) > t) t = h.ts;          // status changes
+  // a line you typed into the log shares this array but is not a status change, so it is skipped
+  // here; anything else is left counting exactly as it always did
+  for (const h of (s.history || [])) if (!h.text && (h.ts || 0) > t) t = h.ts;   // status changes
   if (s.releaseChangedAt && s.releaseChangedAt > t) t = s.releaseChangedAt;   // release-category changes
   for (const r of (s.releases || [])) if (r.date) {                          // fallback for pre-existing releases
     const ms = new Date(r.date + 'T00:00:00').getTime(); if (ms > t) t = ms;
@@ -11499,6 +11502,62 @@ async function openJobAt(jobId, catId, itemId) {
 }
 /* how a stamped name is shown beside a date */
 function byTag(by) { return by ? `<span class="by-tag">${esc(by)}</span>` : ''; }
+
+/* ── the history log ──
+   A section's story in one list: every status change the app records on its own, and alongside
+   them anything you write down — who you chased, what you are waiting on, who still needs to look
+   at it. Keeping both in the same list is the point; a status that sat at "Submitted to GC" for
+   three weeks means something different once the two chase-up lines between are there to read.
+
+   A line you wrote can be taken back off again. A status change cannot, because that is the record
+   of what actually happened, and an audit trail you can quietly edit is not one. */
+const fmtStamp = ts => ts ? fmtDate(ts) + ' · ' +
+  new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+function historyLog(s) {
+  const rows = (s.history || []).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (!rows.length) return `<div class="muted" style="font-size:13px">Nothing logged yet.
+    Status changes turn up here on their own — add anything else worth remembering.</div>`;
+  return rows.map(h => {
+    const meta = `<small class="muted">${fmtStamp(h.ts)}${h.by ? ' · ' + esc(h.by) : ''}</small>`;
+    if (h.text) return `
+      <div class="note-item">
+        <div class="nt">${esc(h.text)}</div>
+        <div class="nm">${meta}
+          <button class="x" title="Remove this entry" onclick="deleteHistoryNote('${s.key}','${h.id}')">✕</button></div>
+      </div>`;
+    // the colour of where it landed, so a long log can be skimmed for the moment it turned.
+    // The line is written out in one piece because .nt keeps its whitespace, so a tidy line
+    // break here would turn into a real one on screen.
+    const to = ST[h.to] || {};
+    return `
+      <div class="note-item">
+        <div class="nt">${esc((ST[h.from] || {}).label || h.from || '—')} → <b style="color:${cvar(to.color)}">${esc(to.label || h.to)}</b></div>
+        <div class="nm">${meta}</div>
+      </div>`;
+  }).join('');
+}
+async function addHistoryNote(key) {
+  const s = findSection(key); if (!s) return;
+  const el = $('histInput'); const text = (el && el.value || '').trim();
+  if (!text) return;
+  s.history = (s.history || []).concat([Object.assign(
+    { id: uid('log'), ts: Date.now(), text: autoCap(text) }, meName() ? { by: meName() } : {})]);
+  if (el) el.value = '';
+  renderDrawer();
+  const ne = $('histInput'); if (ne) ne.focus();   // you usually have a second thing to log
+  try { await patchSection(key, { history: s.history }); }
+  catch (e) { toast(writeError(e), true); }
+}
+async function deleteHistoryNote(key, id) {
+  const s = findSection(key); if (!s) return;
+  const h = (s.history || []).find(x => x.id === id);
+  if (!h || !h.text) return;                       // a status change is not yours to remove
+  if (!confirm('Remove this log entry?\n\n' + h.text)) return;
+  s.history = (s.history || []).filter(x => x.id !== id);
+  renderDrawer();
+  try { await patchSection(key, { history: s.history }); }
+  catch (e) { toast(writeError(e), true); }
+}
 /* who raised an action item and who ticked it — kept to a tooltip so the list stays a list */
 function acWho(i) {
   const bits = [];
@@ -11676,6 +11735,17 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
+        <h4>History</h4>
+        <div class="add-row">
+          <textarea class="input autosize" rows="1" id="histInput"
+            placeholder="Add to the log…  (Enter to add, Shift+Enter for a new line)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addHistoryNote('${s.key}')}"></textarea>
+          <button class="btn sm" onclick="addHistoryNote('${s.key}')">Add</button>
+        </div>
+        ${historyLog(s)}
+      </div>
+
+      <div class="sec">
         <h4>Notes</h4>
         <textarea class="input autosize" oninput="setField('${s.key}','notes',this.value)"
           placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea>
@@ -11736,11 +11806,6 @@ function renderDrawer() {
           ${s.titleSource ? ` · title from ${esc(s.titleSource)}` : ''}
         </div>
       </div>
-
-      ${(s.history && s.history.length) ? `<div class="sec"><h4>History</h4>${
-        s.history.slice().reverse().map(h =>
-          `<div class="req-item"><span class="rl">${fmtDate(h.ts)}</span><span class="rt">${esc((ST[h.from] || {}).label || h.from)} → ${esc((ST[h.to] || {}).label || h.to)}${byTag(h.by)}</span></div>`
-        ).join('')}</div>` : ''}
 
       <div style="text-align:right">
         <button class="btn danger sm" onclick="deleteSection('${s.key}')">Delete section</button>
