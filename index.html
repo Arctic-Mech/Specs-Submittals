@@ -243,7 +243,8 @@ header {
 .hw-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 11px 4px; }
 .hw-chip { border: none; border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 11px;
   font-weight: 700; cursor: pointer; }
-.hw-chip:hover { filter: brightness(1.08); text-decoration: underline; }
+.hw-chip:hover { filter: brightness(1.08); }
+.hw-chip.on { filter: brightness(1.06); }
 /* a submittal that needs you: what it is, where it stands, why it is here, and the last line written */
 .hw-sub { display: block; width: 100%; text-align: left; background: none; border: none;
   padding: 5px 11px 6px; font: inherit; color: var(--text); cursor: pointer; }
@@ -1112,7 +1113,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.59';
+const APP_VERSION = 'v7.60';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2894,7 +2895,7 @@ function watchSections(jobId) {
       migrateSpecData(jobId, job.sections);
       // a submittal opened from the home page: the section it names has only now arrived
       if (_pendingSection && job.sections.some(x => x.key === _pendingSection)) {
-        openKey = _pendingSection; _pendingSection = null;
+        openKey = _pendingSection; _pendingSection = null; navSync();
       }
       if (view === 'job') {
         renderJob();
@@ -3057,6 +3058,65 @@ function dismissCarryover() {
 /* ═══════════════════════════════════════════════════════════════════════════
    4. NAVIGATION
    ═══════════════════════════════════════════════════════════════════════════ */
+/* ── the Back button ──
+   The register is one page, so left alone the browser's Back leaves the site altogether: you open
+   a job, open a submittal, press Back and you are on whatever you were looking at before The
+   Dingus. Every step inward now leaves a mark in the browser's history and every step back out
+   takes one away, so Back walks out the way you came in — the drawer shuts, then the job, and only
+   from the job list does Back actually leave.
+
+   It counts levels rather than openings, because the drawers swap: opening an RFI while a section
+   is open closes the section, and that is sideways, not deeper. Asking how deep we are and making
+   the history match gets that right without every opener having to know what it replaced. */
+let _navDepth = 0;        // marks we have left in the browser's history
+let _navSkip = 0;         // ...of which this many are ours to take back, not the user pressing Back
+let _navPopping = false;  // the browser is already moving us, so do not ask it to move again
+function navLevel() {
+  if (view !== 'job') return 0;
+  return (openKey || openRfi || openCo || openContract || (openLedger && openLedger.id)) ? 2 : 1;
+}
+function navSync() {
+  if (_navPopping || typeof history === 'undefined') return;
+  const want = navLevel();
+  while (_navDepth < want) {
+    _navDepth++;
+    try { history.pushState({ __dingusNav: _navDepth }, ''); } catch (e) { _navDepth--; break; }
+  }
+  while (_navDepth > want) {
+    _navDepth--; _navSkip++;
+    try { history.back(); } catch (e) { _navSkip--; break; }
+  }
+}
+/* one step out, whatever is on top */
+function navBackOne() {
+  if (openKey) { closeDrawer(); renderTable(); }
+  else if (openRfi) closeRfiDrawer();
+  else if (openCo) closeCoDrawer();
+  else if (openContract) closeContractDrawer();
+  else if (openLedger && openLedger.id) closeLedgerDrawer();
+  else if (view === 'job') { go('jobs'); renderJobs(); }
+}
+function navPop(state) {
+  // the two full-screen overlays each listen for this themselves and close on it
+  if (_estHost || _wb) return;
+  if (_navSkip > 0) { _navSkip--; return; }            // we asked for this one while tidying up
+  // A dialog is up: Back dismisses it, the same as Escape does. The step it just consumed is put
+  // straight back, so the way out from underneath is still there.
+  if ($('modalHost').innerHTML) {
+    closePdf();
+    try { history.pushState({ __dingusNav: _navDepth }, ''); } catch (e) {}
+    return;
+  }
+  const want = (state && state.__dingusNav) || 0;
+  _navPopping = true;
+  try { for (let i = 0; i < 4 && navLevel() > want; i++) navBackOne(); }
+  finally { _navPopping = false; }
+  if (_navDepth > want) _navDepth = want;
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('popstate', ev => navPop(ev && ev.state));
+}
+
 function go(where, id) {
   view = where;
   $('view-jobs').hidden = where !== 'jobs';
@@ -3079,6 +3139,7 @@ function go(where, id) {
     $('crumbJob').textContent = ''; renderJobs();
   }
   else { renderJob(); }
+  navSync();
   window.scrollTo(0, 0);
 }
 
@@ -3670,8 +3731,8 @@ async function openStoredDoc(doc) {
   else { const a = document.createElement('a'); a.href = url; a.download = doc.name; a.click(); }
 }
 
-function closeRfiDrawer() { openRfi = null; $('drawerHost').innerHTML = ''; }
-function openRfiDrawer(id) { openRfi = id; openKey = null; renderRfiDrawer(); }
+function closeRfiDrawer() { openRfi = null; $('drawerHost').innerHTML = ''; navSync(); }
+function openRfiDrawer(id) { openRfi = id; openKey = null; renderRfiDrawer(); navSync(); }
 function rfiDocList(r, kind) {
   const docs = (r.docs || []).filter(d => d.kind === kind);
   if (!docs.length) return '';
@@ -4468,8 +4529,8 @@ function coEmailList(c) {
       <button class="icon-btn" title="Remove" onclick="removeCoEmail('${c.id}','${d.id}')">🗑</button>
     </div>`).join('') + `</div>`;
 }
-function closeCoDrawer() { openCo = null; $('drawerHost').innerHTML = ''; }
-function openCoDrawer(id) { openCo = id; openKey = null; renderCoDrawer(); }
+function closeCoDrawer() { openCo = null; $('drawerHost').innerHTML = ''; navSync(); }
+function openCoDrawer(id) { openCo = id; openKey = null; renderCoDrawer(); navSync(); }
 function renderCoDrawer() {
   const c = coById(openCo);
   if (!c) { closeCoDrawer(); return; }
@@ -10763,8 +10824,8 @@ function contractRowHtml(c) {
     <td data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
   </tr>`;
 }
-function closeContractDrawer() { openContract = null; $('drawerHost').innerHTML = ''; }
-function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; renderContractDrawer(); }
+function closeContractDrawer() { openContract = null; $('drawerHost').innerHTML = ''; navSync(); }
+function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; renderContractDrawer(); navSync(); }
 function patchContract(id, fields) {
   const c = contractById(id); if (!c) return;
   Object.assign(c, fields);
@@ -11009,8 +11070,8 @@ function ledgerRowHtml(lk, it) {
     <td data-label="Status"><span class="pill" style="color:${cvar(st.color)};background:${csf(st.color)}"><i></i>${esc(st.label)}</span></td>
   </tr>`;
 }
-function closeLedgerDrawer() { openLedger = { key: null, id: null }; $('drawerHost').innerHTML = ''; }
-function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; renderLedgerDrawer(); }
+function closeLedgerDrawer() { openLedger = { key: null, id: null }; $('drawerHost').innerHTML = ''; navSync(); }
+function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; renderLedgerDrawer(); navSync(); }
 function patchLedger(lk, id, fields) {
   const it = ledgerById(lk, id); if (!it) return;
   Object.assign(it, fields);
@@ -11512,7 +11573,8 @@ async function loadHomeWork(force) {
         const last = newestBy((s.history || []).filter(h => h.text), x => x.ts);
         subs.push(Object.assign({}, who, { key: s.key, number: s.number || s.key, title: s.title || '',
           status: s.status || 'not_started', last: last ? last.text : '',
-          quiet: Math.max(last ? last.ts : 0, sectionChangeTs(s)) }));
+          moved: sectionChangeTs(s),                                       // when the status last moved
+          quiet: Math.max(last ? last.ts : 0, sectionChangeTs(s)) }));      // when anything last happened
       });
     }
     out.sort((a, b) => {
@@ -11561,17 +11623,47 @@ function renderHomeWork() {
   byJob.sort((a2, b2) => b2.needs.length - a2.needs.length || b2.od - a2.od || b2.n - a2.n ||
     String(a2.number || a2.name).localeCompare(String(b2.number || b2.name)));
   const esq = v => String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  /* one submittal, wherever it is being listed — in the short list that needs you, or under a
+     status you have opened. `need` is the reason it is in the short list, and there is none when
+     it is simply one of the twenty sitting with the GC. */
+  const subRow = (j, w, need) => {
+    const st = ST[w.status] || {};
+    return `<button class="hw-sub" onclick="openJobSection('${esq(w.jobId)}','${esq(w.key)}')" title="${esc(w.number + ' ' + w.title)}${w.last ? ' — ' + esc(w.last) : ''}">
+      <span class="hw-sline"><span class="hw-snum">${esc(w.number)}</span>
+        <span class="hw-text">${esc(w.title)}</span>
+        <span class="hw-st" style="color:${cvar(st.color)};background:${csf(st.color)}">${esc(st.short || w.status)}</span>
+        ${need && need.why ? `<span class="hw-quiet">${esc(need.why)}</span>` : ''}</span>
+      ${w.last ? `<span class="hw-slast">${esc(w.last)}</span>` : ''}
+    </button>`;
+  };
   const cards = byJob.map(j => {
-    // every submittal still out is accounted for by a chip, so nothing is hidden — the chip opens
-    // the job's register filtered to that status
+    // Every submittal still out is accounted for by a chip, and a chip opens that status right here
+    // rather than sending you into the job: you are on the home page to find out where things
+    // stand, not to go somewhere.
     const counts = {};
     j.subs.forEach(w => { counts[w.status] = (counts[w.status] || 0) + 1; });
-    const chips = STATUSES.filter(o => counts[o.id]).map(o =>
-      `<button class="hw-chip" style="color:${cvar(o.color)};background:${csf(o.color)}"
-        onclick="openJobStatus('${esq(j.id)}','${o.id}')" title="${esc(o.label)} — open the register on these">${esc(o.short)} ${counts[o.id]}</button>`).join('');
+    const chips = STATUSES.filter(o => counts[o.id]).map(o => {
+      const on = !!_homeOpen[j.id + '|' + o.id];
+      return `<button class="hw-chip${on ? ' on' : ''}" style="color:${cvar(o.color)};background:${csf(o.color)}${on ? ';box-shadow:inset 0 0 0 1.5px ' + cvar(o.color) : ''}"
+        onclick="toggleHomeGroup('${esq(j.id)}','${esq(o.id)}')" title="${esc(o.label)} — ${on ? 'hide these' : 'show these'}">${esc(o.short)} ${counts[o.id]} ${on ? '▴' : '▾'}</button>`; }).join('');
+    // whichever statuses you have opened, listed in full underneath
+    const opened = STATUSES.filter(o => counts[o.id] && _homeOpen[j.id + '|' + o.id]).map(o => {
+      const rows = j.subs.filter(w => w.status === o.id)
+        .sort((a2, b2) => (a2.quiet || 0) - (b2.quiet || 0) || String(a2.number).localeCompare(String(b2.number)));
+      return `<div class="hw-cat2">${esc(o.label)} · ${rows.length}</div>` + rows.map(w => subRow(j, w, null)).join('');
+    }).join('');
     // handed back first, then gone quiet, then never started; oldest first inside each
-    const needs = j.needs.slice().sort((a2, b2) => a2.need.rank - b2.need.rank || (a2.quiet || 0) - (b2.quiet || 0));
-    const shown = needs.slice(0, HOME_NEEDS_MAX), more = needs.length - shown.length;
+    // One the GC has handed back is ordered by how long ago it was handed back, not by when anyone
+    // last wrote about it — otherwise noting "need to get Dan in a room about this" would push it
+    // to the back of its own queue and out of sight, which is the opposite of what writing it down
+    // was for. For the same reason the cap never cuts one: those are the ones genuinely on you.
+    const rank1 = j.needs.filter(w => w.need.rank === 1).sort((a2, b2) => (a2.moved || 0) - (b2.moved || 0));
+    const rest = j.needs.filter(w => w.need.rank !== 1)
+      .sort((a2, b2) => a2.need.rank - b2.need.rank || (a2.quiet || 0) - (b2.quiet || 0));
+    const needs = rank1.concat(rest);
+    const allOut = !!_homeOpen[j.id + '|*'];
+    const shown = allOut ? needs : rank1.concat(rest.slice(0, Math.max(0, HOME_NEEDS_MAX - rank1.length)));
+    const more = needs.length - shown.length;
     return `<div class="hw-card">
     <button class="hw-jobhead" onclick="openJobAt('${esq(j.id)}')">
       <b>${esc(j.number || j.name)}</b>
@@ -11579,17 +11671,11 @@ function renderHomeWork() {
       <span class="hw-n${needs.length ? ' bad' : ''}">${needs.length ? needs.length + ' need you' : 'all moving'}</span>
     </button>
     ${chips ? `<div class="hw-chips">${chips}</div>` : ''}
-    ${shown.length ? shown.map(w => {
-      const st = ST[w.status] || {};
-      return `<button class="hw-sub" onclick="openJobSection('${esq(w.jobId)}','${esq(w.key)}')" title="${esc(w.number + ' ' + w.title)}${w.last ? ' — ' + esc(w.last) : ''}">
-        <span class="hw-sline"><span class="hw-snum">${esc(w.number)}</span>
-          <span class="hw-text">${esc(w.title)}</span>
-          <span class="hw-st" style="color:${cvar(st.color)};background:${csf(st.color)}">${esc(st.short || w.status)}</span>
-          ${w.need.why ? `<span class="hw-quiet">${esc(w.need.why)}</span>` : ''}</span>
-        ${w.last ? `<span class="hw-slast">${esc(w.last)}</span>` : ''}
-      </button>`; }).join('') +
-      (more ? `<button class="hw-more" onclick="openJobStatus('${esq(j.id)}','')">+${more} more to chase →</button>` : '')
+    ${shown.length ? shown.map(w => subRow(j, w, w.need)).join('') +
+      (more ? `<button class="hw-more" onclick="toggleHomeGroup('${esq(j.id)}','*')">+${more} more to chase ▾</button>`
+            : (allOut && needs.length > HOME_NEEDS_MAX ? `<button class="hw-more" onclick="toggleHomeGroup('${esq(j.id)}','*')">Show fewer ▴</button>` : ''))
       : (j.subs.length ? `<div class="hw-ok">Nothing stuck — everything still out is moving.</div>` : '')}
+    ${opened}
     ${j.cats.map(c => `<div class="hw-cat2">${esc(c.name)}</div>` +
       c.items.map(w => `<button class="hw-it" onclick="openJobAt('${esq(j.id)}','${esq(c.id)}','${esq(w.id)}')" title="${esc(w.text)}">
         <span class="hw-text">${esc(w.text)}</span>
@@ -11607,15 +11693,13 @@ async function openJobAt(jobId, catId, itemId) {
   if (catId) { trackCat = catId; trackItem = itemId || null; }
   renderJob();
 }
-/* Straight to the job's register, showing only the submittals at one status — what a count on the
-   home page means when you click it. An empty status opens the register on everything. */
-async function openJobStatus(jobId, status) {
-  await openJob(jobId);
-  jobTab = 'submittals';
-  statusFilter = status || null;
-  // the division tabs would otherwise land on Div 22 and hide half of what you asked to see
-  divFilter = 'all'; divPicked = true;
-  renderJob();
+/* Which status groups you have opened on the home page, keyed by job. '*' is the rest of the
+   short list. It lives only for as long as the page is up — it is a way of looking, not a setting. */
+let _homeOpen = {};
+function toggleHomeGroup(jobId, key) {
+  const k = jobId + '|' + key;
+  if (_homeOpen[k]) delete _homeOpen[k]; else _homeOpen[k] = true;
+  renderHomeWork();
 }
 /* Straight to the submittal you clicked. The sections only arrive after the job opens, so the one
    you asked for is remembered and the drawer opens on it as soon as it turns up. */
@@ -11624,7 +11708,7 @@ async function openJobSection(jobId, key) {
   _pendingSection = key;
   await openJob(jobId);
   jobTab = 'submittals';
-  if (findSection(key)) { openKey = key; _pendingSection = null; }
+  if (findSection(key)) { openKey = key; _pendingSection = null; navSync(); }
   renderJob();
   if (openKey === key) renderDrawer();
 }
@@ -11837,8 +11921,8 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; histEdit = null; renderDrawer(); renderTable(); }
-function closeDrawer() { openKey = null; histEdit = null; $('drawerHost').innerHTML = ''; }
+function openSection(key) { openKey = key; histEdit = null; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
