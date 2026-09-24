@@ -398,6 +398,10 @@ label.tick-row { display: flex; align-items: center; gap: 8px; margin-top: 13px;
   background: var(--amber-sf); border-left: 3px solid var(--amber); border-radius: 4px; padding: 4px 8px;
 }
 .pin-note { max-width: 60ch; }
+/* the latest line, once it has been ticked off: still worth seeing, no longer worth chasing */
+.rfi-note.is-done, .pin-note.is-done {
+  background: transparent; border-left-color: var(--border-2); color: var(--text-3); text-decoration: line-through;
+}
 /* A box that grows to fit what's in it — you should never have to scroll a field to read it. */
 textarea.autosize { overflow: hidden; resize: none; }
 textarea.autosize[rows="1"] { min-height: 0; }
@@ -1079,7 +1083,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.56';
+const APP_VERSION = 'v7.57';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3510,8 +3514,9 @@ function renderRfis() {
 function rfiRowHtml(r) {
   const st = rsOf(r);
   const openAc = (r.checklist || []).filter(i => !i.done).length;
-  const docNote = openAc ? `<small>☐ ${openAc} action item${openAc === 1 ? '' : 's'}</small>` : '';
-  const noteLine = (r.showNote && r.notes) ? `<div class="rfi-note">📌 ${esc(r.notes)}</div>` : '';
+  // its own line: it used to run straight into the end of the subject
+  const docNote = openAc ? `<div class="sub">☐ ${openAc} open</div>` : '';
+  const noteLine = pinnedLine('rfi-note', newestBy(r.checklist, x => x.created));
   const dates = [];
   if (r.dateSent) dates.push('Sent ' + fmtShort(r.dateSent));
   if (r.dateDue) dates.push('Due ' + fmtShort(r.dateDue));
@@ -3528,7 +3533,7 @@ function newRfi() {
   if (!job) return;
   const r = { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: '',
     status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', questionText: '', answerText: '',
-    notes: '', showNote: false, docs: [], checklist: [],
+    notes: '', docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
   rfis.unshift(r);
   openRfi = r.id;
@@ -3710,22 +3715,21 @@ function renderRfiDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Action items ${acCountLabel(r.checklist)}</h4>
+        <h4>History ${acCountLabel(r.checklist)}</h4>
         <div class="add-row">
-          <input class="input" id="rfiCheckInput" placeholder="Add an action item (e.g. cost impact, schedule impact)…"
+          <input class="input" id="rfiCheckInput" placeholder="What happened — chased the GC, cost impact to price up…"
             onkeydown="if(event.key==='Enter')acAdd('rfi','${r.id}','rfiCheckInput')">
           <button class="btn sm" onclick="acAdd('rfi','${r.id}','rfiCheckInput')">Add</button>
         </div>
         ${checklistHtml('rfi', r.id, r.checklist)}
-        <div class="muted" style="margin-top:6px">Click an item to add details — cost, schedule impact, who owns it.</div>
+        <div class="muted" style="margin-top:6px">The newest line shows on the RFI log. Tick one off when it is
+          dealt with; click it to add details — cost, schedule impact, who owns it.</div>
       </div>
 
       <div class="sec">
         <h4>Notes</h4>
         <textarea class="input autosize" rows="4" placeholder="Anything worth remembering about this RFI"
           onchange="patchRfi('${r.id}',{notes:this.value})">${esc(r.notes || '')}</textarea>
-        <label class="note-show"><input type="checkbox" ${r.showNote ? 'checked' : ''}
-          onchange="patchRfi('${r.id}',{showNote:this.checked})"> Show this note on the RFI log</label>
       </div>
     </div>
   </aside>`;
@@ -4086,7 +4090,9 @@ function checklistHtml(type, id, list) {
         ${i.detail ? '<span class="ac-has" title="Has details">📝</span>' : ''}
       </button>
       <button class="x" title="Remove" onclick="acDelete('${type}','${id}','${i.id}')">✕</button>
-    </div>`).join('') || '<div class="muted">No action items yet.</div>';
+    </div>`).join('') ||
+    // an RFI keeps this list as its history; everywhere else it is still a list of things to do
+    `<div class="muted">${type === 'rfi' ? 'Nothing logged yet.' : 'No action items yet.'}</div>`;
 }
 function acAdd(type, id, inputId) {
   const o = acOwner(type, id); if (!o) return;
@@ -11296,7 +11302,9 @@ function secRowHtml(s) {
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
   const specEmpty = !editing && !mfrVal, vendorEmpty = !editing && !s.vendor;
-  const noteLine = (s.showNote && s.notes) ? `<div class="pin-note">📌 ${esc(s.notes)}</div>` : '';
+  // a status change is already spelled out by the dropdown two columns over, so the row carries
+  // the last thing somebody typed rather than the last thing that happened
+  const noteLine = pinnedLine('pin-note', newestBy((s.history || []).filter(h => h.text), x => x.ts));
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
       <td class="c-num">${esc(s.number)}</td>
       <td class="c-title">
@@ -11503,6 +11511,24 @@ async function openJobAt(jobId, catId, itemId) {
 /* how a stamped name is shown beside a date */
 function byTag(by) { return by ? `<span class="by-tag">${esc(by)}</span>` : ''; }
 
+/* ── the latest line, carried on the row ──
+   A pinned note had to be written once and then remembered forever: you set it in March, the job
+   moved on, and by June the row was telling you something that stopped being true weeks ago. The
+   row now carries the last thing anyone actually wrote in the log, which is the thing you would
+   have pinned anyway — except it keeps up on its own.
+
+   A line that has been ticked off still shows, struck through: knowing the last thing that happened
+   was dealt with is worth as much as knowing it is outstanding. */
+function newestBy(list, stamp) {
+  let best = null;
+  for (const x of (list || [])) if (!best || (stamp(x) || 0) >= (stamp(best) || 0)) best = x;
+  return best;
+}
+function pinnedLine(cls, item) {
+  if (!item || !item.text) return '';
+  return `<div class="${cls}${item.done ? ' is-done' : ''}">${item.done ? '✓' : '📌'} ${esc(item.text)}</div>`;
+}
+
 /* ── the history log ──
    A section's story in one list: every status change the app records on its own, and alongside
    them anything you write down — who you chased, what you are waiting on, who still needs to look
@@ -11544,6 +11570,7 @@ async function addHistoryNote(key) {
     { id: uid('log'), ts: Date.now(), text: autoCap(text) }, meName() ? { by: meName() } : {})]);
   if (el) el.value = '';
   renderDrawer();
+  renderTable();                                   // the newest line is carried on the register row
   const ne = $('histInput'); if (ne) ne.focus();   // you usually have a second thing to log
   try { await patchSection(key, { history: s.history }); }
   catch (e) { toast(writeError(e), true); }
@@ -11555,6 +11582,7 @@ async function deleteHistoryNote(key, id) {
   if (!confirm('Remove this log entry?\n\n' + h.text)) return;
   s.history = (s.history || []).filter(x => x.id !== id);
   renderDrawer();
+  renderTable();                                   // taking the newest line off changes the row too
   try { await patchSection(key, { history: s.history }); }
   catch (e) { toast(writeError(e), true); }
 }
@@ -11743,14 +11771,13 @@ function renderDrawer() {
           <button class="btn sm" onclick="addHistoryNote('${s.key}')">Add</button>
         </div>
         ${historyLog(s)}
+        <div class="muted" style="margin-top:8px">The newest line you write shows on the register row.</div>
       </div>
 
       <div class="sec">
         <h4>Notes</h4>
         <textarea class="input autosize" oninput="setField('${s.key}','notes',this.value)"
           placeholder="Anything worth remembering — RFI numbers, why it was rejected, who to chase…">${esc(s.notes || '')}</textarea>
-        <label class="note-show"><input type="checkbox" ${s.showNote ? 'checked' : ''}
-          onchange="setField('${s.key}','showNote',this.checked)"> Pin this note on the register row</label>
       </div>
 
       <div class="sec">
