@@ -218,7 +218,9 @@ header {
 .hw-head b { font-size: 13.5px; }
 .hw-head .muted { font-size: 12px; }
 .hw-empty { padding: 13px 14px; font-size: 12.5px; }
-.hw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); }
+/* auto-FIT, not auto-fill: with one starred job an auto-fill grid keeps five empty columns and
+   squeezes the only card into a sixth of the width. */
+.hw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
 .hw-card { padding: 0 0 7px; min-width: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .hw-jobhead { display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left; background: var(--surface-2);
   border: none; padding: 7px 11px; font: inherit; cursor: pointer; border-bottom: 1px solid var(--border); }
@@ -230,23 +232,36 @@ header {
 .hw-cat2 { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); padding: 8px 11px 3px; }
 .hw-it { display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; background: none;
-  border: none; padding: 3px 11px; font: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; line-height: 1.35; }
+  border: none; padding: 4px 11px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; line-height: 1.4; }
 .hw-it:hover { background: var(--surface-2); }
 .hw-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hw-it .ac-due { flex: none; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px;
   background: var(--surface-2); color: var(--text-3); }
 .hw-it .ac-due.today { color: var(--amber); background: var(--amber-sf); }
 .hw-it .ac-due.overdue { color: var(--red); background: var(--red-sf); }
-/* a submittal still in flight: what it is, where it stands, and the last thing written about it */
+/* the whole not-approved pile, one chip per status — the count you click to go and see them */
+.hw-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 11px 4px; }
+.hw-chip { border: none; border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 11px;
+  font-weight: 700; cursor: pointer; }
+.hw-chip:hover { filter: brightness(1.08); text-decoration: underline; }
+/* a submittal that needs you: what it is, where it stands, why it is here, and the last line written */
 .hw-sub { display: block; width: 100%; text-align: left; background: none; border: none;
-  padding: 3px 11px 4px; font: inherit; color: var(--text); cursor: pointer; }
+  padding: 5px 11px 6px; font: inherit; color: var(--text); cursor: pointer; }
 .hw-sub:hover { background: var(--surface-2); }
-.hw-sline { display: flex; align-items: center; gap: 6px; font-size: 12.5px; line-height: 1.35; }
-.hw-snum { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-3); }
-.hw-st { flex: none; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
-.hw-slast { display: block; font-size: 11.5px; color: var(--text-3); line-height: 1.3; margin-top: 1px;
+/* Number, title and status read as one line and stay together: at full width a status flushed to
+   the right edge ends up an inch from the title it belongs to. Only the age is pushed right. */
+.hw-sline { display: flex; align-items: center; gap: 7px; font-size: 13.5px; line-height: 1.4; }
+.hw-snum { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text-3); }
+.hw-sline .hw-text { flex: 0 1 auto; }
+.hw-st { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+.hw-quiet { flex: none; margin-left: auto; padding-left: 10px; font-size: 11px; font-weight: 600; color: var(--red); }
+.hw-slast { display: block; font-size: 12.5px; color: var(--text-2); line-height: 1.35; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hw-slast::before { content: '📌 '; }
+.hw-more { display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: 5px 11px 7px; font: inherit; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; }
+.hw-more:hover { text-decoration: underline; }
+.hw-ok { padding: 7px 11px 9px; font-size: 12.5px; color: var(--text-3); }
 .job-star {
   position: absolute; top: 9px; right: 34px; width: 24px; height: 24px; border-radius: 5px;
   border: none; background: transparent; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; opacity: .35;
@@ -1097,7 +1112,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.58';
+const APP_VERSION = 'v7.59';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11447,8 +11462,24 @@ function jobsInOrder() {
    The register only streams one job at a time, so this reads the tracking lists for your starred
    jobs in one go and puts everything still outstanding on the home screen, worst deadline first.
    It is a snapshot, not a live feed — it says when it was taken and refreshes on demand. */
-/* Approved is finished and Not Required was never ours, so neither is still to chase. */
-const HOME_SETTLED = { approved: 1, na: 1 };
+/* ── what actually needs you ──
+   A live job has forty-odd submittals that are not approved at any moment, and listing all of them
+   says nothing: most are sitting with the GC exactly as they should be. What is worth putting in
+   front of you is the short list you would work through today — the ones the GC has handed back,
+   the ones nobody has started, and the ones that have gone quiet long enough that somebody has
+   probably forgotten about them. The rest are one click away behind their status. */
+const HOME_SETTLED = { approved: 1, na: 1 };      // approved is finished; not required was never ours
+const HOME_BOUNCED = { revise_resubmit: 1, revision_requested: 1 };
+const HOME_QUIET_DAYS = 14;                       // a fortnight with nothing logged and no status move
+const HOME_NEEDS_MAX = 8;                         // beyond this the panel stops being a summary
+function homeNeeds(w, now) {
+  if (HOME_BOUNCED[w.status]) return { rank: 1, why: '' };            // the status already says it
+  const days = w.quiet ? Math.floor((now - w.quiet) / 86400000) : null;
+  if (days === null) return { rank: 2, why: 'nothing logged' };
+  if (days >= HOME_QUIET_DAYS) return { rank: 2, why: days + ' days quiet' };
+  if (w.status === 'not_started') return { rank: 3, why: '' };
+  return null;
+}
 let _homeWork = null, _homeWorkAt = 0, _homeWorkBusy = false;
 const HOME_WORK_MAX = 12;
 async function loadHomeWork(force) {
@@ -11525,37 +11556,65 @@ function renderHomeWork() {
     c.items.push(w);
     j.n++; if (w.due && w.due < today()) j.od++;
   });
-  byJob.sort((a2, b2) => b2.od - a2.od || b2.n - a2.n || b2.subs.length - a2.subs.length ||
+  const now = Date.now();
+  byJob.forEach(j => { j.needs = j.subs.map(w => Object.assign({}, w, { need: homeNeeds(w, now) })).filter(w => w.need); });
+  byJob.sort((a2, b2) => b2.needs.length - a2.needs.length || b2.od - a2.od || b2.n - a2.n ||
     String(a2.number || a2.name).localeCompare(String(b2.number || b2.name)));
   const esq = v => String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const cards = byJob.map(j => `<div class="hw-card">
+  const cards = byJob.map(j => {
+    // every submittal still out is accounted for by a chip, so nothing is hidden — the chip opens
+    // the job's register filtered to that status
+    const counts = {};
+    j.subs.forEach(w => { counts[w.status] = (counts[w.status] || 0) + 1; });
+    const chips = STATUSES.filter(o => counts[o.id]).map(o =>
+      `<button class="hw-chip" style="color:${cvar(o.color)};background:${csf(o.color)}"
+        onclick="openJobStatus('${esq(j.id)}','${o.id}')" title="${esc(o.label)} — open the register on these">${esc(o.short)} ${counts[o.id]}</button>`).join('');
+    // handed back first, then gone quiet, then never started; oldest first inside each
+    const needs = j.needs.slice().sort((a2, b2) => a2.need.rank - b2.need.rank || (a2.quiet || 0) - (b2.quiet || 0));
+    const shown = needs.slice(0, HOME_NEEDS_MAX), more = needs.length - shown.length;
+    return `<div class="hw-card">
     <button class="hw-jobhead" onclick="openJobAt('${esq(j.id)}')">
       <b>${esc(j.number || j.name)}</b>
       <span class="hw-jobname">${esc(j.number ? j.name : '')}</span>
-      <span class="hw-n${j.od ? ' bad' : ''}">${j.od ? j.od + ' late · ' : ''}${j.subs.length ? j.subs.length + ' out' : ''}${j.subs.length && j.n ? ' · ' : ''}${j.n || ''}</span>
+      <span class="hw-n${needs.length ? ' bad' : ''}">${needs.length ? needs.length + ' need you' : 'all moving'}</span>
     </button>
-    ${j.subs.length ? `<div class="hw-cat2">Submittals out</div>` + j.subs.map(w => {
+    ${chips ? `<div class="hw-chips">${chips}</div>` : ''}
+    ${shown.length ? shown.map(w => {
       const st = ST[w.status] || {};
       return `<button class="hw-sub" onclick="openJobSection('${esq(w.jobId)}','${esq(w.key)}')" title="${esc(w.number + ' ' + w.title)}${w.last ? ' — ' + esc(w.last) : ''}">
         <span class="hw-sline"><span class="hw-snum">${esc(w.number)}</span>
           <span class="hw-text">${esc(w.title)}</span>
-          <span class="hw-st" style="color:${cvar(st.color)};background:${csf(st.color)}">${esc(st.short || w.status)}</span></span>
+          <span class="hw-st" style="color:${cvar(st.color)};background:${csf(st.color)}">${esc(st.short || w.status)}</span>
+          ${w.need.why ? `<span class="hw-quiet">${esc(w.need.why)}</span>` : ''}</span>
         ${w.last ? `<span class="hw-slast">${esc(w.last)}</span>` : ''}
-      </button>`; }).join('') : ''}
+      </button>`; }).join('') +
+      (more ? `<button class="hw-more" onclick="openJobStatus('${esq(j.id)}','')">+${more} more to chase →</button>` : '')
+      : (j.subs.length ? `<div class="hw-ok">Nothing stuck — everything still out is moving.</div>` : '')}
     ${j.cats.map(c => `<div class="hw-cat2">${esc(c.name)}</div>` +
       c.items.map(w => `<button class="hw-it" onclick="openJobAt('${esq(j.id)}','${esq(c.id)}','${esq(w.id)}')" title="${esc(w.text)}">
         <span class="hw-text">${esc(w.text)}</span>
         ${w.due ? `<span class="ac-due ${acDueClass(w.due)}">${fmtShort(w.due)}</span>` : ''}
       </button>`).join('')).join('')}
-  </div>`).join('');
+  </div>`; }).join('');
+  const needTotal = byJob.reduce((n, j) => n + j.needs.length, 0);
   head(`<div class="hw-grid">${cards}</div>`,
-    ` · ${flight.length} submittal${flight.length === 1 ? '' : 's'} out · ${work.length} action item${work.length === 1 ? '' : 's'}${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
+    ` · ${needTotal} submittal${needTotal === 1 ? '' : 's'} need you of ${flight.length} out · ${work.length} action item${work.length === 1 ? '' : 's'}${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
 }
 /* straight to the action item you clicked, in its own job */
 async function openJobAt(jobId, catId, itemId) {
   await openJob(jobId);
   jobTab = 'tracking';
   if (catId) { trackCat = catId; trackItem = itemId || null; }
+  renderJob();
+}
+/* Straight to the job's register, showing only the submittals at one status — what a count on the
+   home page means when you click it. An empty status opens the register on everything. */
+async function openJobStatus(jobId, status) {
+  await openJob(jobId);
+  jobTab = 'submittals';
+  statusFilter = status || null;
+  // the division tabs would otherwise land on Div 22 and hide half of what you asked to see
+  divFilter = 'all'; divPicked = true;
   renderJob();
 }
 /* Straight to the submittal you clicked. The sections only arrive after the job opens, so the one
