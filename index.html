@@ -237,6 +237,16 @@ header {
   background: var(--surface-2); color: var(--text-3); }
 .hw-it .ac-due.today { color: var(--amber); background: var(--amber-sf); }
 .hw-it .ac-due.overdue { color: var(--red); background: var(--red-sf); }
+/* a submittal still in flight: what it is, where it stands, and the last thing written about it */
+.hw-sub { display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: 3px 11px 4px; font: inherit; color: var(--text); cursor: pointer; }
+.hw-sub:hover { background: var(--surface-2); }
+.hw-sline { display: flex; align-items: center; gap: 6px; font-size: 12.5px; line-height: 1.35; }
+.hw-snum { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-3); }
+.hw-st { flex: none; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.hw-slast { display: block; font-size: 11.5px; color: var(--text-3); line-height: 1.3; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hw-slast::before { content: '📌 '; }
 .job-star {
   position: absolute; top: 9px; right: 34px; width: 24px; height: 24px; border-radius: 5px;
   border: none; background: transparent; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; opacity: .35;
@@ -410,6 +420,10 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
 .note-item .nm button { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; }
+/* Save and Cancel under a log line being rewritten. They sit outside .nm because the rule above
+   strips a button in there back to plain text, which is right for a ✎ and wrong for these two. */
+.hist-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 7px; }
+.hist-foot small { font-size: 11px; color: var(--text-3); }
 .email-drop {
   border: 1.5px dashed var(--border-2); border-radius: 8px; padding: 11px 14px; text-align: center;
   color: var(--text-3); font-size: 12.5px; cursor: pointer; margin-top: 10px;
@@ -1083,7 +1097,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.57';
+const APP_VERSION = 'v7.58';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2863,6 +2877,10 @@ function watchSections(jobId) {
         }
       }
       migrateSpecData(jobId, job.sections);
+      // a submittal opened from the home page: the section it names has only now arrived
+      if (_pendingSection && job.sections.some(x => x.key === _pendingSection)) {
+        openKey = _pendingSection; _pendingSection = null;
+      }
       if (view === 'job') {
         renderJob();
         // Re-rendering while someone is typing in the drawer would eat the caret.
@@ -4143,11 +4161,12 @@ function renderActionModal() {
   if (!it) { closeActionModal(); return; }
   const ownerLabel = m.type === 'rfi' ? ('RFI ' + (o.number || '')) : (o.name || '');
   const args = `'${m.type}','${m.id}','${m.itemId}'`;
+  const what = m.type === 'rfi' ? 'History entry' : 'Action item';   // on an RFI this list is the history
   $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closeActionModal()"><div class="modal">
-    <div class="modal-head"><h3>Action item</h3><button class="icon-btn" onclick="closeActionModal()">✕</button></div>
+    <div class="modal-head"><h3>${what}</h3><button class="icon-btn" onclick="closeActionModal()">✕</button></div>
     <div class="modal-body">
       <div class="muted" style="margin-bottom:12px">${esc(ownerLabel)}</div>
-      <div class="field"><label class="fl">Action item</label>
+      <div class="field"><label class="fl">${what}</label>
         <input class="input" value="${esc(it.text)}" onchange="acPatch(${args},{text:this.value.trim()})"></div>
       <div class="grid2">
         <div class="field"><label class="fl">Due date</label>
@@ -11428,6 +11447,8 @@ function jobsInOrder() {
    The register only streams one job at a time, so this reads the tracking lists for your starred
    jobs in one go and puts everything still outstanding on the home screen, worst deadline first.
    It is a snapshot, not a live feed — it says when it was taken and refreshes on demand. */
+/* Approved is finished and Not Required was never ours, so neither is still to chase. */
+const HOME_SETTLED = { approved: 1, na: 1 };
 let _homeWork = null, _homeWorkAt = 0, _homeWorkBusy = false;
 const HOME_WORK_MAX = 12;
 async function loadHomeWork(force) {
@@ -11437,25 +11458,39 @@ async function loadHomeWork(force) {
   const list = (favs.length ? favs : jobs).slice(0, HOME_WORK_MAX);
   if (!list.length) { _homeWork = []; _homeWorkAt = Date.now(); renderHomeWork(); return; }
   _homeWorkBusy = true; renderHomeWork();
-  const out = [];
+  const out = [], subs = [];
   try {
     for (const j of list) {
+      const who = { jobId: j.id, jobName: j.name || '', jobNumber: j.number || '' };
       let snap = null;
-      try { snap = await FB.getDocs(trackingCol(j.id)); } catch (e) { continue; }
-      snap.forEach(d => {
+      try { snap = await FB.getDocs(trackingCol(j.id)); } catch (e) { snap = null; }
+      if (snap) snap.forEach(d => {
         const c = d.data() || {};
         (c.checklist || []).forEach(i => {
           if (i.done) return;
-          out.push({ jobId: j.id, jobName: j.name || '', jobNumber: j.number || '',
-            catId: d.id, cat: c.name || 'Untitled', id: i.id, text: i.text || '', due: i.due || '', by: i.by || '' });
+          out.push(Object.assign({}, who,
+            { catId: d.id, cat: c.name || 'Untitled', id: i.id, text: i.text || '', due: i.due || '', by: i.by || '' }));
         });
+      });
+      // every submittal still in flight, and the last thing anyone wrote about it
+      let ssnap = null;
+      try { ssnap = await FB.getDocs(sectionsCol(j.id)); } catch (e) { ssnap = null; }
+      if (ssnap) ssnap.forEach(d => {
+        const s = d.data() || {};
+        if (HOME_SETTLED[s.status || 'not_started']) return;
+        const last = newestBy((s.history || []).filter(h => h.text), x => x.ts);
+        subs.push(Object.assign({}, who, { key: s.key, number: s.number || s.key, title: s.title || '',
+          status: s.status || 'not_started', last: last ? last.text : '',
+          quiet: Math.max(last ? last.ts : 0, sectionChangeTs(s)) }));
       });
     }
     out.sort((a, b) => {
       const da = a.due || '9999-99-99', db = b.due || '9999-99-99';
       return da < db ? -1 : da > db ? 1 : String(a.jobName).localeCompare(String(b.jobName));
     });
-    _homeWork = out; _homeWorkAt = Date.now();
+    // the ones nobody has touched for longest come first: that is the order you would chase them in
+    subs.sort((a, b) => (a.quiet || 0) - (b.quiet || 0) || String(a.number).localeCompare(String(b.number)));
+    _homeWork = { items: out, subs }; _homeWorkAt = Date.now();
   } finally { _homeWorkBusy = false; renderHomeWork(); }
 }
 function renderHomeWork() {
@@ -11469,29 +11504,44 @@ function renderHomeWork() {
       <div class="spacer"></div>
       <button class="btn sm ghost" onclick="loadHomeWork(true)" ${_homeWorkBusy ? 'disabled' : ''}>${_homeWorkBusy ? 'Loading…' : '↻ Refresh'}</button></div>
     ${body}</div>`; };
-  if (_homeWorkBusy && !_homeWork) return head('<div class="muted hw-empty">Reading your job tracking…</div>');
-  if (!_homeWork) return head(`<div class="muted hw-empty">Every action item still open across your jobs, in one list. <a href="#" onclick="event.preventDefault();loadHomeWork(true)">Show me</a>${favs.length ? '' : ' — or star the jobs you run and this follows them.'}</div>`);
-  if (!_homeWork.length) return head('<div class="muted hw-empty">Nothing outstanding on your job tracking. </div>', ' · nothing outstanding');
-  const od = _homeWork.filter(w => w.due && w.due < today()).length;
-  // One column per job, the categories stacked inside it — everything on one screen, and no
-  // box that scrolls inside another box.
+  if (_homeWorkBusy && !_homeWork) return head('<div class="muted hw-empty">Reading your jobs…</div>');
+  if (!_homeWork) return head(`<div class="muted hw-empty">Every submittal still in flight and every action item still open, across your jobs, in one list. <a href="#" onclick="event.preventDefault();loadHomeWork(true)">Show me</a>${favs.length ? '' : ' — or star the jobs you run and this follows them.'}</div>`);
+  const work = _homeWork.items || [], flight = _homeWork.subs || [];
+  if (!work.length && !flight.length) return head('<div class="muted hw-empty">Nothing outstanding across your jobs. </div>', ' · nothing outstanding');
+  const od = work.filter(w => w.due && w.due < today()).length;
+  // One column per job — the submittals still in flight, then the action items by category.
+  // Everything on one screen, and no box that scrolls inside another box.
   const byJob = [];
-  _homeWork.forEach(w => {
+  const jobRow = w => {
     let j = byJob.filter(x => x.id === w.jobId)[0];
-    if (!j) { j = { id: w.jobId, name: w.jobName, number: w.jobNumber, cats: [], n: 0, od: 0 }; byJob.push(j); }
+    if (!j) { j = { id: w.jobId, name: w.jobName, number: w.jobNumber, cats: [], subs: [], n: 0, od: 0 }; byJob.push(j); }
+    return j;
+  };
+  flight.forEach(w => jobRow(w).subs.push(w));
+  work.forEach(w => {
+    const j = jobRow(w);
     let c = j.cats.filter(x => x.id === w.catId)[0];
     if (!c) { c = { id: w.catId, name: w.cat, items: [] }; j.cats.push(c); }
     c.items.push(w);
     j.n++; if (w.due && w.due < today()) j.od++;
   });
-  byJob.sort((a2, b2) => b2.od - a2.od || b2.n - a2.n || String(a2.number || a2.name).localeCompare(String(b2.number || b2.name)));
+  byJob.sort((a2, b2) => b2.od - a2.od || b2.n - a2.n || b2.subs.length - a2.subs.length ||
+    String(a2.number || a2.name).localeCompare(String(b2.number || b2.name)));
   const esq = v => String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const cards = byJob.map(j => `<div class="hw-card">
     <button class="hw-jobhead" onclick="openJobAt('${esq(j.id)}')">
       <b>${esc(j.number || j.name)}</b>
       <span class="hw-jobname">${esc(j.number ? j.name : '')}</span>
-      <span class="hw-n${j.od ? ' bad' : ''}">${j.od ? j.od + ' late · ' : ''}${j.n}</span>
+      <span class="hw-n${j.od ? ' bad' : ''}">${j.od ? j.od + ' late · ' : ''}${j.subs.length ? j.subs.length + ' out' : ''}${j.subs.length && j.n ? ' · ' : ''}${j.n || ''}</span>
     </button>
+    ${j.subs.length ? `<div class="hw-cat2">Submittals out</div>` + j.subs.map(w => {
+      const st = ST[w.status] || {};
+      return `<button class="hw-sub" onclick="openJobSection('${esq(w.jobId)}','${esq(w.key)}')" title="${esc(w.number + ' ' + w.title)}${w.last ? ' — ' + esc(w.last) : ''}">
+        <span class="hw-sline"><span class="hw-snum">${esc(w.number)}</span>
+          <span class="hw-text">${esc(w.title)}</span>
+          <span class="hw-st" style="color:${cvar(st.color)};background:${csf(st.color)}">${esc(st.short || w.status)}</span></span>
+        ${w.last ? `<span class="hw-slast">${esc(w.last)}</span>` : ''}
+      </button>`; }).join('') : ''}
     ${j.cats.map(c => `<div class="hw-cat2">${esc(c.name)}</div>` +
       c.items.map(w => `<button class="hw-it" onclick="openJobAt('${esq(j.id)}','${esq(c.id)}','${esq(w.id)}')" title="${esc(w.text)}">
         <span class="hw-text">${esc(w.text)}</span>
@@ -11499,7 +11549,7 @@ function renderHomeWork() {
       </button>`).join('')).join('')}
   </div>`).join('');
   head(`<div class="hw-grid">${cards}</div>`,
-    ` · ${_homeWork.length} outstanding${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
+    ` · ${flight.length} submittal${flight.length === 1 ? '' : 's'} out · ${work.length} action item${work.length === 1 ? '' : 's'}${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
 }
 /* straight to the action item you clicked, in its own job */
 async function openJobAt(jobId, catId, itemId) {
@@ -11507,6 +11557,17 @@ async function openJobAt(jobId, catId, itemId) {
   jobTab = 'tracking';
   if (catId) { trackCat = catId; trackItem = itemId || null; }
   renderJob();
+}
+/* Straight to the submittal you clicked. The sections only arrive after the job opens, so the one
+   you asked for is remembered and the drawer opens on it as soon as it turns up. */
+let _pendingSection = null;
+async function openJobSection(jobId, key) {
+  _pendingSection = key;
+  await openJob(jobId);
+  jobTab = 'submittals';
+  if (findSection(key)) { openKey = key; _pendingSection = null; }
+  renderJob();
+  if (openKey === key) renderDrawer();
 }
 /* how a stamped name is shown beside a date */
 function byTag(by) { return by ? `<span class="by-tag">${esc(by)}</span>` : ''; }
@@ -11535,20 +11596,33 @@ function pinnedLine(cls, item) {
    at it. Keeping both in the same list is the point; a status that sat at "Submitted to GC" for
    three weeks means something different once the two chase-up lines between are there to read.
 
-   A line you wrote can be taken back off again. A status change cannot, because that is the record
-   of what actually happened, and an audit trail you can quietly edit is not one. */
+   A line you wrote can be rewritten or taken back off again — you get a name wrong, or you want to
+   say what happened properly once you know. A status change can be neither, because that is the
+   record of what actually happened, and an audit trail you can quietly edit is not one. A line that
+   has been rewritten says so, so nobody reads an edited line as the one that was written at the time. */
 const fmtStamp = ts => ts ? fmtDate(ts) + ' · ' +
   new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+let histEdit = null;                 // the log entry open for rewriting, if any
 function historyLog(s) {
   const rows = (s.history || []).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
   if (!rows.length) return `<div class="muted" style="font-size:13px">Nothing logged yet.
     Status changes turn up here on their own — add anything else worth remembering.</div>`;
   return rows.map(h => {
-    const meta = `<small class="muted">${fmtStamp(h.ts)}${h.by ? ' · ' + esc(h.by) : ''}</small>`;
+    const edited = h.editedAt
+      ? ` · <span title="Rewritten ${fmtStamp(h.editedAt)}${h.editedBy ? ' by ' + esc(h.editedBy) : ''}">edited</span>` : '';
+    const meta = `<small class="muted">${fmtStamp(h.ts)}${h.by ? ' · ' + esc(h.by) : ''}${edited}</small>`;
+    if (h.text && histEdit === h.id) return `
+      <div class="note-item">
+        <textarea class="input autosize" rows="2" id="histEditBox" onkeydown="histEditKey(event,'${s.key}','${h.id}')">${esc(h.text)}</textarea>
+        <div class="hist-foot">
+          <button class="btn sm" onclick="saveHistoryNote('${s.key}','${h.id}')">Save</button>
+          <button class="btn sm ghost" onclick="cancelHistoryEdit()">Cancel</button>${meta}</div>
+      </div>`;
     if (h.text) return `
       <div class="note-item">
         <div class="nt">${esc(h.text)}</div>
         <div class="nm">${meta}
+          <button class="x" title="Rewrite this entry" onclick="editHistoryNote('${h.id}')">✎</button>
           <button class="x" title="Remove this entry" onclick="deleteHistoryNote('${s.key}','${h.id}')">✕</button></div>
       </div>`;
     // the colour of where it landed, so a long log can be skimmed for the moment it turned.
@@ -11572,6 +11646,35 @@ async function addHistoryNote(key) {
   renderDrawer();
   renderTable();                                   // the newest line is carried on the register row
   const ne = $('histInput'); if (ne) ne.focus();   // you usually have a second thing to log
+  try { await patchSection(key, { history: s.history }); }
+  catch (e) { toast(writeError(e), true); }
+}
+function editHistoryNote(id) {
+  histEdit = id;
+  renderDrawer();
+  const b = $('histEditBox');
+  if (b) { b.focus(); try { b.setSelectionRange(b.value.length, b.value.length); } catch (e) {} }
+}
+function cancelHistoryEdit() { histEdit = null; renderDrawer(); }
+function histEditKey(ev, key, id) {
+  // Escape backs out of one thing at a time: it closes the rewrite, and the drawer behind it stays
+  // open. Without stopping it here the page's own Escape handler would shut the drawer as well.
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); saveHistoryNote(key, id); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cancelHistoryEdit(); }
+}
+async function saveHistoryNote(key, id) {
+  const s = findSection(key); if (!s) return;
+  const h = (s.history || []).find(x => x.id === id);
+  const el = $('histEditBox');
+  const text = (el && el.value || '').trim();
+  histEdit = null;
+  // emptying the box is not how a line comes off — the ✕ is, and it asks first
+  if (!h || !h.text || !text || text === h.text) { renderDrawer(); return; }
+  h.text = autoCap(text);
+  h.editedAt = Date.now();
+  if (meName()) h.editedBy = meName();
+  renderDrawer();
+  renderTable();                                   // it may be the line the register row carries
   try { await patchSection(key, { history: s.history }); }
   catch (e) { toast(writeError(e), true); }
 }
@@ -11675,8 +11778,8 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; renderDrawer(); renderTable(); }
-function closeDrawer() { openKey = null; $('drawerHost').innerHTML = ''; }
+function openSection(key) { openKey = key; histEdit = null; renderDrawer(); renderTable(); }
+function closeDrawer() { openKey = null; histEdit = null; $('drawerHost').innerHTML = ''; }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
