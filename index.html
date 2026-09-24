@@ -1113,7 +1113,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.60';
+const APP_VERSION = 'v7.61';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2935,7 +2935,8 @@ function watchTracking(jobId) {
       tracking = snap.docs.map(d => d.data());
       tracking.sort((a, b) => (a.order || 0) - (b.order || 0)
         || String(a.created || '').localeCompare(String(b.created || '')));
-      if (trackCat && !tracking.some(c => c.id === trackCat)) trackCat = null;
+      // only judge the chosen category once there is a list to judge it against
+      if (trackCat && tracking.length && !tracking.some(c => c.id === trackCat)) trackCat = null;
       if (!trackCat && tracking.length) trackCat = tracking[0].id;
       if (view === 'job' && jobTab === 'tracking') renderJob();
       refreshActionModalIfSafe();
@@ -3939,7 +3940,11 @@ async function deleteTrackCat(id) {
 
 function renderTracking() {
   if (!job) return;
-  if (trackCat && !catById(trackCat)) trackCat = null;
+  /* The categories arrive a moment after the job opens, so until they do there is nothing to check
+     a chosen one against. Clearing it here on an empty list is what used to lose you: clicking an
+     action item on the home page set the category, this ran before the list landed, threw the
+     choice away, and you arrived on whichever category happened to be first. */
+  if (trackCat && tracking.length && !catById(trackCat)) trackCat = null;
   if (!trackCat && tracking.length) trackCat = tracking[0].id;
   $('trackCats').innerHTML = tracking.map(c => {
     const nf = (c.files || []).length, list = c.checklist || [];
@@ -4013,6 +4018,16 @@ function renderTracking() {
       </div>
       <div class="track-col">${trackDetailHtml(c, sel)}</div>
     </div>`;
+  // Arriving from the home page: put the item you clicked where you can see it. Only on the way
+  // in — scrolling on every re-render would yank the page about while you are typing.
+  if (_trackJump && sel) {
+    _trackJump = false;
+    setTimeout(() => {
+      const host = $('trackPanel');
+      const el = host && host.querySelector('.check-row.sel');
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'center' }); } catch (e) { el.scrollIntoView(); } }
+    }, 0);
+  }
 
   const drop = $('emailDrop');
   if (drop) {
@@ -11687,10 +11702,11 @@ function renderHomeWork() {
     ` · ${needTotal} submittal${needTotal === 1 ? '' : 's'} need you of ${flight.length} out · ${work.length} action item${work.length === 1 ? '' : 's'}${od ? ', ' + od + ' overdue' : ''} · as of ${fmtDate(_homeWorkAt)}`);
 }
 /* straight to the action item you clicked, in its own job */
+let _trackJump = false;      // raised on the way in, so the item you asked for is scrolled to once
 async function openJobAt(jobId, catId, itemId) {
   await openJob(jobId);
   jobTab = 'tracking';
-  if (catId) { trackCat = catId; trackItem = itemId || null; }
+  if (catId) { trackCat = catId; trackItem = itemId || null; _trackJump = true; }
   renderJob();
 }
 /* Which status groups you have opened on the home page, keyed by job. '*' is the rest of the
