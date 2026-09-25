@@ -441,8 +441,12 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .hist-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 7px; }
 .hist-foot small { font-size: 11px; color: var(--text-3); }
 /* ── the product log: what actually has to be bought off this section ── */
-.prod-row { border-left: 3px solid var(--border-2); padding: 6px 0 7px 11px; margin-bottom: 9px; }
-.prod-row.is-edit { border-left-color: var(--accent); padding-right: 2px; }
+/* Each product is its own block with its own edge, so where one ends and the next begins is not
+   something you have to work out from the indentation. */
+.prod-row { border: 1px solid var(--border); border-left: 3px solid var(--border-2); border-radius: 6px;
+  padding: 6px 10px 7px; margin-bottom: 6px; }
+.prod-row.is-open { border-left-color: var(--accent); background: var(--surface-2); }
+.prod-row.is-edit { border-left-color: var(--accent); border-color: var(--accent); padding-right: 6px; }
 .pr-head { display: flex; align-items: baseline; gap: 7px; cursor: pointer; }
 .pr-head:hover .pr-name { color: var(--accent); }
 .pr-caret { flex: none; width: 10px; font-size: 9px; color: var(--text-3); line-height: 1.6; }
@@ -452,13 +456,15 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-kv i { display: block; font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--text-3); }
 /* Blank is shown as blank, so a half-filled item does not read as a finished one. */
-.pr-gap { flex: none; font-size: 10.5px; font-weight: 700; color: var(--amber); background: var(--amber-sf);
-  border-radius: 999px; padding: 1px 7px; }
-.pr-name.is-gap, .pr-desc.is-gap, .pr-kv em.is-gap { color: var(--amber); font-style: italic; font-weight: 400; }
-.pr-tag.is-gap { color: var(--amber); background: var(--amber-sf); font-style: italic; font-weight: 400; }
-.pr-kv em.is-gap { font-size: 12.5px; }
+.pr-gap { flex: none; font-size: 10.5px; font-weight: 700; color: var(--text-3); background: var(--surface-3);
+  border-radius: 999px; padding: 1px 7px; min-width: 16px; text-align: center; }
 .prod-row { transition: none; }
-.prod-row:not(.is-open):not(.is-edit) { margin-bottom: 3px; padding-bottom: 4px; padding-top: 4px; }
+.prod-row:not(.is-open):not(.is-edit) { margin-bottom: 4px; padding-bottom: 5px; padding-top: 5px; }
+.prod-row:not(.is-open):not(.is-edit):hover { border-color: var(--border-2); background: var(--surface-2); }
+/* not filled in: a dash in ordinary text, and a bare count on the row */
+.pr-none { color: var(--text-3); }
+.pr-name.is-none { color: var(--text-3); }
+.pr-desc.is-none { color: var(--text-3); font-style: normal; }
 .pr-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent);
   background: var(--accent-sf); border-radius: 4px; padding: 1px 6px; }
 .pr-name { font-size: 13.5px; font-weight: 600; }
@@ -477,6 +483,24 @@ label.fl .fl-tools { float: right; display: inline-flex; gap: 4px; margin-top: -
   font: inherit; font-size: 10px; line-height: 1; padding: 3px 7px; color: var(--text-2); }
 .fl-tool:hover { border-color: var(--accent); color: var(--accent); }
 .fl-tool.hl { background: var(--amber-sf); color: var(--amber); border-color: transparent; }
+/* A highlight you can see while you are making it: the colour is painted on a layer behind the
+   box, and the text you type sits on top of it. Every metric that could move a glyph is shared
+   between the two, or they drift apart and the colour lands on the wrong words. */
+.hl-wrap { position: relative; }
+/* Everything that decides where a character lands is stated on both layers, rather than left to
+   whatever each element would have inherited — a textarea and a div do not agree by default. */
+.hl-wrap .hl-input, .hl-wrap .hl-back {
+  font-family: inherit; font-size: 13px; line-height: 1.5; letter-spacing: normal;
+  padding: 7px 10px; border-width: 1px; border-style: solid; border-radius: 6px;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; tab-size: 4;
+}
+.hl-wrap .hl-input { position: relative; background: transparent; z-index: 1; resize: none; }
+.hl-back {
+  position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  border-color: transparent; background: var(--surface); color: transparent; margin: 0;
+}
+.hl-back mark { background: var(--amber-sf); color: transparent; border-radius: 3px; }
+.hl-back .hl-b { background: var(--surface-3); color: transparent; border-radius: 3px; }
 .prod-row .pr-head .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
 .prod-row .pr-head .x:hover { color: var(--text); }
 /* the pick list in the release modal */
@@ -1165,7 +1189,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.68';
+const APP_VERSION = 'v7.69';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11858,6 +11882,20 @@ function richText(t) {
     .replace(/==([^=\n]+)==/g, '<mark>$1</mark>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 }
+/* The same text again, for the layer that sits behind the box you type in, so a highlight can be
+   seen while it is being made rather than only after. The marks themselves are kept in, because
+   taking four characters out would shift every glyph after them and the colour would land on the
+   wrong words. Nothing here changes a letter's width for the same reason — no bolding, only
+   background — so the layer and the text on top of it stay in step. */
+function richBackdrop(t) {
+  return esc(String(t == null ? '' : t))
+    .replace(/(==)([^=\n]+)(==)/g, '<mark>$1$2$3</mark>')
+    .replace(/(\*\*)([^*\n]+)(\*\*)/g, '<span class="hl-b">$1$2$3</span>');
+}
+function syncDescHl() {
+  const t = $('pdDesc'), back = $('pdDescBack');
+  if (t && back && typeof t.value === 'string') back.innerHTML = richBackdrop(t.value);
+}
 /* Put a mark round the selection, or take it off again if it is already there. */
 function wrapSel(id, mark) {
   const el = $(id);
@@ -11871,6 +11909,7 @@ function wrapSel(id, mark) {
   el.value = v.slice(0, a) + next + v.slice(b);
   el.focus();
   try { el.setSelectionRange(a, a + next.length); } catch (e) {}
+  syncDescHl();
 }
 function productLabel(p) {
   if (!p) return '';
@@ -11950,22 +11989,23 @@ const PROD_FIELDS = [
   { k: 'desc', label: 'What to buy' },
   { k: 'leadWeeks', label: 'Lead time' }
 ];
+/* Something not filled in shows as a plain dash. Eight products each shouting "no mark" and
+   "to fill in" in amber was harder to read than the blanks it was pointing at — a dash says the
+   same thing and gets out of the way. The count on the row is what is left to flag it, and only
+   its number is needed; hovering still names them. */
+const PR_DASH = '–';
 function productGaps(p) { return PROD_FIELDS.filter(f => !String((p && p[f.k]) || '').trim()); }
 function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + productGaps(p).length, 0); }
 
 let prodEdit = null;                 // the product open for editing, if any
 let prodPaste = false;               // ...and whether the paste-a-whole-schedule box is showing
 let prodOpen = {};                   // ...and which ones are opened up to be read
+/* One at a time. Two long specs open together is most of a screen of prose with nothing to say
+   which half belongs to which, and the thing you opened the second one to compare against has
+   already scrolled away. Opening one puts the last one away. */
 function toggleProduct(id) {
-  if (prodOpen[id]) delete prodOpen[id]; else prodOpen[id] = true;
-  renderDrawer();
-}
-function toggleAllProducts(key) {
-  const s = findSection(key); if (!s) return;
-  const list = sectionProducts(s);
-  const anyShut = list.some(p => !prodOpen[p.id]);
-  prodOpen = {};
-  if (anyShut) for (const p of list) prodOpen[p.id] = true;
+  const wasOpen = !!prodOpen[id];
+  prodOpen = wasOpen ? {} : { [id]: true };
   renderDrawer();
 }
 function productRows(s) {
@@ -11987,8 +12027,11 @@ function productRows(s) {
             <button type="button" class="fl-tool" title="Bold whatever you have selected" onclick="wrapSel('pdDesc','**')"><b>B</b></button>
             <button type="button" class="fl-tool hl" title="Highlight whatever you have selected" onclick="wrapSel('pdDesc','==')">Highlight</button>
           </span></label>
-          <textarea class="input autosize" rows="6" id="pdDesc"
-            placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea></div>
+          <div class="hl-wrap">
+            <div class="hl-back" id="pdDescBack" aria-hidden="true">${richBackdrop(p.desc || '')}</div>
+            <textarea class="input autosize hl-input" rows="6" id="pdDesc" oninput="syncDescHl()"
+              placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea>
+          </div></div>
         <div class="grid2">
           <div class="field"><label class="fl">Manufacturer</label>
             <input class="input" id="pdMake" value="${esc(p.make || '')}" placeholder="J.R. Smith"></div>
@@ -12012,22 +12055,22 @@ function productRows(s) {
       <div class="prod-row${open ? ' is-open' : ''}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
-          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : '<span class="pr-tag is-gap">no mark</span>'}
-          <span class="pr-name${p.name ? '' : ' is-gap'}">${esc(p.name || (p.desc || '').slice(0, 44) || 'Not named yet')}</span>
+          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : `<span class="pr-none">${PR_DASH}</span>`}
+          <span class="pr-name${p.name ? '' : ' is-none'}">${p.name ? esc(p.name) : ((p.desc || '').slice(0, 44) || PR_DASH)}</span>
           ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
-          ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length} to fill in</span>` : ''}
+          ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length}</span>` : ''}
           <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${p.id}')">✎</button>
           <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
         ${open ? `<div class="pr-body">
           <div class="pr-kv">
-            <span><i>Manufacturer</i>${p.make ? esc(p.make) : '<em class="is-gap">to fill in</em>'}</span>
-            <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : '<em class="is-gap">to fill in</em>'}</span>
+            <span><i>Manufacturer</i>${p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`}</span>
+            <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
             ${out && out.expected ? `<span><i>Due</i>${esc(fmtWindow({ from: out.expected, to: out.expectedTo }))}</span>` : ''}
           </div>
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
-          <div class="pr-desc${p.desc ? '' : ' is-gap'}">${p.desc ? richText(p.desc) : 'to fill in'}</div>
+          <div class="pr-desc${p.desc ? '' : ' is-none'}">${p.desc ? richText(p.desc) : PR_DASH}</div>
           ${p.note ? `<div class="pr-note">${richText(p.note)}</div>` : ''}
         </div>` : ''}
       </div>`;
@@ -12408,9 +12451,8 @@ function renderDrawer() {
       <div class="sec">
         <h4>Products ${sectionProducts(s).length ? `<span style="display:flex;gap:8px;align-items:center">
           <span class="muted" style="font-weight:400">${sectionProducts(s).length}${
-            sectionGaps(s) ? ` · <span class="pr-gap">${sectionGaps(s)} to fill in</span>` : ''}</span>
-          ${sectionProducts(s).length > 1 ? `<button class="btn sm ghost" onclick="toggleAllProducts('${s.key}')">${
-            sectionProducts(s).some(p => !prodOpen[p.id]) ? 'Open all' : 'Close all'}</button>` : ''}</span>` : ''}</h4>
+            sectionGaps(s) ? ` · ${sectionGaps(s)} to fill in` : ''}</span>
+          </span>` : ''}</h4>
         <div class="add-row">
           <button class="btn sm" onclick="addBlankProduct('${s.key}')">+ Add a product</button>
           <button class="btn sm ghost" onclick="toggleProdPaste()">${prodPaste ? 'Cancel' : 'Paste a whole schedule…'}</button>
