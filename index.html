@@ -1197,7 +1197,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.73';
+const APP_VERSION = 'v7.74';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2581,6 +2581,7 @@ function assignModal(i) {
         <select class="input" id="asgDest">
           <option value="submittal">A submittal (spec section)</option>
           <option value="rfi">An RFI</option>
+          <option value="co">A change order</option>
         </select></div>
       <div id="asgSubmittalFields">
         <div class="field"><label class="fl">Spec section</label>
@@ -2606,6 +2607,13 @@ function assignModal(i) {
             <option value="answer">RFI response (came back)</option>
           </select></div>` : `<div class="muted">No RFIs yet — create one on the RFIs tab first, then assign this file to it.</div>`}
       </div>
+      <div id="asgCoFields" hidden>
+        ${cos.length ? `
+        <div class="field"><label class="fl">Change order</label>
+          <select class="input" id="asgCo">${cos.map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : '—')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('')}</select></div>
+        <div class="muted" style="margin-top:4px">It goes into that change order's folder, alongside its proposal and its emails.</div>`
+        : `<div class="muted">No change orders yet — create one on the Change Orders tab first, then assign this file to it.</div>`}
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="ignoreUnassigned(${i})" title="Leave it, and stop asking about this file">Ignore</button>
@@ -2616,6 +2624,7 @@ function assignModal(i) {
   destSel.onchange = () => {
     document.getElementById('asgSubmittalFields').hidden = destSel.value !== 'submittal';
     document.getElementById('asgRfiFields').hidden = destSel.value !== 'rfi';
+    document.getElementById('asgCoFields').hidden = destSel.value !== 'co';
   };
   // default the status to match the kind
   const kindSel = document.getElementById('asgKind'), stSel = document.getElementById('asgStatus');
@@ -2624,7 +2633,41 @@ function assignModal(i) {
 }
 function assignPdf(i) {
   const dest = (document.getElementById('asgDest') || {}).value;
-  return dest === 'rfi' ? assignPdfToRfi(i) : assignUnassigned(i);
+  if (dest === 'rfi') return assignPdfToRfi(i);
+  if (dest === 'co') return assignPdfToCo(i);
+  return assignUnassigned(i);
+}
+/* A loose PDF onto a change order — the signed proposal that came back, the GC's backup, the
+   quote it was priced off. Emails could already be filed there; the PDFs they arrive with could
+   not, which left half of a change order in its folder and half in the pile. */
+async function assignPdfToCo(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const csel = document.getElementById('asgCo');
+  if (!csel) { toast('No change orders yet — create one on the Change Orders tab first', true); return; }
+  const c = coById(csel.value);
+  if (!c) { toast('Pick a change order', true); return; }
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that PDF — make the folder available offline in ShareFile', true); return; }
+    const wantDir = coDocDir(c);
+    const already = (item.at === 'files' && item.dir === wantDir);
+    let dir = item.dir, file = item.file;
+    if (!already) { const rec = await putFileInDir(blob, wantDir, sanitizeFileName(item.name)); dir = rec.dir; file = rec.file; }
+    c.docs = c.docs || [];
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file, added: Date.now() };
+    c.docs.push(doc);
+    c.updated = Date.now();
+    // if the write fails the file must not be left in two places, nor the record in none
+    try { await FB.setDoc(coRef(job.id, c.id), clean(c)); }
+    catch (e) { c.docs = c.docs.filter(x => x.id !== doc.id); if (!already) await deleteStoredDoc({ id: 'tmp', dir, file }); throw e; }
+    if (!already) await deleteLoose(item);
+    syncCoFolders().catch(() => {});
+    renderJob();
+    toast(`Filed “${item.name}” on ${c.number ? 'CO ' + c.number : 'the change order'}`);
+    assignModal(i + 1);
+  } catch (e) { console.error(e); toast('Could not file that PDF: ' + (e.message || e), true); }
 }
 async function assignPdfToRfi(i) {
   const item = _assignQueue[i];
