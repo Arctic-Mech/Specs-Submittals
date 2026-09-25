@@ -450,6 +450,14 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-head { display: flex; align-items: baseline; gap: 7px; cursor: pointer; }
 .pr-head:hover .pr-name { color: var(--accent); }
 .pr-caret { flex: none; width: 10px; font-size: 9px; color: var(--text-3); line-height: 1.6; }
+/* wanted first: starred, lifted to the top, and a line under the group it makes */
+.pr-star { flex: none; border: none; background: none; padding: 0; margin: 0; cursor: pointer;
+  font-size: 12px; line-height: 1.3; color: var(--text-3); opacity: .3; }
+.prod-row:hover .pr-star { opacity: .75; }
+.pr-star.on, .prod-row:hover .pr-star.on { opacity: 1; color: var(--amber); }
+.pr-star:hover { opacity: 1; color: var(--amber); }
+.prod-row.is-first { border-left-color: var(--amber); }
+.prod-row.ends-first { margin-bottom: 14px; box-shadow: 0 10px 0 -9px var(--border-2); }
 .pr-body { margin-top: 5px; }
 .pr-kv { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 5px; }
 .pr-kv span { font-size: 12.5px; color: var(--text-2); }
@@ -1189,7 +1197,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.71';
+const APP_VERSION = 'v7.72';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11522,7 +11530,7 @@ function secRowHtml(s) {
         value="${esc(s.description || '')}" placeholder="Add a description…"
         onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','description',this.value)">`
     : (sectionProducts(s).length
-        ? `<div class="sub cell-desc">${sectionProducts(s).map(p => esc(productLabel(p))).join(' · ')}</div>`
+        ? `<div class="sub cell-desc">${productsInOrder(s).map(p => esc(productLabel(p))).join(' · ')}</div>`
         : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : ''));
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
@@ -11874,6 +11882,15 @@ function pinnedLine(cls, item) {
 
    The vendor stays on the section: one section, one supplier, many items off them. */
 function sectionProducts(s) { return (s && s.products) || []; }
+/* The order they are worked in, not the order they were typed in. A star says "this one is wanted
+   first" and lifts it clear of the rest — the long-lead chiller you have to order this week, sat
+   above the forty fittings you can price whenever. Everything under it keeps the order it had. */
+function productsInOrder(s) {
+  const list = sectionProducts(s);
+  const first = [], rest = [];
+  for (const p of list) (p.pinned ? first : rest).push(p);
+  return first.concat(rest);
+}
 function productById(s, id) { return sectionProducts(s).find(p => p.id === id) || null; }
 /* What you write stays plain text — it goes out to vendors and into exports, and neither wants
    markup — but two marks are honoured when it is read back: **bold** and ==highlight==. The
@@ -11976,20 +11993,27 @@ function toggleProduct(id) {
   prodOpen = prodOpen[id] ? {} : { [id]: true };
   repaintProducts(id);
 }
+async function toggleProdPin(key, id) {
+  const s = findSection(key); if (!s) return;
+  const p = productById(s, id); if (!p) return;
+  p.pinned = !p.pinned;
+  // the row is about to move to the top of its own accord, so there is nothing to hold still
+  await saveProducts(key, s, null);
+}
 function productRows(s) {
-  const list = sectionProducts(s);
+  const list = productsInOrder(s);
   if (!list.length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
     Paste the schedule straight in — "AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…" —
     and it comes apart into its mark, what it is, and what to buy.</div>`;
   const rel = releasedProducts(s);
-  return list.map(p => {
+  return list.map((p, i) => {
     if (prodEdit === p.id) return `
-      <div class="prod-row is-edit" data-prod="${p.id}">
+      <div class="prod-row is-edit${p.pinned ? ' is-first' : ''}" data-prod="${p.id}">
         <div class="grid2">
           <div class="field"><label class="fl">Mark</label>
-            <input class="input" id="pdTag" value="${esc(p.tag || '')}" placeholder="AD-1"></div>
+            <input class="input" id="pdTag" value="${esc(p.tag || '')}"></div>
           <div class="field"><label class="fl">What it is</label>
-            <input class="input" id="pdName" value="${esc(p.name || '')}" placeholder="Area Drain"></div>
+            <input class="input" id="pdName" value="${esc(p.name || '')}"></div>
         </div>
         <div class="field"><label class="fl">What to buy<span class="fl-tools">
             <button type="button" class="fl-tool" title="Bold whatever you have selected" onclick="wrapSel('pdDesc','**')"><b>B</b></button>
@@ -11997,16 +12021,15 @@ function productRows(s) {
           </span></label>
           <div class="hl-wrap">
             <div class="hl-back" id="pdDescBack" aria-hidden="true">${richBackdrop(p.desc || '')}</div>
-            <textarea class="input autosize hl-input" rows="6" id="pdDesc" oninput="syncDescHl()"
-              placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea>
+            <textarea class="input autosize hl-input" rows="6" id="pdDesc" oninput="syncDescHl()">${esc(p.desc || '')}</textarea>
           </div></div>
         <div class="grid2">
           <div class="field"><label class="fl">Manufacturer</label>
-            <input class="input" id="pdMake" value="${esc(p.make || '')}" placeholder="J.R. Smith"></div>
+            <input class="input" id="pdMake" value="${esc(p.make || '')}"></div>
           <div class="field"><label class="fl">Lead time (weeks)</label>
-            <input class="input" id="pdLead" value="${esc(p.leadWeeks === 0 ? '0' : (p.leadWeeks || ''))}" placeholder="6 or 6-7"></div>
+            <input class="input" id="pdLead" value="${esc(p.leadWeeks === 0 ? '0' : (p.leadWeeks || ''))}"></div>
           <div class="field"><label class="fl">Anything else</label>
-            <input class="input" id="pdNote" value="${esc(p.note || '')}" placeholder="Finish, options, who to ask…"></div>
+            <input class="input" id="pdNote" value="${esc(p.note || '')}"></div>
         </div>
         <div class="hist-foot">
           <button class="btn sm" onclick="saveProduct('${s.key}','${p.id}')">Save</button>
@@ -12019,9 +12042,13 @@ function productRows(s) {
     const open = !!prodOpen[p.id];
     const gaps = productGaps(p);
     const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
+    // a line under the last starred one, so where "first" stops is not something to work out
+    const lastFirst = !!p.pinned && !(list[i + 1] && list[i + 1].pinned);
     return `
-      <div class="prod-row${open ? ' is-open' : ''}" data-prod="${p.id}">
+      <div class="prod-row${open ? ' is-open' : ''}${p.pinned ? ' is-first' : ''}${lastFirst ? ' ends-first' : ''}" data-prod="${p.id}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
+          <button class="pr-star${p.pinned ? ' on' : ''}" onclick="event.stopPropagation();toggleProdPin('${s.key}','${p.id}')"
+            title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
           ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : `<span class="pr-none">${PR_DASH}</span>`}
           <span class="pr-name${p.name ? '' : ' is-none'}">${p.name ? esc(p.name) : ((p.desc || '').slice(0, 44) || PR_DASH)}</span>
@@ -12808,7 +12835,7 @@ function releaseModal(key, relId) {
       <div class="modal-body">
         ${(!r && sectionProducts(s).length) ? `<div class="field">
           <label class="fl">What is going out</label>
-          <div class="rel-pick" id="rlPick">${sectionProducts(s).map(pr => {
+          <div class="rel-pick" id="rlPick">${productsInOrder(s).map(pr => {
             const out = releasedProducts(s)[pr.id];
             return `<label class="tick-row${out ? ' is-out' : ''}">
               <input type="checkbox" class="rlItem" value="${esc(pr.id)}" ${out ? 'disabled' : ''}>
