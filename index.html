@@ -447,7 +447,8 @@ textarea.autosize[rows="1"] { min-height: 0; }
   padding: 6px 10px 7px; margin-bottom: 6px; }
 .prod-row.is-open { border-left-color: var(--accent); background: var(--surface-2); }
 .prod-row.is-edit { border-left-color: var(--accent); border-color: var(--accent); padding-right: 6px; }
-.pr-head { display: flex; align-items: baseline; gap: 7px; cursor: pointer; }
+.pr-head { display: flex; align-items: baseline; gap: 7px; cursor: pointer; min-width: 0; }
+.pr-head > * { min-width: 0; }
 .pr-head:hover .pr-name { color: var(--accent); }
 .pr-caret { flex: none; width: 10px; font-size: 9px; color: var(--text-3); line-height: 1.6; }
 /* wanted first: starred, lifted to the top, and a line under the group it makes */
@@ -483,7 +484,20 @@ textarea.autosize[rows="1"] { min-height: 0; }
   color: var(--text-3); background: var(--surface-3); }
 .pr-mark.is-out { color: var(--amber); background: var(--amber-sf); }
 .pr-mark.is-done { color: var(--green); background: var(--green-sf); }
-.pr-name { font-size: 13.5px; font-weight: 600; }
+.pr-name { font-size: 13.5px; font-weight: 600; flex: 0 1 auto; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.pr-tag.is-more { color: var(--text-3); background: var(--surface-3); }
+/* marks, typed in one at a time */
+.mk-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; width: 100%; cursor: text;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 6px; padding: 5px 7px; min-height: 34px; }
+.mk-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-sf); }
+.mk-chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 11.5px;
+  font-weight: 700; color: var(--accent); background: var(--accent-sf); border-radius: 4px; padding: 2px 4px 2px 7px; }
+.mk-chip button { border: none; background: none; padding: 0 2px; margin: 0; cursor: pointer;
+  color: var(--accent); opacity: .55; font-size: 10px; line-height: 1; }
+.mk-chip button:hover { opacity: 1; }
+.mk-in { flex: 1 1 70px; min-width: 70px; border: none; outline: none; background: transparent;
+  font: inherit; font-size: 13px; color: inherit; padding: 1px 2px; }
 .pr-lead { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); }
 .pr-out { flex: none; font-size: 10.5px; font-weight: 700; color: var(--green); background: var(--green-sf);
   border-radius: 999px; padding: 1px 7px; }
@@ -1205,7 +1219,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.75';
+const APP_VERSION = 'v7.76';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11997,18 +12011,6 @@ function productMarks(p) {
 }
 function marksLabel(p) { return productMarks(p).map(m => m.tag).join(' '); }
 function markById(p, id) { return productMarks(p).find(m => m.id === id) || null; }
-/* Typed as one line — "AD-1, AD-2, AD-3" or just spaces between them. A mark that was already
-   there keeps its id, so whatever has been released against it stays attached to it. */
-function parseMarks(text, p) {
-  const was = productMarks(p), seen = {}, out = [];
-  for (const raw of String(text || '').split(/[\s,;]+/)) {
-    const tag = raw.trim().toUpperCase();
-    if (!tag || seen[tag]) continue;
-    seen[tag] = 1;
-    out.push(was.find(m => m.tag === tag) || { id: uid('mk'), tag });
-  }
-  return out;
-}
 function productLabel(p) {
   if (!p) return '';
   return [marksLabel(p), p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
@@ -12033,6 +12035,9 @@ const PROD_FIELDS = [
 /* Something not filled in shows as a plain dash. A row shouting "no mark" and "to fill in" in
    amber was harder to read than the blanks it was pointing at. */
 const PR_DASH = '\u2013';
+/* A dozen marks on one row leaves no room for the name of the thing they are marks OF, and pushes
+   the buttons off the end. A few, then a count of the rest; all of them are listed when it opens. */
+const PR_MARKS_ON_ROW = 4;
 function productGaps(p) {
   return PROD_FIELDS.filter(f => f.k === 'marks'
     ? !productMarks(p).length
@@ -12041,6 +12046,46 @@ function productGaps(p) {
 function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + productGaps(p).length, 0); }
 
 let prodEdit = null;                 // the product open for editing, if any
+/* The marks as they stand on the open form. A working copy, so Cancel really does put it back. */
+let prodEditMarks = null;
+function editMarksHtml() {
+  return (prodEditMarks || []).map(m => `<span class="mk-chip">${esc(m.tag)}<button type="button"
+    title="Remove ${esc(m.tag)}" onclick="removeEditMark('${m.id}')">\u2715</button></span>`).join('') +
+    `<input class="mk-in" id="pdMarkIn" autocomplete="off" spellcheck="false"
+      placeholder="${(prodEditMarks || []).length ? '' : 'AD-1'}" onkeydown="markInKey(event)">`;
+}
+function renderEditMarks(focus) {
+  const host = $('pdMarks');
+  if (!host) return;
+  host.innerHTML = editMarksHtml();
+  if (focus !== false) { const i = $('pdMarkIn'); if (i && i.focus) i.focus(); }
+}
+function addEditMark() {
+  const el = $('pdMarkIn');
+  const tag = String((el && el.value) || '').trim().toUpperCase();
+  if (el) el.value = '';
+  if (!tag) { renderEditMarks(); return; }
+  prodEditMarks = prodEditMarks || [];
+  if (!prodEditMarks.some(m => m.tag === tag)) prodEditMarks.push({ id: uid('mk'), tag });
+  renderEditMarks();
+}
+function removeEditMark(id) {
+  prodEditMarks = (prodEditMarks || []).filter(m => m.id !== id);
+  renderEditMarks();
+}
+/* Enter or comma finishes one. Backspace on an empty box takes the last one back off, which is
+   what every field made of chips does and what the fingers expect. */
+function markInKey(ev) {
+  const el = $('pdMarkIn');
+  if (ev.key === 'Enter' || ev.key === ',') {
+    ev.preventDefault();
+    addEditMark();
+  } else if (ev.key === 'Backspace' && el && !el.value && (prodEditMarks || []).length) {
+    ev.preventDefault();
+    prodEditMarks.pop();
+    renderEditMarks();
+  }
+}
 let prodOpen = {};                   // ...and which ones are opened up to be read
 /* One at a time. Two long specs open together is most of a screen of prose with nothing to say
    which half belongs to which, and the thing you opened the second one to compare against has
@@ -12097,9 +12142,9 @@ function productRows(s) {
     if (prodEdit === p.id) return `
       <div class="prod-row is-edit${p.pinned ? ' is-first' : ''}" data-prod="${p.id}">
         <div class="grid2">
-          <div class="field"><label class="fl">Mark${productMarks(p).length > 1 ? ' <span class="fl-tag">' + productMarks(p).length + '</span>' : ''}</label>
-            <input class="input" id="pdTag" value="${esc(marksLabel(p))}"
-              title="One or several — AD-1, AD-2, AD-3"></div>
+          <div class="field"><label class="fl">Marks${(prodEditMarks || []).length ? ' <span class="fl-tag">' + prodEditMarks.length + '</span>' : ''}</label>
+            <div class="mk-wrap" id="pdMarks" onclick="var i=document.getElementById('pdMarkIn');if(i)i.focus()">${editMarksHtml()}</div>
+            <div class="muted" style="margin-top:4px;font-size:11.5px">One at a time — Enter after each.</div></div>
           <div class="field"><label class="fl">What it is</label>
             <input class="input" id="pdName" value="${esc(p.name || '')}"></div>
         </div>
@@ -12139,8 +12184,11 @@ function productRows(s) {
           <button class="pr-star${p.pinned ? ' on' : ''}" onclick="event.stopPropagation();toggleProdPin('${s.key}','${p.id}')"
             title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
-          ${marks.length ? marks.map(m => `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}">${esc(m.tag)}</span>`).join('')
-                         : `<span class="pr-none">${PR_DASH}</span>`}
+          ${marks.length ? marks.slice(0, PR_MARKS_ON_ROW).map(m =>
+                `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}">${esc(m.tag)}</span>`).join('') +
+              (marks.length > PR_MARKS_ON_ROW
+                ? `<span class="pr-tag is-more" title="${esc(marks.map(m => m.tag).join(', '))}">+${marks.length - PR_MARKS_ON_ROW}</span>` : '')
+            : `<span class="pr-none">${PR_DASH}</span>`}
           <span class="pr-name${p.name ? '' : ' is-none'}">${p.name ? esc(p.name) : ((p.desc || '').slice(0, 44) || PR_DASH)}</span>
           ${out ? `<span class="pr-out${out.all ? '' : ' is-part'}">${
             out.all ? (out.delivered ? '✓ delivered' : 'released')
@@ -12192,12 +12240,14 @@ function productOutState(s, p) {
    and finding your typing gone is not something anyone would ask for. */
 async function editProduct(key, id) {
   if (prodEdit && prodEdit !== id) await saveProduct(key, prodEdit);
+  const s = findSection(key);
   prodEdit = id; prodOpen = { [id]: true };
+  prodEditMarks = productMarks(productById(s, id)).map(m => ({ id: m.id, tag: m.tag }));
   repaintProducts(id);
-  const b = $('pdTag'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
+  const b = $('pdName'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
 }
 function cancelProductEdit() {
-  const was = prodEdit; prodEdit = null;
+  const was = prodEdit; prodEdit = null; prodEditMarks = null;
   if (was) prodOpen = { [was]: true };
   repaintProducts(was);
 }
@@ -12216,7 +12266,7 @@ async function addBlankProduct(key) {
   const s = findSection(key); if (!s) return;
   const p = { id: uid('prd'), tag: '', marks: [], name: '', desc: '', make: '', leadWeeks: '', note: '' };
   s.products = sectionProducts(s).concat([p]);
-  prodEdit = p.id; prodOpen = { [p.id]: true };
+  prodEdit = p.id; prodOpen = { [p.id]: true }; prodEditMarks = [];
   // nothing to hold still here — it did not exist a moment ago — so go to it instead
   await saveProducts(key, s, null);
   const host = $('prodList');
@@ -12227,13 +12277,14 @@ async function addBlankProduct(key) {
 async function saveProduct(key, id) {
   const s = findSection(key); if (!s) return;
   const p = productById(s, id);
+  const marksNow = prodEditMarks;
   prodEdit = null;
   // it stays open: shutting it the moment you save turns what you just wrote into a blank line
   // and drags everything under it up the screen
   prodOpen = { [id]: true };
   if (!p) { repaintProducts(null); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
-  p.marks = parseMarks(v('pdTag'), p);
+  p.marks = (marksNow || productMarks(p)).slice();
   p.tag = (p.marks[0] || {}).tag || '';      // kept in step for anything still reading the old field
   p.name = titleCaseWords(v('pdName'));
   p.desc = autoCap(v('pdDesc'));
@@ -12242,6 +12293,7 @@ async function saveProduct(key, id) {
   p.make = v('pdMake');
   p.leadWeeks = v('pdLead');
   p.note = autoCap(v('pdNote'));
+  prodEditMarks = null;
   await saveProducts(key, s, id);
 }
 async function removeProduct(key, id) {
