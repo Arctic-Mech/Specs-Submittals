@@ -1113,7 +1113,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.61';
+const APP_VERSION = 'v7.62';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -14059,10 +14059,34 @@ const FOLDER_README     = 'READ ME - do not delete.txt';
 const LAUNCHER_FILE     = 'Open The Dingus.html';   // double-click in ShareFile to open the tool at this job (stays at the folder root)
 const LINK_DIR          = 'Dingus data (do not delete)';   // the marker + register backup + READ ME live here, out of the way
 const LINK_DIR_OLDS     = ['link to this folder'];         // earlier names — migrated into LINK_DIR on load
-const JOB_FOLDER_NAME   = 'The Dingus';                    // a job's folder MUST be named this to pair (path can differ)
-/* A folder can only be paired if it's the job's "The Dingus" folder — so picking a
-   subfolder (or the wrong folder) can never drop the tool's data in the wrong spot. */
-function isJobFolderName(name) { return String(name || '').trim().toLowerCase() === JOB_FOLDER_NAME.toLowerCase(); }
+const JOB_FOLDER_NAME   = 'The Dingus';                    // what to suggest when nothing is paired yet
+/* ── which folder a job may be paired with ──
+   Anything with "Dingus" in its name: "The Dingus", "Dingus", "Aurora Dingus", "26-0147 Dingus".
+   Jobs get set up by different people and the names drift, and insisting on one exact spelling
+   turned a folder that was obviously right into one the tool refused.
+
+   Two are still refused, and they are the two this tool makes INSIDE a job folder. Pairing with
+   one of those would file the job's documents inside its own document store — a folder within
+   itself, with the register's backup somewhere under it. A browser cannot step up to a parent
+   from a picked folder, so this is the only chance to catch it.
+
+   Those two are matched whole, never as a beginning: a job called "Dingus Data Center" is a job,
+   not the tool's own store, and refusing it would be the old problem in a new place. The real
+   folder names are checked alongside the plain spellings, so this cannot drift if they are ever
+   renamed. */
+const JOB_FOLDER_WORD     = 'dingus';
+const JOB_FOLDER_RESERVED = ['dingus documents', 'dingus data'];
+const normFolderName = n => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+function isReservedFolderName(name) {
+  const n = normFolderName(name);
+  return n === normFolderName(DOCS_DIR) || n === normFolderName(LINK_DIR) ||
+    JOB_FOLDER_RESERVED.indexOf(n) >= 0;
+}
+function isJobFolderName(name) {
+  const n = normFolderName(name);
+  if (n.indexOf(JOB_FOLDER_WORD) < 0) return false;
+  return !isReservedFolderName(n);
+}
 async function linkDirHandle(handle) { return (handle || jobFolder).getDirectoryHandle(LINK_DIR, { create: true }); }
 /* Move a bookkeeping file from `srcHandle` into the link folder (used to migrate
    existing folders). No-op if it isn't there. */
@@ -14257,7 +14281,7 @@ async function ensureFolderDocs(handle) {
 /* On opening a job, load its folder silently if the grant already stands;
    otherwise leave it unloaded and let the folder bar prompt for one click. */
 async function markFolderLoaded(handle) {
-  if (!isJobFolderName(handle && handle.name)) {   // wrong folder was remembered — not a "The Dingus" job folder
+  if (!isJobFolderName(handle && handle.name)) {   // the remembered folder is not a job folder any more
     if (job) await forgetHandle(job.id);
     jobFolder = null; folderRemembered = null; updateFolderBar();
     return;
@@ -14334,13 +14358,14 @@ async function loadJobFolder(forcePick) {
     if (marker && marker.id && marker.id !== job.id &&
         !confirm(`That folder is marked for a different job (“${marker.name || marker.id}”).\n\nUse it for “${job.name}” anyway?`)) return false;
   }
-  // A folder can only be paired if it's the job's "The Dingus" folder. A browser
-  // can't step up to a parent from here, so if the wrong folder (or an inside
-  // subfolder) got picked, refuse rather than dropping the tool's data in the
-  // wrong spot — send the user back to pick the "The Dingus" folder itself.
+  // A browser cannot step up to a parent from a picked folder, so this is the only chance to
+  // catch the wrong one before the tool starts filing things into it.
   if (!isJobFolderName(handle.name)) {
     await forgetHandle(job.id);
-    alert('“' + (handle.name || 'That folder') + '” isn’t a “' + JOB_FOLDER_NAME + '” folder, so it can’t be paired.\n\nEach job is paired with its “' + JOB_FOLDER_NAME + '” folder — the one that holds the job’s documents. Please pick that folder itself (it can live anywhere, but it has to be named “' + JOB_FOLDER_NAME + '”).');
+    const nm = handle.name || 'That folder';
+    alert(isReservedFolderName(handle.name)
+      ? '“' + nm + '” is a folder The Dingus keeps its own things in, so it can’t be the job folder itself.\n\nPick the folder it sits inside — the job’s own folder.'
+      : '“' + nm + '” can’t be paired, because it hasn’t got “Dingus” in its name.\n\nEach job pairs with its own Dingus folder — the one that holds the job’s documents. It can live anywhere and be called anything with “Dingus” in it (“' + JOB_FOLDER_NAME + '”, “' + (job.number ? job.number + ' Dingus' : 'Aurora Dingus') + '”), just not the “Dingus Documents” or “Dingus data” folder inside it.');
     return false;
   }
   await writeJobMarker(handle, job);
