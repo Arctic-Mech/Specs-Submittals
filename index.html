@@ -1189,7 +1189,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.69';
+const APP_VERSION = 'v7.70';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3462,6 +3462,8 @@ function searchHay(s) {
     (s.tags || []).join(' '),
     (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
     (s.history || []).map(h => h.text || '').join(' '),     // so you can find what you logged
+    // the product log in full: you search for "area drain" or "J.R. Smith", not for "AD-1"
+    (s.products || []).map(p => [p.tag, p.name, p.make, p.desc, p.note].filter(Boolean).join(' ')).join(' '),
     (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
   ].filter(Boolean).join(' ').toLowerCase();
 }
@@ -11918,67 +11920,6 @@ function productLabel(p) {
 /* A mark, what it is, then what to buy: "AD-1 - Area Drain: J.R. Smith 2142 Series, …". That is the
    shape a spec is read in and the shape it gets pasted in, so take it apart that way. */
 const PROD_TAG_RE = /^\s*([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?)\s*[-–:.]*\s+(.*)$/;
-/* "J.R. Smith 2142 Series, cast iron body…" names its maker first and its model second, so the
-   words before the first one carrying a digit are the manufacturer. Only a short run of them
-   counts, and only where a model number really does follow — otherwise "Round nickel bronze
-   grate" would come out made by "Round". The description keeps every word either way, so a wrong
-   guess costs nothing but a correction. */
-function guessMake(desc) {
-  const words = String(desc || '').trim().split(/\s+/);
-  const out = [];
-  for (const w of words) {
-    if (/\d/.test(w)) return out.length && out.length <= 3 ? out.join(' ').replace(/[,;:]+$/, '') : '';
-    if (out.length >= 3 || !/^[A-Z]/.test(w)) return '';
-    out.push(w);
-  }
-  return '';
-}
-function parseProductLine(line) {
-  const raw = String(line || '').replace(/\s+/g, ' ').trim();
-  if (!raw) return null;
-  let tag = '', rest = raw;
-  const m = PROD_TAG_RE.exec(raw);
-  if (m) { tag = m[1].replace(/\s+/g, '').toUpperCase(); rest = m[2].trim(); }
-  let name = '', desc = rest;
-  const c = rest.indexOf(':');
-  if (c > 0 && c <= 60) { name = rest.slice(0, c).trim(); desc = rest.slice(c + 1).trim(); }
-  return { id: uid('prd'), tag, name: titleCaseWords(name), desc: autoCap(desc),
-    make: guessMake(desc), leadWeeks: '', note: '' };
-}
-/* A spec is usually pasted as one run of prose with several items in it, not one per line. A mark
-   at the start of a sentence begins a new item — but only where a colon follows soon after, which
-   is what tells a real entry apart from a standard being cited mid-paragraph. */
-function splitProductText(text) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!t) return [];
-  const re = /(^|[.;]\s+)([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?\s*[-–:.]*\s+)/g;
-  const cuts = [];
-  let m;
-  while ((m = re.exec(t))) {
-    const at = m.index + m[1].length;
-    const head = t.slice(at, at + 90);
-    const colon = head.indexOf(':');
-    if (colon > 0 && colon <= 60) cuts.push(at);
-  }
-  if (!cuts.length) return [t];
-  const out = [];
-  if (cuts[0] > 0) out.push(t.slice(0, cuts[0]).trim());
-  for (let i = 0; i < cuts.length; i++) {
-    out.push(t.slice(cuts[i], i + 1 < cuts.length ? cuts[i + 1] : undefined).trim());
-  }
-  return out.filter(Boolean);
-}
-function parseProductBlock(text) {
-  const out = [];
-  for (const line of String(text || '').split(/\r?\n/)) {
-    for (const piece of splitProductText(line)) {
-      const p = parseProductLine(piece);
-      if (p && (p.tag || p.desc)) out.push(p);
-    }
-  }
-  return out;
-}
-
 /* What a product is expected to carry. Anything blank is shown as blank rather than left out, so
    a half-filled item looks half-filled instead of looking finished. A note is not on the list —
    most items have nothing to say. */
@@ -11989,24 +11930,44 @@ const PROD_FIELDS = [
   { k: 'desc', label: 'What to buy' },
   { k: 'leadWeeks', label: 'Lead time' }
 ];
-/* Something not filled in shows as a plain dash. Eight products each shouting "no mark" and
-   "to fill in" in amber was harder to read than the blanks it was pointing at — a dash says the
-   same thing and gets out of the way. The count on the row is what is left to flag it, and only
-   its number is needed; hovering still names them. */
-const PR_DASH = '–';
+/* Something not filled in shows as a plain dash. A row shouting "no mark" and "to fill in" in
+   amber was harder to read than the blanks it was pointing at. */
+const PR_DASH = '\u2013';
 function productGaps(p) { return PROD_FIELDS.filter(f => !String((p && p[f.k]) || '').trim()); }
 function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + productGaps(p).length, 0); }
 
 let prodEdit = null;                 // the product open for editing, if any
-let prodPaste = false;               // ...and whether the paste-a-whole-schedule box is showing
 let prodOpen = {};                   // ...and which ones are opened up to be read
 /* One at a time. Two long specs open together is most of a screen of prose with nothing to say
    which half belongs to which, and the thing you opened the second one to compare against has
-   already scrolled away. Opening one puts the last one away. */
+   already scrolled away. Opening one puts the last one away.
+
+   Which is what made moving between them feel heavy: closing a tall one above the one you are
+   clicking pulls the whole list up, so the row goes out from under your finger just as you press
+   it. Only the list is repainted, not the drawer around it, and the row you asked for is held
+   exactly where it was on screen while everything else moves. */
+function prodRowTop(id) {
+  const host = $('prodList');
+  if (!host || typeof host.querySelector !== 'function') return null;
+  const row = host.querySelector('[data-prod="' + id + '"]');
+  if (!row || typeof row.getBoundingClientRect !== 'function') return null;
+  const r = row.getBoundingClientRect();
+  return r && typeof r.top === 'number' ? r.top : null;
+}
+function repaintProducts(anchorId) {
+  const s = findSection(openKey);
+  const host = $('prodList');
+  if (!s || !host || typeof host.querySelector !== 'function') { renderDrawer(); return; }
+  const before = anchorId ? prodRowTop(anchorId) : null;
+  host.innerHTML = productRows(s);
+  if (before == null) return;
+  const after = prodRowTop(anchorId);
+  const body = drawerBody();
+  if (after != null && body && typeof body.scrollTop === 'number') body.scrollTop += after - before;
+}
 function toggleProduct(id) {
-  const wasOpen = !!prodOpen[id];
-  prodOpen = wasOpen ? {} : { [id]: true };
-  renderDrawer();
+  prodOpen = prodOpen[id] ? {} : { [id]: true };
+  repaintProducts(id);
 }
 function productRows(s) {
   const list = sectionProducts(s);
@@ -12016,7 +11977,7 @@ function productRows(s) {
   const rel = releasedProducts(s);
   return list.map(p => {
     if (prodEdit === p.id) return `
-      <div class="prod-row is-edit">
+      <div class="prod-row is-edit" data-prod="${p.id}">
         <div class="grid2">
           <div class="field"><label class="fl">Mark</label>
             <input class="input" id="pdTag" value="${esc(p.tag || '')}" placeholder="AD-1"></div>
@@ -12052,7 +12013,7 @@ function productRows(s) {
     const gaps = productGaps(p);
     const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
     return `
-      <div class="prod-row${open ? ' is-open' : ''}">
+      <div class="prod-row${open ? ' is-open' : ''}" data-prod="${p.id}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
           ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : `<span class="pr-none">${PR_DASH}</span>`}
@@ -12083,17 +12044,18 @@ function releasedProducts(s) {
   return out;
 }
 function editProduct(id) {
-  prodEdit = id; renderDrawer();
+  prodEdit = id; prodOpen = {};
+  repaintProducts(id);
   const b = $('pdTag'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
 }
-function cancelProductEdit() { prodEdit = null; renderDrawer(); }
+function cancelProductEdit() { const was = prodEdit; prodEdit = null; repaintProducts(was); }
 async function saveProducts(key, s) {
   renderDrawer(); renderTable();
   try { await patchSection(key, { products: s.products || [] }); }
   catch (e) { toast(writeError(e), true); }
 }
-/* The ordinary way in: an empty item, opened on its form, so what it wants is asked for rather
-   than guessed at. Pasting a whole schedule is still there, but you have to go and ask for it. */
+/* The ordinary way in: an empty item, opened on its form, so what it wants is asked for
+   rather than guessed at. */
 async function addBlankProduct(key) {
   const s = findSection(key); if (!s) return;
   const p = { id: uid('prd'), tag: '', name: '', desc: '', make: '', leadWeeks: '', note: '' };
@@ -12101,20 +12063,6 @@ async function addBlankProduct(key) {
   prodEdit = p.id; prodOpen[p.id] = true;
   await saveProducts(key, s);
   const b = $('pdTag'); if (b) b.focus();
-}
-function toggleProdPaste() { prodPaste = !prodPaste; renderDrawer(); const b = $('prodInput'); if (b) b.focus(); }
-async function addProducts(key) {
-  const s = findSection(key); if (!s) return;
-  const el = $('prodInput'); const text = (el && el.value || '').trim();
-  if (!text) return;
-  const found = parseProductBlock(text);
-  if (!found.length) return;
-  s.products = sectionProducts(s).concat(found);
-  if (el) el.value = '';
-  prodEdit = null; prodPaste = false;
-  await saveProducts(key, s);
-  const ne = $('prodInput'); if (ne) ne.focus();
-  if (found.length > 1) toast(found.length + ' products added');
 }
 async function saveProduct(key, id) {
   const s = findSection(key); if (!s) return;
@@ -12348,8 +12296,8 @@ function keepDrawerPlace() {
   if (!y) return;
   setTimeout(() => { const n = drawerBody(); if (n) n.scrollTop = y; }, 0);
 }
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
-function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; $('drawerHost').innerHTML = ''; navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
@@ -12455,17 +12403,8 @@ function renderDrawer() {
           </span>` : ''}</h4>
         <div class="add-row">
           <button class="btn sm" onclick="addBlankProduct('${s.key}')">+ Add a product</button>
-          <button class="btn sm ghost" onclick="toggleProdPaste()">${prodPaste ? 'Cancel' : 'Paste a whole schedule…'}</button>
         </div>
-        ${prodPaste ? `<div class="add-row">
-          <textarea class="input autosize" rows="2" id="prodInput"
-            placeholder="AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addProducts('${s.key}')}"></textarea>
-          <button class="btn sm" onclick="addProducts('${s.key}')">Split it up</button>
-        </div>
-        <div class="muted" style="margin:-4px 0 12px;font-size:12.5px">Each mark starts a new item, and
-          what follows is read as its name, its maker and what to buy. Check them after — it is a guess.</div>` : ''}
-        ${productRows(s)}
+        <div id="prodList">${productRows(s)}</div>
         <div class="muted" style="margin-top:8px">One supplier for the section, many items off them —
           the vendor stays in Details. Each item carries its own lead time, and releases are made from this list.</div>
       </div>
