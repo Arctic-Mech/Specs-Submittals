@@ -1155,7 +1155,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.66';
+const APP_VERSION = 'v7.67';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3799,7 +3799,7 @@ async function openStoredDoc(doc) {
 }
 
 function closeRfiDrawer() { openRfi = null; $('drawerHost').innerHTML = ''; navSync(); }
-function openRfiDrawer(id) { openRfi = id; openKey = null; renderRfiDrawer(); navSync(); }
+function openRfiDrawer(id) { openRfi = id; openKey = null; _drawerFresh = true; renderRfiDrawer(); navSync(); }
 function rfiDocList(r, kind) {
   const docs = (r.docs || []).filter(d => d.kind === kind);
   if (!docs.length) return '';
@@ -3814,6 +3814,7 @@ function rfiDocList(r, kind) {
 function renderRfiDrawer() {
   const r = rfiById(openRfi);
   if (!r) { closeRfiDrawer(); return; }
+  keepDrawerPlace();
   const st = rsOf(r);
   const statusButtons = RFI_STATUSES.map(o => `
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
@@ -4611,10 +4612,11 @@ function coEmailList(c) {
     </div>`).join('') + `</div>`;
 }
 function closeCoDrawer() { openCo = null; $('drawerHost').innerHTML = ''; navSync(); }
-function openCoDrawer(id) { openCo = id; openKey = null; renderCoDrawer(); navSync(); }
+function openCoDrawer(id) { openCo = id; openKey = null; _drawerFresh = true; renderCoDrawer(); navSync(); }
 function renderCoDrawer() {
   const c = coById(openCo);
   if (!c) { closeCoDrawer(); return; }
+  keepDrawerPlace();
   const st = csOf(c);
   const statusButtons = CO_STATUSES.map(o => `
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
@@ -10906,7 +10908,7 @@ function contractRowHtml(c) {
   </tr>`;
 }
 function closeContractDrawer() { openContract = null; $('drawerHost').innerHTML = ''; navSync(); }
-function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; renderContractDrawer(); navSync(); }
+function openContractDrawer(id) { openContract = id; openKey = null; openRfi = null; openCo = null; openLedger = { key: null, id: null }; _drawerFresh = true; renderContractDrawer(); navSync(); }
 function patchContract(id, fields) {
   const c = contractById(id); if (!c) return;
   Object.assign(c, fields);
@@ -10998,6 +11000,7 @@ function changeRowHtml(c, ch) {
 function renderContractDrawer() {
   const c = contractById(openContract);
   if (!c) { closeContractDrawer(); return; }
+  keepDrawerPlace();
   const st = cStatus(c.status), orig = numOf(c.amount), rev = contractRevised(c), delta = rev - orig, pend = contractPending(c);
   const statusButtons = CONTRACT_STATUSES.map(o => `
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
@@ -11152,7 +11155,7 @@ function ledgerRowHtml(lk, it) {
   </tr>`;
 }
 function closeLedgerDrawer() { openLedger = { key: null, id: null }; $('drawerHost').innerHTML = ''; navSync(); }
-function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; renderLedgerDrawer(); navSync(); }
+function openLedgerDrawer(lk, id) { openLedger = { key: lk, id }; openKey = null; openRfi = null; openCo = null; _drawerFresh = true; renderLedgerDrawer(); navSync(); }
 function patchLedger(lk, id, fields) {
   const it = ledgerById(lk, id); if (!it) return;
   Object.assign(it, fields);
@@ -11184,6 +11187,7 @@ function ledgerDocList(it, kind, lk) {
 function renderLedgerDrawer() {
   const lk = openLedger.key, it = ledgerById(lk, openLedger.id);
   if (!it) { closeLedgerDrawer(); return; }
+  keepDrawerPlace();
   const cfg = lcfg(lk), st = lStatus(lk, it.status);
   const statusButtons = cfg.statuses.map(o => `
     <button class="status-opt ${o.id === st.id ? 'on' : ''}" style="${o.id === st.id ? 'color:' + cvar(o.color) + ';background:' + csf(o.color) : ''}"
@@ -12248,7 +12252,24 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; renderDrawer(); renderTable(); navSync(); }
+/* ── keeping your place in the drawer ──
+   Drawing the drawer replaces the whole panel, so it comes back at the top. Opening a product two
+   thirds of the way down, saving an edit to one, ticking a release — every one of those redraws,
+   and every one of them threw you back up to the section header. Where the panel was scrolled to
+   is now put back once the new one is in.
+
+   Opening a different thing is not a redraw of the same thing, so that starts at its own top,
+   which is what _drawerFresh is for. */
+let _drawerFresh = false;
+const drawerBody = () => (document && typeof document.querySelector === 'function' ? document.querySelector('.drawer-body') : null);
+function keepDrawerPlace() {
+  const b = drawerBody();
+  const y = (!_drawerFresh && b && typeof b.scrollTop === 'number') ? b.scrollTop : 0;
+  _drawerFresh = false;
+  if (!y) return;
+  setTimeout(() => { const n = drawerBody(); if (n) n.scrollTop = y; }, 0);
+}
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
 function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
@@ -12271,6 +12292,7 @@ function autosizeAll(host) { try { (host || document).querySelectorAll('textarea
 function renderDrawer() {
   const s = findSection(openKey);
   if (!s) { closeDrawer(); return; }
+  keepDrawerPlace();
   const st = ST[s.status || 'not_started'];
   const rel = relOf(s);
   // Only the file this section was actually parsed from — its page numbers mean
