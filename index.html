@@ -465,8 +465,18 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-lead { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); }
 .pr-out { flex: none; font-size: 10.5px; font-weight: 700; color: var(--green); background: var(--green-sf);
   border-radius: 999px; padding: 1px 7px; }
-.pr-desc { font-size: 13px; color: var(--text-2); line-height: 1.45; margin-top: 3px; }
-.pr-note { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+/* The blank lines and returns you put in while reading a spec are the shape of the thing; losing
+   them on the way out turned it back into the wall of text you had just broken up. */
+.pr-desc { font-size: 13px; color: var(--text-2); line-height: 1.45; margin-top: 3px; white-space: pre-wrap; }
+.pr-note { font-size: 12px; color: var(--text-3); margin-top: 2px; white-space: pre-wrap; }
+.pr-desc mark, .pr-note mark { background: var(--amber-sf); color: var(--amber); border-radius: 3px; padding: 0 3px; }
+.pr-desc b, .pr-note b { color: var(--text); }
+/* the two marks, on the label above the box you type in */
+label.fl .fl-tools { float: right; display: inline-flex; gap: 4px; margin-top: -2px; }
+.fl-tool { border: 1px solid var(--border); background: var(--surface); border-radius: 4px; cursor: pointer;
+  font: inherit; font-size: 10px; line-height: 1; padding: 3px 7px; color: var(--text-2); }
+.fl-tool:hover { border-color: var(--accent); color: var(--accent); }
+.fl-tool.hl { background: var(--amber-sf); color: var(--amber); border-color: transparent; }
 .prod-row .pr-head .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
 .prod-row .pr-head .x:hover { color: var(--text); }
 /* the pick list in the release modal */
@@ -1155,7 +1165,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.67';
+const APP_VERSION = 'v7.68';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11839,6 +11849,29 @@ function pinnedLine(cls, item) {
    The vendor stays on the section: one section, one supplier, many items off them. */
 function sectionProducts(s) { return (s && s.products) || []; }
 function productById(s, id) { return sectionProducts(s).find(p => p.id === id) || null; }
+/* What you write stays plain text — it goes out to vendors and into exports, and neither wants
+   markup — but two marks are honoured when it is read back: **bold** and ==highlight==. The
+   buttons above the box put them round whatever you have selected, so there is nothing to learn
+   unless you would rather type them yourself. Neither mark runs past the end of its line. */
+function richText(t) {
+  return esc(String(t == null ? '' : t))
+    .replace(/==([^=\n]+)==/g, '<mark>$1</mark>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+}
+/* Put a mark round the selection, or take it off again if it is already there. */
+function wrapSel(id, mark) {
+  const el = $(id);
+  if (!el || typeof el.value !== 'string' || typeof el.selectionStart !== 'number') return;
+  const v = el.value, a = el.selectionStart, b = el.selectionEnd;
+  if (a === b) { el.focus(); return; }                       // nothing chosen, nothing to mark
+  const sel = v.slice(a, b);
+  const on = sel.length > mark.length * 2 &&
+    sel.slice(0, mark.length) === mark && sel.slice(-mark.length) === mark;
+  const next = on ? sel.slice(mark.length, -mark.length) : mark + sel + mark;
+  el.value = v.slice(0, a) + next + v.slice(b);
+  el.focus();
+  try { el.setSelectionRange(a, a + next.length); } catch (e) {}
+}
 function productLabel(p) {
   if (!p) return '';
   return [p.tag, p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
@@ -11950,8 +11983,11 @@ function productRows(s) {
           <div class="field"><label class="fl">What it is</label>
             <input class="input" id="pdName" value="${esc(p.name || '')}" placeholder="Area Drain"></div>
         </div>
-        <div class="field"><label class="fl">What to buy</label>
-          <textarea class="input autosize" rows="2" id="pdDesc"
+        <div class="field"><label class="fl">What to buy<span class="fl-tools">
+            <button type="button" class="fl-tool" title="Bold whatever you have selected" onclick="wrapSel('pdDesc','**')"><b>B</b></button>
+            <button type="button" class="fl-tool hl" title="Highlight whatever you have selected" onclick="wrapSel('pdDesc','==')">Highlight</button>
+          </span></label>
+          <textarea class="input autosize" rows="6" id="pdDesc"
             placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea></div>
         <div class="grid2">
           <div class="field"><label class="fl">Manufacturer</label>
@@ -11991,8 +12027,8 @@ function productRows(s) {
             ${out && out.expected ? `<span><i>Due</i>${esc(fmtWindow({ from: out.expected, to: out.expectedTo }))}</span>` : ''}
           </div>
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
-          <div class="pr-desc${p.desc ? '' : ' is-gap'}">${p.desc ? esc(p.desc) : 'to fill in'}</div>
-          ${p.note ? `<div class="pr-note">${esc(p.note)}</div>` : ''}
+          <div class="pr-desc${p.desc ? '' : ' is-gap'}">${p.desc ? richText(p.desc) : 'to fill in'}</div>
+          ${p.note ? `<div class="pr-note">${richText(p.note)}</div>` : ''}
         </div>` : ''}
       </div>`;
   }).join('');
