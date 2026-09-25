@@ -1189,7 +1189,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.70';
+const APP_VERSION = 'v7.71';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11954,12 +11954,19 @@ function prodRowTop(id) {
   const r = row.getBoundingClientRect();
   return r && typeof r.top === 'number' ? r.top : null;
 }
+function prodCountHtml(s) {
+  const n = sectionProducts(s).length;
+  if (!n) return '';
+  const g = sectionGaps(s);
+  return n + (g ? ' \u00b7 ' + g + ' to fill in' : '');
+}
 function repaintProducts(anchorId) {
   const s = findSection(openKey);
   const host = $('prodList');
   if (!s || !host || typeof host.querySelector !== 'function') { renderDrawer(); return; }
   const before = anchorId ? prodRowTop(anchorId) : null;
   host.innerHTML = productRows(s);
+  const count = $('prodCount'); if (count) count.innerHTML = prodCountHtml(s);
   if (before == null) return;
   const after = prodRowTop(anchorId);
   const body = drawerBody();
@@ -12021,7 +12028,7 @@ function productRows(s) {
           ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
           ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length}</span>` : ''}
-          <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${p.id}')">✎</button>
+          <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${s.key}','${p.id}')">✎</button>
           <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
         ${open ? `<div class="pr-body">
@@ -12043,14 +12050,25 @@ function releasedProducts(s) {
   for (const r of (s.releases || [])) if (r.item) out[r.item] = r;
   return out;
 }
-function editProduct(id) {
-  prodEdit = id; prodOpen = {};
+/* Opening another one while a form is up saves the one you are on first. Clicking the next pencil
+   and finding your typing gone is not something anyone would ask for. */
+async function editProduct(key, id) {
+  if (prodEdit && prodEdit !== id) await saveProduct(key, prodEdit);
+  prodEdit = id; prodOpen = { [id]: true };
   repaintProducts(id);
   const b = $('pdTag'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
 }
-function cancelProductEdit() { const was = prodEdit; prodEdit = null; repaintProducts(was); }
-async function saveProducts(key, s) {
-  renderDrawer(); renderTable();
+function cancelProductEdit() {
+  const was = prodEdit; prodEdit = null;
+  if (was) prodOpen = { [was]: true };
+  repaintProducts(was);
+}
+/* Saving an edit, adding one, taking one off: the list changes, the drawer around it does not.
+   Redrawing the whole panel for any of them threw the thing you were working on across the
+   screen, which is exactly what it does when you are only reading. */
+async function saveProducts(key, s, anchorId) {
+  repaintProducts(anchorId);
+  renderTable();
   try { await patchSection(key, { products: s.products || [] }); }
   catch (e) { toast(writeError(e), true); }
 }
@@ -12060,15 +12078,22 @@ async function addBlankProduct(key) {
   const s = findSection(key); if (!s) return;
   const p = { id: uid('prd'), tag: '', name: '', desc: '', make: '', leadWeeks: '', note: '' };
   s.products = sectionProducts(s).concat([p]);
-  prodEdit = p.id; prodOpen[p.id] = true;
-  await saveProducts(key, s);
+  prodEdit = p.id; prodOpen = { [p.id]: true };
+  // nothing to hold still here — it did not exist a moment ago — so go to it instead
+  await saveProducts(key, s, null);
+  const host = $('prodList');
+  const row = host && typeof host.querySelector === 'function' ? host.querySelector('[data-prod="' + p.id + '"]') : null;
+  if (row && row.scrollIntoView) { try { row.scrollIntoView({ block: 'center' }); } catch (e) {} }
   const b = $('pdTag'); if (b) b.focus();
 }
 async function saveProduct(key, id) {
   const s = findSection(key); if (!s) return;
   const p = productById(s, id);
   prodEdit = null;
-  if (!p) { renderDrawer(); return; }
+  // it stays open: shutting it the moment you save turns what you just wrote into a blank line
+  // and drags everything under it up the screen
+  prodOpen = { [id]: true };
+  if (!p) { repaintProducts(null); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   p.tag = v('pdTag').toUpperCase();
   p.name = titleCaseWords(v('pdName'));
@@ -12078,7 +12103,7 @@ async function saveProduct(key, id) {
   p.make = v('pdMake');
   p.leadWeeks = v('pdLead');
   p.note = autoCap(v('pdNote'));
-  await saveProducts(key, s);
+  await saveProducts(key, s, id);
 }
 async function removeProduct(key, id) {
   const s = findSection(key); if (!s) return;
@@ -12086,9 +12111,12 @@ async function removeProduct(key, id) {
   const rel = releasedProducts(s)[id];
   if (!confirm('Remove ' + (productLabel(p) || 'this product') + ' from this section?' +
     (rel ? '\n\nIt has been released; that release stays in the log.' : ''))) return;
-  s.products = sectionProducts(s).filter(x => x.id !== id);
+  const before = sectionProducts(s);
+  const above = before[Math.max(0, before.findIndex(x => x.id === id) - 1)];
+  s.products = before.filter(x => x.id !== id);
   if (prodEdit === id) prodEdit = null;
-  await saveProducts(key, s);
+  if (prodOpen[id]) prodOpen = {};
+  await saveProducts(key, s, above && above.id !== id ? above.id : null);
 }
 
 /* ── the history log ──
@@ -12397,10 +12425,7 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Products ${sectionProducts(s).length ? `<span style="display:flex;gap:8px;align-items:center">
-          <span class="muted" style="font-weight:400">${sectionProducts(s).length}${
-            sectionGaps(s) ? ` · ${sectionGaps(s)} to fill in` : ''}</span>
-          </span>` : ''}</h4>
+        <h4>Products <span class="muted" style="font-weight:400" id="prodCount">${prodCountHtml(s)}</span></h4>
         <div class="add-row">
           <button class="btn sm" onclick="addBlankProduct('${s.key}')">+ Add a product</button>
         </div>
