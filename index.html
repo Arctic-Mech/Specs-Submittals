@@ -534,6 +534,13 @@ tbody tr { cursor: pointer; }
 tbody tr:hover td { background: var(--surface-2); }
 tbody tr.sel td { background: var(--accent-sf); }
 .c-num { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--text-2); }
+/* the star that pulls a section to the top; faint until you hover the row, solid once it is set */
+.sec-star { border: none; background: none; padding: 0 6px 0 0; margin: 0; cursor: pointer; font-size: 13px;
+  line-height: 1; color: var(--text-3); opacity: .25; vertical-align: baseline; }
+tbody tr:hover .sec-star { opacity: .7; }
+.sec-star.on, tbody tr:hover .sec-star.on { opacity: 1; color: var(--amber); }
+.sec-star:hover { opacity: 1; color: var(--amber); }
+tr.divhead.pinhead td { color: var(--amber); }
 .c-title { font-weight: 500; }
 .c-title .sub { font-size: 11.5px; color: var(--text-3); font-weight: 400; }
 tbody td .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.35; }
@@ -1113,7 +1120,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.62';
+const APP_VERSION = 'v7.63';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1436,19 +1443,43 @@ const isStructural = l => PART_RE.test(l) || ART_RE.test(l) || END_RE.test(l) ||
 
 /* --- signal A: running headers / footers --- */
 const RUN_RE = new RegExp('^\\s*(?:(.*?)[\\s.]+)?' + NUM_RE + '\\s*[-–—]\\s*(\\d{1,3})\\s*$');
+/* A running footer is usually several columns printed across one line — the issue date, the
+   section title, the section number. A PDF has no idea they are columns, so they come back glued
+   into one string and the date arrives stuck to the front of the title: every section on one job
+   came through as "July 31, 2026 Common Work Results for Plumbing". Take the date off. */
+const MONTHS_RE = '(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[A-Z]*\\.?';
+const DATE_RE = '(?:\\d{1,2}[\\/.-]\\d{1,2}[\\/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2}'
+  + '|' + MONTHS_RE + '\\s+\\d{1,2}\\s*,?\\s*\\d{4}|\\d{1,2}\\s+' + MONTHS_RE + '\\s*,?\\s*\\d{4})';
+const RUN_DATE_LEAD = new RegExp('^\\s*' + DATE_RE + '[\\s.,:|-]*', 'i');
+const RUN_DATE_TAIL = new RegExp('[\\s.,:|-]*' + DATE_RE + '\\s*$', 'i');
+const stripRunDate = t => String(t || '').replace(RUN_DATE_LEAD, '').replace(RUN_DATE_TAIL, '').trim();
+/* Nothing left but the date means the title column sat on its own line — printed above or below
+   the one the number landed on, because it was too long to fit and wrapped. Both halves are
+   right beside it, so read them back. */
+function runTitleNearby(L, i) {
+  const ok = s => {
+    const t = String(s || '').trim();
+    return t && t.length <= 70 && !isStructural(t) && !RUN_RE.test(t) &&
+      !/[a-z]/.test(t.replace(/\(s\)/g, '')) && /[A-Z]/.test(t) && !stripRunDate(t).match(/^$/);
+  };
+  const before = ok(L[i - 1]) ? String(L[i - 1]).trim() : '';
+  const after = ok(L[i + 1]) ? String(L[i + 1]).trim() : '';
+  return (before + ' ' + after).trim();
+}
 function scanRunningTitles(pages) {
   const map = new Map();
   for (const page of pages) {
-    const L = page.lines, zone = [];
-    for (let i = 0; i < Math.min(4, L.length); i++) zone.push(L[i]);
-    for (let i = Math.max(0, L.length - 4); i < L.length; i++) zone.push(L[i]);
+    const L = page.lines, idx = [];
+    for (let i = 0; i < Math.min(4, L.length); i++) idx.push(i);
+    for (let i = Math.max(4, L.length - 4); i < L.length; i++) idx.push(i);
     const cands = [];
-    for (const raw of zone) {
-      const m = RUN_RE.exec((raw || '').trim());
+    for (const i of idx) {
+      const m = RUN_RE.exec((L[i] || '').trim());
       if (!m) continue;
       const key = normNum(m[2]);
       if (!key) continue;
-      const title = cleanTitle(m[1] || '');
+      let title = cleanTitle(stripRunDate(m[1] || ''));
+      if (!title) title = cleanTitle(runTitleNearby(L, i));
       if (title.length > 90 || /[;,]$/.test(title)) continue;   // that was a sentence
       cands.push({ key, title, seq: parseInt(m[3], 10) });
     }
@@ -11359,9 +11390,16 @@ function renderTable() {
     return;
   }
 
-  let html = '', lastDiv = null;
+  let html = '', lastDiv = null, lastPin = null;
   for (const s of list) {
-    if (divFilter === 'all' && submSort !== 'response' && s.division !== lastDiv) {
+    const grouped = divFilter === 'all' && submSort !== 'response';
+    const pin = !!s.pinned;
+    // the starred ones sit in their own band; the divisions start again underneath it
+    if (grouped && pin !== lastPin) {
+      lastPin = pin; lastDiv = null;
+      if (pin) html += `<tr class="divhead pinhead"><td colspan="6">★ Starred</td></tr>`;
+    }
+    if (grouped && !pin && s.division !== lastDiv) {
       lastDiv = s.division;
       html += `<tr class="divhead"><td colspan="6">Division ${s.division}${DIVISION_NAMES[s.division] ? ' — ' + DIVISION_NAMES[s.division] : ''}</td></tr>`;
     }
@@ -11416,7 +11454,8 @@ function secRowHtml(s) {
   // the last thing somebody typed rather than the last thing that happened
   const noteLine = pinnedLine('pin-note', newestBy((s.history || []).filter(h => h.text), x => x.ts));
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
-      <td class="c-num">${esc(s.number)}</td>
+      <td class="c-num"><button class="sec-star${s.pinned ? ' on' : ''}" title="${s.pinned ? 'Starred — click to unstar' : 'Star this section to pull it to the top'}"
+        onclick="event.stopPropagation();toggleSecPin('${s.key}')">${s.pinned ? '★' : '☆'}</button>${esc(s.number)}</td>
       <td class="c-title">
         <div class="t-line">${title}${pencil}</div>
         ${tags}${desc}${noteLine}</td>
@@ -12844,6 +12883,9 @@ async function deleteSection(key) {
 const OUR_DIVS = { '22': 1, '23': 2 };
 function divRank(d) { return OUR_DIVS[String(d)] || 9; }
 function sectionOrder(a, b) {
+  // a star pulls a section clear of its division and up to the top of the register
+  const pin = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+  if (pin) return pin;
   const dr = divRank(a.division) - divRank(b.division);
   if (dr) return dr;
   if (a.division !== b.division) return String(a.division).localeCompare(String(b.division));
@@ -12853,6 +12895,18 @@ function sectionOrder(a, b) {
 }
 function sortSections() {
   if (job && job.sections) job.sections.sort(sectionOrder);
+}
+/* A star says "this one matters on this job" — the equipment holding up the schedule, the one the
+   GC keeps asking about. It rides on the section rather than on this browser, because it is a fact
+   about the job and everyone reading the register should see the same handful at the top. */
+async function toggleSecPin(key) {
+  const s = findSection(key); if (!s) return;
+  s.pinned = !s.pinned;
+  sortSections();
+  renderTable();
+  if (openKey === key) renderDrawer();
+  try { await patchSection(key, { pinned: !!s.pinned }); }
+  catch (e) { toast(writeError(e), true); }
 }
 function newSectionRecord(base) {
   return Object.assign({
