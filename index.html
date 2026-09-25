@@ -451,6 +451,12 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-kv span { font-size: 12.5px; color: var(--text-2); }
 .pr-kv i { display: block; font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--text-3); }
+/* Blank is shown as blank, so a half-filled item does not read as a finished one. */
+.pr-gap { flex: none; font-size: 10.5px; font-weight: 700; color: var(--amber); background: var(--amber-sf);
+  border-radius: 999px; padding: 1px 7px; }
+.pr-name.is-gap, .pr-desc.is-gap, .pr-kv em.is-gap { color: var(--amber); font-style: italic; font-weight: 400; }
+.pr-tag.is-gap { color: var(--amber); background: var(--amber-sf); font-style: italic; font-weight: 400; }
+.pr-kv em.is-gap { font-size: 12.5px; }
 .prod-row { transition: none; }
 .prod-row:not(.is-open):not(.is-edit) { margin-bottom: 3px; padding-bottom: 4px; padding-top: 4px; }
 .pr-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent);
@@ -1149,7 +1155,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.65';
+const APP_VERSION = 'v7.66';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11897,7 +11903,21 @@ function parseProductBlock(text) {
   return out;
 }
 
+/* What a product is expected to carry. Anything blank is shown as blank rather than left out, so
+   a half-filled item looks half-filled instead of looking finished. A note is not on the list —
+   most items have nothing to say. */
+const PROD_FIELDS = [
+  { k: 'tag', label: 'Mark' },
+  { k: 'name', label: 'What it is' },
+  { k: 'make', label: 'Manufacturer' },
+  { k: 'desc', label: 'What to buy' },
+  { k: 'leadWeeks', label: 'Lead time' }
+];
+function productGaps(p) { return PROD_FIELDS.filter(f => !String((p && p[f.k]) || '').trim()); }
+function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + productGaps(p).length, 0); }
+
 let prodEdit = null;                 // the product open for editing, if any
+let prodPaste = false;               // ...and whether the paste-a-whole-schedule box is showing
 let prodOpen = {};                   // ...and which ones are opened up to be read
 function toggleProduct(id) {
   if (prodOpen[id]) delete prodOpen[id]; else prodOpen[id] = true;
@@ -11946,25 +11966,28 @@ function productRows(s) {
     // buy, who makes it and how long it takes are a click away, where they do not crowd the rest.
     const out = rel[p.id];
     const open = !!prodOpen[p.id];
-    const more = !!(p.desc || p.make || p.leadWeeks || p.note);
+    const gaps = productGaps(p);
+    const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
     return `
       <div class="prod-row${open ? ' is-open' : ''}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
-          <span class="pr-caret">${more ? (open ? '▾' : '▸') : ''}</span>
-          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : ''}
-          <span class="pr-name">${esc(p.name || (p.desc || '').slice(0, 44) || '(unnamed)')}</span>
+          <span class="pr-caret">${open ? '▾' : '▸'}</span>
+          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : '<span class="pr-tag is-gap">no mark</span>'}
+          <span class="pr-name${p.name ? '' : ' is-gap'}">${esc(p.name || (p.desc || '').slice(0, 44) || 'Not named yet')}</span>
           ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
+          ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length} to fill in</span>` : ''}
           <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${p.id}')">✎</button>
           <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
         ${open ? `<div class="pr-body">
-          ${(p.make || p.leadWeeks) ? `<div class="pr-kv">
-            ${p.make ? `<span><i>Manufacturer</i>${esc(p.make)}</span>` : ''}
-            ${p.leadWeeks ? `<span><i>Lead time</i>${esc(leadLabel(p.leadWeeks))}</span>` : ''}
+          <div class="pr-kv">
+            <span><i>Manufacturer</i>${p.make ? esc(p.make) : '<em class="is-gap">to fill in</em>'}</span>
+            <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : '<em class="is-gap">to fill in</em>'}</span>
             ${out && out.expected ? `<span><i>Due</i>${esc(fmtWindow({ from: out.expected, to: out.expectedTo }))}</span>` : ''}
-          </div>` : ''}
-          ${p.desc ? `<div class="pr-desc">${esc(p.desc)}</div>` : ''}
+          </div>
+          <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
+          <div class="pr-desc${p.desc ? '' : ' is-gap'}">${p.desc ? esc(p.desc) : 'to fill in'}</div>
           ${p.note ? `<div class="pr-note">${esc(p.note)}</div>` : ''}
         </div>` : ''}
       </div>`;
@@ -11986,6 +12009,17 @@ async function saveProducts(key, s) {
   try { await patchSection(key, { products: s.products || [] }); }
   catch (e) { toast(writeError(e), true); }
 }
+/* The ordinary way in: an empty item, opened on its form, so what it wants is asked for rather
+   than guessed at. Pasting a whole schedule is still there, but you have to go and ask for it. */
+async function addBlankProduct(key) {
+  const s = findSection(key); if (!s) return;
+  const p = { id: uid('prd'), tag: '', name: '', desc: '', make: '', leadWeeks: '', note: '' };
+  s.products = sectionProducts(s).concat([p]);
+  prodEdit = p.id; prodOpen[p.id] = true;
+  await saveProducts(key, s);
+  const b = $('pdTag'); if (b) b.focus();
+}
+function toggleProdPaste() { prodPaste = !prodPaste; renderDrawer(); const b = $('prodInput'); if (b) b.focus(); }
 async function addProducts(key) {
   const s = findSection(key); if (!s) return;
   const el = $('prodInput'); const text = (el && el.value || '').trim();
@@ -11994,7 +12028,7 @@ async function addProducts(key) {
   if (!found.length) return;
   s.products = sectionProducts(s).concat(found);
   if (el) el.value = '';
-  prodEdit = null;
+  prodEdit = null; prodPaste = false;
   await saveProducts(key, s);
   const ne = $('prodInput'); if (ne) ne.focus();
   if (found.length > 1) toast(found.length + ' products added');
@@ -12214,8 +12248,8 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; renderDrawer(); renderTable(); navSync(); }
-function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; prodPaste = false; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
@@ -12315,15 +12349,22 @@ function renderDrawer() {
 
       <div class="sec">
         <h4>Products ${sectionProducts(s).length ? `<span style="display:flex;gap:8px;align-items:center">
-          <span class="muted" style="font-weight:400">${sectionProducts(s).length}</span>
+          <span class="muted" style="font-weight:400">${sectionProducts(s).length}${
+            sectionGaps(s) ? ` · <span class="pr-gap">${sectionGaps(s)} to fill in</span>` : ''}</span>
           ${sectionProducts(s).length > 1 ? `<button class="btn sm ghost" onclick="toggleAllProducts('${s.key}')">${
             sectionProducts(s).some(p => !prodOpen[p.id]) ? 'Open all' : 'Close all'}</button>` : ''}</span>` : ''}</h4>
         <div class="add-row">
-          <textarea class="input autosize" rows="1" id="prodInput"
-            placeholder="Paste the schedule…  AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addProducts('${s.key}')}"></textarea>
-          <button class="btn sm" onclick="addProducts('${s.key}')">Add</button>
+          <button class="btn sm" onclick="addBlankProduct('${s.key}')">+ Add a product</button>
+          <button class="btn sm ghost" onclick="toggleProdPaste()">${prodPaste ? 'Cancel' : 'Paste a whole schedule…'}</button>
         </div>
+        ${prodPaste ? `<div class="add-row">
+          <textarea class="input autosize" rows="2" id="prodInput"
+            placeholder="AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addProducts('${s.key}')}"></textarea>
+          <button class="btn sm" onclick="addProducts('${s.key}')">Split it up</button>
+        </div>
+        <div class="muted" style="margin:-4px 0 12px;font-size:12.5px">Each mark starts a new item, and
+          what follows is read as its name, its maker and what to buy. Check them after — it is a guess.</div>` : ''}
         ${productRows(s)}
         <div class="muted" style="margin-top:8px">One supplier for the section, many items off them —
           the vendor stays in Details. Each item carries its own lead time, and releases are made from this list.</div>
