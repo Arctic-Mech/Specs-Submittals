@@ -443,7 +443,16 @@ textarea.autosize[rows="1"] { min-height: 0; }
 /* ── the product log: what actually has to be bought off this section ── */
 .prod-row { border-left: 3px solid var(--border-2); padding: 6px 0 7px 11px; margin-bottom: 9px; }
 .prod-row.is-edit { border-left-color: var(--accent); padding-right: 2px; }
-.pr-head { display: flex; align-items: baseline; gap: 7px; }
+.pr-head { display: flex; align-items: baseline; gap: 7px; cursor: pointer; }
+.pr-head:hover .pr-name { color: var(--accent); }
+.pr-caret { flex: none; width: 10px; font-size: 9px; color: var(--text-3); line-height: 1.6; }
+.pr-body { margin-top: 5px; }
+.pr-kv { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 5px; }
+.pr-kv span { font-size: 12.5px; color: var(--text-2); }
+.pr-kv i { display: block; font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-3); }
+.prod-row { transition: none; }
+.prod-row:not(.is-open):not(.is-edit) { margin-bottom: 3px; padding-bottom: 4px; padding-top: 4px; }
 .pr-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent);
   background: var(--accent-sf); border-radius: 4px; padding: 1px 6px; }
 .pr-name { font-size: 13.5px; font-weight: 600; }
@@ -1140,7 +1149,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.64';
+const APP_VERSION = 'v7.65';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11827,6 +11836,21 @@ function productLabel(p) {
 /* A mark, what it is, then what to buy: "AD-1 - Area Drain: J.R. Smith 2142 Series, …". That is the
    shape a spec is read in and the shape it gets pasted in, so take it apart that way. */
 const PROD_TAG_RE = /^\s*([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?)\s*[-–:.]*\s+(.*)$/;
+/* "J.R. Smith 2142 Series, cast iron body…" names its maker first and its model second, so the
+   words before the first one carrying a digit are the manufacturer. Only a short run of them
+   counts, and only where a model number really does follow — otherwise "Round nickel bronze
+   grate" would come out made by "Round". The description keeps every word either way, so a wrong
+   guess costs nothing but a correction. */
+function guessMake(desc) {
+  const words = String(desc || '').trim().split(/\s+/);
+  const out = [];
+  for (const w of words) {
+    if (/\d/.test(w)) return out.length && out.length <= 3 ? out.join(' ').replace(/[,;:]+$/, '') : '';
+    if (out.length >= 3 || !/^[A-Z]/.test(w)) return '';
+    out.push(w);
+  }
+  return '';
+}
 function parseProductLine(line) {
   const raw = String(line || '').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
@@ -11836,7 +11860,8 @@ function parseProductLine(line) {
   let name = '', desc = rest;
   const c = rest.indexOf(':');
   if (c > 0 && c <= 60) { name = rest.slice(0, c).trim(); desc = rest.slice(c + 1).trim(); }
-  return { id: uid('prd'), tag, name: titleCaseWords(name), desc: autoCap(desc), leadWeeks: '', note: '' };
+  return { id: uid('prd'), tag, name: titleCaseWords(name), desc: autoCap(desc),
+    make: guessMake(desc), leadWeeks: '', note: '' };
 }
 /* A spec is usually pasted as one run of prose with several items in it, not one per line. A mark
    at the start of a sentence begins a new item — but only where a colon follows soon after, which
@@ -11873,6 +11898,19 @@ function parseProductBlock(text) {
 }
 
 let prodEdit = null;                 // the product open for editing, if any
+let prodOpen = {};                   // ...and which ones are opened up to be read
+function toggleProduct(id) {
+  if (prodOpen[id]) delete prodOpen[id]; else prodOpen[id] = true;
+  renderDrawer();
+}
+function toggleAllProducts(key) {
+  const s = findSection(key); if (!s) return;
+  const list = sectionProducts(s);
+  const anyShut = list.some(p => !prodOpen[p.id]);
+  prodOpen = {};
+  if (anyShut) for (const p of list) prodOpen[p.id] = true;
+  renderDrawer();
+}
 function productRows(s) {
   const list = sectionProducts(s);
   if (!list.length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
@@ -11892,6 +11930,8 @@ function productRows(s) {
           <textarea class="input autosize" rows="2" id="pdDesc"
             placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea></div>
         <div class="grid2">
+          <div class="field"><label class="fl">Manufacturer</label>
+            <input class="input" id="pdMake" value="${esc(p.make || '')}" placeholder="J.R. Smith"></div>
           <div class="field"><label class="fl">Lead time (weeks)</label>
             <input class="input" id="pdLead" value="${esc(p.leadWeeks === 0 ? '0' : (p.leadWeeks || ''))}" placeholder="6 or 6-7"></div>
           <div class="field"><label class="fl">Anything else</label>
@@ -11902,20 +11942,31 @@ function productRows(s) {
           <button class="btn sm ghost" onclick="cancelProductEdit()">Cancel</button>
         </div>
       </div>`;
+    // Shut, a product is its mark and what it is — forty of those is a list you can read. What to
+    // buy, who makes it and how long it takes are a click away, where they do not crowd the rest.
     const out = rel[p.id];
+    const open = !!prodOpen[p.id];
+    const more = !!(p.desc || p.make || p.leadWeeks || p.note);
     return `
-      <div class="prod-row">
-        <div class="pr-head">
+      <div class="prod-row${open ? ' is-open' : ''}">
+        <div class="pr-head" onclick="toggleProduct('${p.id}')">
+          <span class="pr-caret">${more ? (open ? '▾' : '▸') : ''}</span>
           ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : ''}
-          <span class="pr-name">${esc(p.name || '(unnamed)')}</span>
-          ${p.leadWeeks ? `<span class="pr-lead">${esc(leadLabel(p.leadWeeks))}</span>` : ''}
+          <span class="pr-name">${esc(p.name || (p.desc || '').slice(0, 44) || '(unnamed)')}</span>
           ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
-          <button class="x" title="Edit" onclick="editProduct('${p.id}')">✎</button>
-          <button class="x" title="Remove" onclick="removeProduct('${s.key}','${p.id}')">✕</button>
+          <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${p.id}')">✎</button>
+          <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
-        ${p.desc ? `<div class="pr-desc">${esc(p.desc)}</div>` : ''}
-        ${p.note ? `<div class="pr-note">${esc(p.note)}</div>` : ''}
+        ${open ? `<div class="pr-body">
+          ${(p.make || p.leadWeeks) ? `<div class="pr-kv">
+            ${p.make ? `<span><i>Manufacturer</i>${esc(p.make)}</span>` : ''}
+            ${p.leadWeeks ? `<span><i>Lead time</i>${esc(leadLabel(p.leadWeeks))}</span>` : ''}
+            ${out && out.expected ? `<span><i>Due</i>${esc(fmtWindow({ from: out.expected, to: out.expectedTo }))}</span>` : ''}
+          </div>` : ''}
+          ${p.desc ? `<div class="pr-desc">${esc(p.desc)}</div>` : ''}
+          ${p.note ? `<div class="pr-note">${esc(p.note)}</div>` : ''}
+        </div>` : ''}
       </div>`;
   }).join('');
 }
@@ -11957,6 +12008,9 @@ async function saveProduct(key, id) {
   p.tag = v('pdTag').toUpperCase();
   p.name = titleCaseWords(v('pdName'));
   p.desc = autoCap(v('pdDesc'));
+  // left exactly as typed: title-casing it would turn "J.R. Smith" into "J.r. Smith". The
+  // capitaliser every field shares already raises a first letter without lowering any.
+  p.make = v('pdMake');
   p.leadWeeks = v('pdLead');
   p.note = autoCap(v('pdNote'));
   await saveProducts(key, s);
@@ -12160,8 +12214,8 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; renderDrawer(); renderTable(); navSync(); }
-function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; $('drawerHost').innerHTML = ''; navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
@@ -12260,7 +12314,10 @@ function renderDrawer() {
       </div>
 
       <div class="sec">
-        <h4>Products ${sectionProducts(s).length ? `<span class="muted" style="font-weight:400">${sectionProducts(s).length}</span>` : ''}</h4>
+        <h4>Products ${sectionProducts(s).length ? `<span style="display:flex;gap:8px;align-items:center">
+          <span class="muted" style="font-weight:400">${sectionProducts(s).length}</span>
+          ${sectionProducts(s).length > 1 ? `<button class="btn sm ghost" onclick="toggleAllProducts('${s.key}')">${
+            sectionProducts(s).some(p => !prodOpen[p.id]) ? 'Open all' : 'Close all'}</button>` : ''}</span>` : ''}</h4>
         <div class="add-row">
           <textarea class="input autosize" rows="1" id="prodInput"
             placeholder="Paste the schedule…  AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…"
