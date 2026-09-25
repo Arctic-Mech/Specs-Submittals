@@ -475,6 +475,14 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-desc.is-none { color: var(--text-3); font-style: normal; }
 .pr-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent);
   background: var(--accent-sf); border-radius: 4px; padding: 1px 6px; }
+/* a mark that has already gone out, among the ones on the same product that have not */
+.pr-tag.is-out { color: var(--green); background: var(--green-sf); }
+.pr-out.is-part { color: var(--amber); background: var(--amber-sf); }
+.pr-marks { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
+.pr-mark { font-family: var(--mono); font-size: 11.5px; border-radius: 4px; padding: 1px 7px;
+  color: var(--text-3); background: var(--surface-3); }
+.pr-mark.is-out { color: var(--amber); background: var(--amber-sf); }
+.pr-mark.is-done { color: var(--green); background: var(--green-sf); }
 .pr-name { font-size: 13.5px; font-weight: 600; }
 .pr-lead { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); }
 .pr-out { flex: none; font-size: 10.5px; font-weight: 700; color: var(--green); background: var(--green-sf);
@@ -1197,7 +1205,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.74';
+const APP_VERSION = 'v7.75';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3514,7 +3522,7 @@ function searchHay(s) {
     (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
     (s.history || []).map(h => h.text || '').join(' '),     // so you can find what you logged
     // the product log in full: you search for "area drain" or "J.R. Smith", not for "AD-1"
-    (s.products || []).map(p => [p.tag, p.name, p.make, p.desc, p.note].filter(Boolean).join(' ')).join(' '),
+    (s.products || []).map(p => [marksLabel(p), p.name, p.make, p.desc, p.note].filter(Boolean).join(' ')).join(' '),
     (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
   ].filter(Boolean).join(' ').toLowerCase();
 }
@@ -11973,9 +11981,41 @@ function wrapSel(id, mark) {
   try { el.setSelectionRange(a, a + next.length); } catch (e) {}
   syncDescHl();
 }
+/* ── marks ──
+   One product can carry several. The same area drain at six locations is one thing to buy and one
+   thing to submit on, but AD-1 in the lobby and AD-6 in the garage go out to site on their own and
+   sometimes come back approved on their own. So a mark, not a product, is what a release is made
+   of — and a product is only fully out once every one of its marks is.
+
+   A product written before this had a single `tag`; it reads as one mark, and is rewritten as one
+   the next time it is saved. Nothing has to be migrated up front. */
+function productMarks(p) {
+  if (!p) return [];
+  if (Array.isArray(p.marks) && p.marks.length) return p.marks;
+  const t = String(p.tag || '').trim();
+  return t ? [{ id: (p.id || 'p') + '#0', tag: t }] : [];
+}
+function marksLabel(p) { return productMarks(p).map(m => m.tag).join(' '); }
+function markById(p, id) { return productMarks(p).find(m => m.id === id) || null; }
+/* Typed as one line — "AD-1, AD-2, AD-3" or just spaces between them. A mark that was already
+   there keeps its id, so whatever has been released against it stays attached to it. */
+function parseMarks(text, p) {
+  const was = productMarks(p), seen = {}, out = [];
+  for (const raw of String(text || '').split(/[\s,;]+/)) {
+    const tag = raw.trim().toUpperCase();
+    if (!tag || seen[tag]) continue;
+    seen[tag] = 1;
+    out.push(was.find(m => m.tag === tag) || { id: uid('mk'), tag });
+  }
+  return out;
+}
 function productLabel(p) {
   if (!p) return '';
-  return [p.tag, p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
+  return [marksLabel(p), p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
+}
+function markLabel(p, markId) {
+  const m = markById(p, markId);
+  return [(m && m.tag) || '', (p && p.name) || ''].filter(Boolean).join(' ') || productLabel(p);
 }
 /* A mark, what it is, then what to buy: "AD-1 - Area Drain: J.R. Smith 2142 Series, …". That is the
    shape a spec is read in and the shape it gets pasted in, so take it apart that way. */
@@ -11984,7 +12024,7 @@ const PROD_TAG_RE = /^\s*([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?)\s*[-–:.]*\s+(.*)$
    a half-filled item looks half-filled instead of looking finished. A note is not on the list —
    most items have nothing to say. */
 const PROD_FIELDS = [
-  { k: 'tag', label: 'Mark' },
+  { k: 'marks', label: 'Mark' },
   { k: 'name', label: 'What it is' },
   { k: 'make', label: 'Manufacturer' },
   { k: 'desc', label: 'What to buy' },
@@ -11993,7 +12033,11 @@ const PROD_FIELDS = [
 /* Something not filled in shows as a plain dash. A row shouting "no mark" and "to fill in" in
    amber was harder to read than the blanks it was pointing at. */
 const PR_DASH = '\u2013';
-function productGaps(p) { return PROD_FIELDS.filter(f => !String((p && p[f.k]) || '').trim()); }
+function productGaps(p) {
+  return PROD_FIELDS.filter(f => f.k === 'marks'
+    ? !productMarks(p).length
+    : !String((p && p[f.k]) || '').trim());
+}
 function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + productGaps(p).length, 0); }
 
 let prodEdit = null;                 // the product open for editing, if any
@@ -12048,13 +12092,14 @@ function productRows(s) {
   if (!list.length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
     Paste the schedule straight in — "AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…" —
     and it comes apart into its mark, what it is, and what to buy.</div>`;
-  const rel = releasedProducts(s);
+  const relMarks = releasedMarks(s);
   return list.map((p, i) => {
     if (prodEdit === p.id) return `
       <div class="prod-row is-edit${p.pinned ? ' is-first' : ''}" data-prod="${p.id}">
         <div class="grid2">
-          <div class="field"><label class="fl">Mark</label>
-            <input class="input" id="pdTag" value="${esc(p.tag || '')}"></div>
+          <div class="field"><label class="fl">Mark${productMarks(p).length > 1 ? ' <span class="fl-tag">' + productMarks(p).length + '</span>' : ''}</label>
+            <input class="input" id="pdTag" value="${esc(marksLabel(p))}"
+              title="One or several — AD-1, AD-2, AD-3"></div>
           <div class="field"><label class="fl">What it is</label>
             <input class="input" id="pdName" value="${esc(p.name || '')}"></div>
         </div>
@@ -12081,7 +12126,8 @@ function productRows(s) {
       </div>`;
     // Shut, a product is its mark and what it is — forty of those is a list you can read. What to
     // buy, who makes it and how long it takes are a click away, where they do not crowd the rest.
-    const out = rel[p.id];
+    const out = productOutState(s, p);
+    const marks = productMarks(p);
     const open = !!prodOpen[p.id];
     const gaps = productGaps(p);
     const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
@@ -12093,9 +12139,12 @@ function productRows(s) {
           <button class="pr-star${p.pinned ? ' on' : ''}" onclick="event.stopPropagation();toggleProdPin('${s.key}','${p.id}')"
             title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
-          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : `<span class="pr-none">${PR_DASH}</span>`}
+          ${marks.length ? marks.map(m => `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}">${esc(m.tag)}</span>`).join('')
+                         : `<span class="pr-none">${PR_DASH}</span>`}
           <span class="pr-name${p.name ? '' : ' is-none'}">${p.name ? esc(p.name) : ((p.desc || '').slice(0, 44) || PR_DASH)}</span>
-          ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
+          ${out ? `<span class="pr-out${out.all ? '' : ' is-part'}">${
+            out.all ? (out.delivered ? '✓ delivered' : 'released')
+                    : out.n + ' of ' + out.of + ' out'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
           ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length}</span>` : ''}
           <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${s.key}','${p.id}')">✎</button>
@@ -12105,8 +12154,13 @@ function productRows(s) {
           <div class="pr-kv">
             <span><i>Manufacturer</i>${p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`}</span>
             <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
-            ${out && out.expected ? `<span><i>Due</i>${esc(fmtWindow({ from: out.expected, to: out.expectedTo }))}</span>` : ''}
           </div>
+          ${marks.length > 1 ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
+          <div class="pr-marks">${marks.map(m => { const r = relMarks[m.id];
+            return `<span class="pr-mark${r ? (r.delivered ? ' is-done' : ' is-out') : ''}"
+              title="${r ? (r.delivered ? 'Delivered' : 'Released ' + esc(r.date ? fmtDate(r.date + 'T00:00:00') : '')
+                  + (r.expected ? ', due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : ''))
+                : 'Still to go out'}">${esc(m.tag)}${r ? (r.delivered ? ' ✓' : ' · out') : ''}</span>`; }).join('')}</div>` : ''}
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
           <div class="pr-desc${p.desc ? '' : ' is-none'}">${p.desc ? richText(p.desc) : PR_DASH}</div>
           ${p.note ? `<div class="pr-note">${richText(p.note)}</div>` : ''}
@@ -12114,11 +12168,25 @@ function productRows(s) {
       </div>`;
   }).join('');
 }
-/* Which products are already out, so the same one is not released twice by mistake. */
-function releasedProducts(s) {
+/* Which marks are already out, so the same one is not released twice by mistake. A release made
+   before marks existed named only its product; it stands for that product's first mark. */
+function releasedMarks(s) {
   const out = {};
-  for (const r of (s.releases || [])) if (r.item) out[r.item] = r;
+  for (const r of (s.releases || [])) {
+    if (r.mark) { out[r.mark] = r; continue; }
+    if (!r.item) continue;
+    const first = productMarks(productById(s, r.item))[0];
+    if (first) out[first.id] = r;
+  }
   return out;
+}
+/* A product is out when every mark on it is. */
+function productOutState(s, p) {
+  const marks = productMarks(p), out = releasedMarks(s);
+  const done = marks.filter(m => out[m.id]);
+  if (!marks.length || !done.length) return null;
+  return { n: done.length, of: marks.length, all: done.length === marks.length,
+    delivered: done.every(m => out[m.id].delivered), rel: out[done[0].id] };
 }
 /* Opening another one while a form is up saves the one you are on first. Clicking the next pencil
    and finding your typing gone is not something anyone would ask for. */
@@ -12146,7 +12214,7 @@ async function saveProducts(key, s, anchorId) {
    rather than guessed at. */
 async function addBlankProduct(key) {
   const s = findSection(key); if (!s) return;
-  const p = { id: uid('prd'), tag: '', name: '', desc: '', make: '', leadWeeks: '', note: '' };
+  const p = { id: uid('prd'), tag: '', marks: [], name: '', desc: '', make: '', leadWeeks: '', note: '' };
   s.products = sectionProducts(s).concat([p]);
   prodEdit = p.id; prodOpen = { [p.id]: true };
   // nothing to hold still here — it did not exist a moment ago — so go to it instead
@@ -12165,7 +12233,8 @@ async function saveProduct(key, id) {
   prodOpen = { [id]: true };
   if (!p) { repaintProducts(null); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
-  p.tag = v('pdTag').toUpperCase();
+  p.marks = parseMarks(v('pdTag'), p);
+  p.tag = (p.marks[0] || {}).tag || '';      // kept in step for anything still reading the old field
   p.name = titleCaseWords(v('pdName'));
   p.desc = autoCap(v('pdDesc'));
   // left exactly as typed: title-casing it would turn "J.R. Smith" into "J.r. Smith". The
@@ -12178,7 +12247,7 @@ async function saveProduct(key, id) {
 async function removeProduct(key, id) {
   const s = findSection(key); if (!s) return;
   const p = productById(s, id); if (!p) return;
-  const rel = releasedProducts(s)[id];
+  const rel = productOutState(s, p);
   if (!confirm('Remove ' + (productLabel(p) || 'this product') + ' from this section?' +
     (rel ? '\n\nIt has been released; that release stays in the log.' : ''))) return;
   const before = sectionProducts(s);
@@ -12822,7 +12891,7 @@ function releaseList(s) {
         <input type="checkbox" ${r.delivered ? 'checked' : ''}
           onchange="toggleDelivered('${s.key}','${r.id}', this.checked)">
       </label>
-      <span class="rn"><b>${esc(r.item ? (productLabel(productById(s, r.item)) || r.label) : r.label)}</b>
+      <span class="rn"><b>${esc(r.item ? (markLabel(productById(s, r.item), r.mark) || r.label) : r.label)}</b>
         <small>Released ${esc(r.date ? fmtDate(r.date + 'T00:00:00') : '—')}${
           r.weeks ? ' · lead time ' + esc(leadLabel(r.weeks)) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
       <span class="due" style="color:${r.delivered ? cvar('green') : (r.expected ? cvar('blue') : 'var(--text-3)')}">${
@@ -12857,11 +12926,11 @@ async function setRelease(key, state) {
 /* With a product list there is nothing to ask: the section is fully released once every item on it
    is out, and partly released while any is still to go. */
 function releaseStateFromProducts(s) {
-  const list = sectionProducts(s);
-  if (!list.length) return s.releaseState || 'released';
-  const out = releasedProducts(s);
-  const n = list.filter(p => out[p.id]).length;
-  return n === 0 ? (s.releaseState || 'not_ready') : n === list.length ? 'released' : 'partial';
+  const marks = sectionProducts(s).reduce((a, p) => a.concat(productMarks(p)), []);
+  if (!marks.length) return s.releaseState || 'released';
+  const out = releasedMarks(s);
+  const n = marks.filter(m => out[m.id]).length;
+  return n === 0 ? (s.releaseState || 'not_ready') : n === marks.length ? 'released' : 'partial';
 }
 function releaseModal(key, relId) {
   const s = findSection(key);
@@ -12878,15 +12947,21 @@ function releaseModal(key, relId) {
       <div class="modal-body">
         ${(!r && sectionProducts(s).length) ? `<div class="field">
           <label class="fl">What is going out</label>
-          <div class="rel-pick" id="rlPick">${productsInOrder(s).map(pr => {
-            const out = releasedProducts(s)[pr.id];
-            return `<label class="tick-row${out ? ' is-out' : ''}">
-              <input type="checkbox" class="rlItem" value="${esc(pr.id)}" ${out ? 'disabled' : ''}>
-              <span>${pr.tag ? `<b>${esc(pr.tag)}</b> ` : ''}${esc(pr.name || pr.desc.slice(0, 40))}${
-                pr.leadWeeks ? ` <span class="muted">· ${esc(leadLabel(pr.leadWeeks))}</span>` : ''}${
-                out ? ` <span class="muted">· already out</span>` : ''}</span></label>`; }).join('')}</div>
-          <div class="muted" style="margin-top:6px">Each one goes into the log on its own, with its own
-            lead time and its own delivery date. Tick none and it is recorded as one release instead.</div>
+          <div class="rel-pick" id="rlPick">${(function () {
+            const done = releasedMarks(s), rows = [];
+            for (const pr of productsInOrder(s)) for (const mk of productMarks(pr)) {
+              const out = done[mk.id];
+              rows.push(`<label class="tick-row${out ? ' is-out' : ''}">
+                <input type="checkbox" class="rlItem" value="${esc(mk.id)}" data-prod="${esc(pr.id)}" ${out ? 'disabled' : ''}>
+                <span><b>${esc(mk.tag)}</b> ${esc(pr.name || (pr.desc || '').slice(0, 40))}${
+                  pr.leadWeeks ? ` <span class="muted">· ${esc(leadLabel(pr.leadWeeks))}</span>` : ''}${
+                  out ? ` <span class="muted">· already out</span>` : ''}</span></label>`);
+            }
+            return rows.join('') || '<div class="muted" style="padding:6px 9px">No marks on this section yet.</div>';
+          })()}</div>
+          <div class="muted" style="margin-top:6px">A mark at a time — the same drain at two locations can
+            go out on different days. Each goes into the log on its own, with its own lead time and its own
+            delivery date. Tick none and it is recorded as one release instead.</div>
         </div>` : ''}
         <div class="field">
           <label class="fl">${(!r && sectionProducts(s).length) ? '…or describe it' : 'What is going out'}</label>
@@ -12963,18 +13038,23 @@ async function saveRelease(key, relId) {
   // drain due in six weeks and a pump due in twenty stop pretending to arrive together.
   const picked = [];
   const box = $('rlPick');
-  if (box) for (const el of box.querySelectorAll('input.rlItem')) if (el.checked) picked.push(el.value);
+  if (box) for (const el of box.querySelectorAll('input.rlItem')) {
+    if (!el.checked) continue;
+    const prod = typeof el.getAttribute === 'function' ? el.getAttribute('data-prod') : null;
+    picked.push({ mark: el.value, item: prod });
+  }
 
   markPending(key);
   s.releases = s.releases || [];
   const existing = relId ? s.releases.find(x => x.id === relId) : null;
   if (existing) Object.assign(existing, { label, date, weeks, expected, expectedTo, note, expectedManual });
   else if (picked.length) {
-    for (const pid of picked) {
-      const pr = productById(s, pid);
+    for (const pick of picked) {
+      const pr = pick.item ? productById(s, pick.item) : null;
       const w = (pr && pr.leadWeeks) || weeks;
       const e = expectedManual ? { from: expected, to: expectedTo } : expectedRange(date, w);
-      s.releases.push({ id: uid('rel'), item: pid, label: productLabel(pr) || label,
+      s.releases.push({ id: uid('rel'), item: pick.item, mark: pick.mark,
+        label: markLabel(pr, pick.mark) || label,
         date, weeks: w, expected: e.from, expectedTo: e.to, note, expectedManual });
     }
     s.releaseState = releaseStateFromProducts(s);
