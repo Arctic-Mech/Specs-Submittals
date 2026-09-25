@@ -459,6 +459,27 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-star:hover { opacity: 1; color: var(--amber); }
 .prod-row.is-first { border-left-color: var(--amber); }
 .prod-row.ends-first { margin-bottom: 14px; box-shadow: 0 10px 0 -9px var(--border-2); }
+/* ── sub-categories ──
+   The heading is the only thing on its line and its items sit in from it, so where one stops and
+   the next starts is seen rather than worked out. Shut, it closes up to a single line. */
+.pr-group { margin-bottom: 10px; }
+.pg-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; min-width: 0;
+  padding: 3px 4px 4px 2px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.pg-head:hover { border-bottom-color: var(--border-2); }
+.pg-head:hover .pg-name { color: var(--accent); }
+.pg-name { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-n { flex: none; font-size: 11px; color: var(--text-3); }
+.pr-group.is-first .pg-name { color: var(--amber); }
+.pr-group.ends-first { margin-bottom: 20px; box-shadow: 0 14px 0 -13px var(--border-2); }
+.pr-group.is-shut { margin-bottom: 6px; }
+.pr-group.is-shut .pg-head { border-bottom-color: transparent; margin-bottom: 0; }
+.pg-body { padding-left: 11px; border-left: 1px solid var(--border); margin-left: 3px; }
+.pg-body > .prod-row:last-child { margin-bottom: 2px; }
+.pg-head .x { border: none; background: none; color: var(--text-3); cursor: pointer;
+  font-size: 12px; padding: 0 3px; line-height: 1; }
+.pg-head .x:hover { color: var(--accent); }
+.fl-note { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-3); }
 .pr-body { margin-top: 5px; }
 .pr-kv { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 5px; }
 .pr-kv span { font-size: 12.5px; color: var(--text-2); }
@@ -487,6 +508,30 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-name { font-size: 13.5px; font-weight: 600; flex: 0 1 auto; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .pr-tag.is-more { color: var(--text-3); background: var(--surface-3); }
+.pr-tag.is-first { color: var(--amber); background: var(--amber-sf); }
+/* An opened product lists its marks a line each, because a mark now has room to say where it goes
+   and what is particular about it — and a line each is where the button to send it out fits. */
+.pr-mklist { margin-bottom: 6px; }
+.pr-mk { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 3px 2px;
+  border-bottom: 1px solid var(--border); }
+.pr-mk:last-child { border-bottom: none; }
+.pr-mk-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700;
+  color: var(--text-2); min-width: 62px; }
+.pr-mk.is-first .pr-mk-tag { color: var(--amber); }
+.pr-mk.is-out .pr-mk-tag { color: var(--amber); }
+.pr-mk.is-done .pr-mk-tag { color: var(--green); }
+.pr-mk-loc { font-size: 12.5px; color: var(--text-2); }
+.pr-mk-out { flex: none; font-size: 10.5px; font-weight: 700; color: var(--amber); }
+.pr-mk.is-done .pr-mk-out { color: var(--green); }
+.pr-mk-note { flex-basis: 100%; font-size: 12px; color: var(--text-3); padding-left: 62px; }
+.pr-mk-go { flex: none; border: 1px solid var(--border-2); background: none; border-radius: 4px;
+  color: var(--text-3); cursor: pointer; font-size: 10.5px; font-weight: 700; padding: 1px 8px; }
+.pr-mk-go:hover { color: var(--accent); border-color: var(--accent); }
+.pr-go { font-size: 13px !important; }
+.pr-go:hover { color: var(--accent) !important; }
+/* a sub-category's name over its marks, so a list of forty ticks is still readable */
+.tick-head { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-3); padding: 8px 9px 3px; }
 /* marks, typed in one at a time */
 .mk-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; width: 100%; cursor: text;
   background: var(--surface); border: 1px solid var(--border-2); border-radius: 6px; padding: 5px 7px; min-height: 34px; }
@@ -494,8 +539,24 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .mk-chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 11.5px;
   font-weight: 700; color: var(--accent); background: var(--accent-sf); border-radius: 4px; padding: 2px 4px 2px 7px; }
 .mk-chip button { border: none; background: none; padding: 0 2px; margin: 0; cursor: pointer;
-  color: var(--accent); opacity: .55; font-size: 10px; line-height: 1; }
+  color: inherit; opacity: .55; font-size: 10px; line-height: 1; }
 .mk-chip button:hover { opacity: 1; }
+.mk-chip b { cursor: pointer; font-weight: inherit; }
+.mk-chip.is-first { color: var(--amber); background: var(--amber-sf); }
+.mk-chip.is-sel { outline: 1px solid currentColor; }
+/* a dot on a mark that has more to it than its tag, so opening one is not a lucky dip */
+.mk-chip.has-more b::after { content: '\00b7'; margin-left: 5px; opacity: .8; }
+/* what else there is to say about one mark, opened under the box the marks are typed into */
+.mk-det { margin-top: 8px; border: 1px solid var(--border-2); border-radius: 6px;
+  padding: 8px 10px 10px; background: var(--surface-2); }
+.mk-det-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.mk-det-head b { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.mk-det-head .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.mk-det-head .x:hover { color: var(--text); }
+.mk-first { border: 1px solid var(--border-2); background: none; border-radius: 999px; cursor: pointer;
+  color: var(--text-3); font-size: 10.5px; font-weight: 700; padding: 1px 9px; }
+.mk-first:hover { color: var(--amber); border-color: var(--amber); }
+.mk-first.on { color: var(--amber); border-color: var(--amber); background: var(--amber-sf); }
 .mk-in { flex: 1 1 70px; min-width: 70px; border: none; outline: none; background: transparent;
   font: inherit; font-size: 13px; color: inherit; padding: 1px 2px; }
 .pr-lead { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); }
@@ -1219,7 +1280,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.76';
+const APP_VERSION = 'v7.77';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2955,6 +3016,10 @@ let unsubRfis = null, unsubTracking = null, unsubCos = null;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* A name about to sit inside the quotes of an onclick. The browser undoes the HTML escaping
+   before it reads the attribute as JavaScript, so a quote has to survive both passes or it ends
+   the string early — "Owner's Items" would be a syntax error rather than a sub-category. */
+const jsStr = s => esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
 const fmtBytes = n => n < 1024 ? n + ' B'
   : n < 1048576 ? (n / 1024).toFixed(0) + ' KB'
   : (n / 1048576).toFixed(1) + ' MB';
@@ -3536,7 +3601,7 @@ function searchHay(s) {
     (s.releases || []).map(r => r.label + ' ' + (r.note || '')).join(' '),
     (s.history || []).map(h => h.text || '').join(' '),     // so you can find what you logged
     // the product log in full: you search for "area drain" or "J.R. Smith", not for "AD-1"
-    (s.products || []).map(p => [marksLabel(p), p.name, p.make, p.desc, p.note].filter(Boolean).join(' ')).join(' '),
+    (s.products || []).map(p => [p.group, marksLabel(p), p.name, p.make, p.desc, p.note].filter(Boolean).join(' ')).join(' '),
     (s.submittals || []).concat(s.responses || []).map(d => d.name).join(' ')
   ].filter(Boolean).join(' ').toLowerCase();
 }
@@ -11595,7 +11660,7 @@ function secRowHtml(s) {
         value="${esc(s.description || '')}" placeholder="Add a description…"
         onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','description',this.value)">`
     : (sectionProducts(s).length
-        ? `<div class="sub cell-desc">${productsInOrder(s).map(p => esc(productLabel(p))).join(' · ')}</div>`
+        ? `<div class="sub cell-desc">${productSummary(s)}</div>`
         : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : ''));
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
@@ -11947,14 +12012,62 @@ function pinnedLine(cls, item) {
 
    The vendor stays on the section: one section, one supplier, many items off them. */
 function sectionProducts(s) { return (s && s.products) || []; }
-/* The order they are worked in, not the order they were typed in. A star says "this one is wanted
-   first" and lifts it clear of the rest — the long-lead chiller you have to order this week, sat
-   above the forty fittings you can price whenever. Everything under it keeps the order it had. */
+/* ── sub-categories ──
+   "Drains" is not one thing to buy. It is floor drains FD-1 and FD-2, floor sinks FS-1 and FS-2,
+   roof drains, area drains and a trench drain — different castings, sometimes different makers,
+   released and approved apart from each other. Flattening them into one item gave a row with
+   eleven marks on it and no room left for its name.
+
+   So a product can be filed under a sub-category: a name it shares with its neighbours, nothing
+   more. Everything that makes a product a product — its marks, its manufacturer, its lead time,
+   what to buy — stays on the product, which is what lets two sub-categories under the same
+   section come off two different manufacturers.
+
+   Matching ignores case, so typing "drains" files it with "Drains" instead of beside it. */
+const normGroup = g => String(g == null ? '' : g).trim();
+const groupKey = g => normGroup(g).toLowerCase();
+/* The sub-categories in use here, in the order they first turn up — what the box offers you. */
+function sectionGroups(s) {
+  const seen = {}, out = [];
+  for (const p of sectionProducts(s)) {
+    const g = normGroup(p.group), k = groupKey(g);
+    if (!g || seen[k]) continue;
+    seen[k] = 1; out.push(g);
+  }
+  return out;
+}
+/* The list as it is drawn: each sub-category with its items under it, anything without one
+   standing on its own. A block holds the place its first item had, so filing something under
+   "Drains" moves it up beside the other drains rather than leaving it stranded at the bottom.
+
+   A star still means wanted first. It lifts the item to the top of its own sub-category and that
+   sub-category to the top of the section — so the tree stays a tree and the starred work is still
+   the first thing on the screen. With nothing filed anywhere, every product is its own block and
+   this is exactly the old order: starred first, the rest as typed. */
+function productBlocks(s) {
+  const byKey = {}, blocks = [];
+  for (const p of sectionProducts(s)) {
+    const g = normGroup(p.group), k = groupKey(g);
+    if (!g) { blocks.push({ name: '', items: [p] }); continue; }
+    if (!byKey[k]) { byKey[k] = { name: g, key: k, items: [] }; blocks.push(byKey[k]); }
+    byKey[k].items.push(p);
+  }
+  for (const b of blocks) {
+    const first = [], rest = [];
+    for (const p of b.items) (p.pinned ? first : rest).push(p);
+    b.items = first.concat(rest);
+    b.pinned = b.items.some(p => p.pinned);
+  }
+  const hot = [], cold = [];
+  for (const b of blocks) (b.pinned ? hot : cold).push(b);
+  return hot.concat(cold);
+}
+/* The order they are worked in, not the order they were typed in — read straight off the blocks,
+   so the release list and the register row follow the same order as the panel. */
 function productsInOrder(s) {
-  const list = sectionProducts(s);
-  const first = [], rest = [];
-  for (const p of list) (p.pinned ? first : rest).push(p);
-  return first.concat(rest);
+  const out = [];
+  for (const b of productBlocks(s)) for (const p of b.items) out.push(p);
+  return out;
 }
 function productById(s, id) { return sectionProducts(s).find(p => p.id === id) || null; }
 /* What you write stays plain text — it goes out to vendors and into exports, and neither wants
@@ -12009,15 +12122,44 @@ function productMarks(p) {
   const t = String(p.tag || '').trim();
   return t ? [{ id: (p.id || 'p') + '#0', tag: t }] : [];
 }
-function marksLabel(p) { return productMarks(p).map(m => m.tag).join(' '); }
+/* Stored order is what a release is anchored to — a release made before marks existed points at
+   "the first mark" and must keep pointing at the same one — so the order marks are shown in is a
+   separate question from the order they are kept in. Starring one lifts it up the list without
+   moving anything underneath it. */
+function marksInOrder(p) {
+  const first = [], rest = [];
+  for (const m of productMarks(p)) (m.pinned ? first : rest).push(m);
+  return first.concat(rest);
+}
+/* Where it goes and anything particular about it: AD-1 in the lobby and AD-1 in the garage are the
+   same casting and a different phone call. Both are optional — most marks have neither. */
+const markHasDetail = m => !!(m && (String(m.loc || '').trim() || String(m.note || '').trim()));
+function marksLabel(p) { return marksInOrder(p).map(m => m.tag).join(' '); }
 function markById(p, id) { return productMarks(p).find(m => m.id === id) || null; }
 function productLabel(p) {
   if (!p) return '';
   return [marksLabel(p), p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
 }
+/* What the register row says a section is made of: the things, not their marks. A row reading
+   "FD-1 FD-2 FS-1 FS-2 FCO-1 RD-1 RD-2 Floor Drains · AD-1 AD-2 Area Drains" is a wall of tags
+   with the words buried in it; "Drains · Insulation Kits · Shock Arrestors" can be read at a
+   glance, and every mark is one click away in the drawer. Sub-categories stand for everything
+   filed under them, so the line stays as short as the list is long. */
+function productSummary(s) {
+  const seen = {}, out = [];
+  for (const p of productsInOrder(s)) {
+    const label = normGroup(p.group) || String(p.name || '').trim() || (p.desc || '').slice(0, 40).trim();
+    const k = label.toLowerCase();
+    if (!label || seen[k]) continue;
+    seen[k] = 1; out.push(label);
+  }
+  return out.map(esc).join(' · ');
+}
 function markLabel(p, markId) {
   const m = markById(p, markId);
-  return [(m && m.tag) || '', (p && p.name) || ''].filter(Boolean).join(' ') || productLabel(p);
+  const base = [(m && m.tag) || '', (p && p.name) || ''].filter(Boolean).join(' ') || productLabel(p);
+  const loc = m && String(m.loc || '').trim();
+  return loc ? base + ' — ' + loc : base;
 }
 /* A mark, what it is, then what to buy: "AD-1 - Area Drain: J.R. Smith 2142 Series, …". That is the
    shape a spec is read in and the shape it gets pasted in, so take it apart that way. */
@@ -12048,17 +12190,78 @@ function sectionGaps(s) { return sectionProducts(s).reduce((n, p) => n + product
 let prodEdit = null;                 // the product open for editing, if any
 /* The marks as they stand on the open form. A working copy, so Cancel really does put it back. */
 let prodEditMarks = null;
+/* The mark whose particulars are open underneath the box, if any. */
+let prodEditMark = null;
 function editMarksHtml() {
-  return (prodEditMarks || []).map(m => `<span class="mk-chip">${esc(m.tag)}<button type="button"
-    title="Remove ${esc(m.tag)}" onclick="removeEditMark('${m.id}')">\u2715</button></span>`).join('') +
+  const list = prodEditMarks || [];
+  const first = [], rest = [];
+  for (const m of list) (m.pinned ? first : rest).push(m);
+  return first.concat(rest).map(m => `<span class="mk-chip${m.pinned ? ' is-first' : ''}${
+    prodEditMark === m.id ? ' is-sel' : ''}${markHasDetail(m) ? ' has-more' : ''}"
+    ><b onclick="pickEditMark('${m.id}')" title="${esc([m.loc, m.note].filter(Boolean).join(' \u00b7 ') ||
+      'Where it goes, a note, or star it as wanted first')}">${m.pinned ? '\u2605 ' : ''}${esc(m.tag)}</b
+    ><button type="button" title="Remove ${esc(m.tag)}" onclick="removeEditMark('${m.id}')">\u2715</button></span>`).join('') +
     `<input class="mk-in" id="pdMarkIn" autocomplete="off" spellcheck="false"
-      placeholder="${(prodEditMarks || []).length ? '' : 'AD-1'}" onkeydown="markInKey(event)">`;
+      placeholder="${list.length ? '' : 'AD-1'}" onkeydown="markInKey(event)">`;
+}
+/* One mark's particulars, written straight into the working copy as they are typed so that Cancel
+   still puts everything back and Save has nothing left to collect. */
+function markDetailHtml() {
+  const m = (prodEditMarks || []).find(x => x.id === prodEditMark);
+  if (!m) return '';
+  return `<div class="mk-det">
+    <div class="mk-det-head"><b>${esc(m.tag)}</b>
+      <button type="button" class="mk-first${m.pinned ? ' on' : ''}" onclick="toggleEditMarkPin('${m.id}')"
+        title="${m.pinned ? 'Wanted first \u2014 click to take it off the top' : 'Star it as wanted first'}"
+        >${m.pinned ? '\u2605' : '\u2606'} Wanted first</button>
+      <span class="spacer" style="flex:1"></span>
+      <button type="button" class="x" title="Done" onclick="pickEditMark('${m.id}')">\u2715</button></div>
+    <div class="grid2">
+      <div class="field" style="margin-bottom:0"><label class="fl">Mark</label>
+        <input class="input" value="${esc(m.tag)}" onchange="setEditMark('${m.id}','tag',this.value)"></div>
+      <div class="field" style="margin-bottom:0"><label class="fl">Where it goes</label>
+        <input class="input" value="${esc(m.loc || '')}" placeholder="Kitchen 112"
+          oninput="setEditMark('${m.id}','loc',this.value)"></div>
+    </div>
+    <div class="field" style="margin:9px 0 0"><label class="fl">Anything particular about this one</label>
+      <input class="input" value="${esc(m.note || '')}" placeholder="Needs the deep body \u2014 slab is thin here"
+        oninput="setEditMark('${m.id}','note',this.value)"></div>
+  </div>`;
 }
 function renderEditMarks(focus) {
   const host = $('pdMarks');
   if (!host) return;
   host.innerHTML = editMarksHtml();
+  const det = $('pdMarkDet'); if (det) det.innerHTML = markDetailHtml();
+  const tag = $('pdMarkTally');
+  if (tag) tag.innerHTML = (prodEditMarks || []).length ? String((prodEditMarks || []).length) : '';
   if (focus !== false) { const i = $('pdMarkIn'); if (i && i.focus) i.focus(); }
+}
+/* Clicking a mark opens what else there is to say about it; clicking it again puts it away. */
+function pickEditMark(id) {
+  prodEditMark = prodEditMark === id ? null : id;
+  renderEditMarks(false);
+  if (prodEditMark) { const el = $('pdMarkDet'); const i = el && el.querySelector && el.querySelector('input');
+    if (i && i.focus) { i.focus(); try { i.select(); } catch (e) {} } }
+}
+function setEditMark(id, field, val) {
+  const m = (prodEditMarks || []).find(x => x.id === id);
+  if (!m) return;
+  const v = String(val == null ? '' : val).trim();
+  if (field === 'tag') { if (!v) return; m.tag = v.toUpperCase(); renderEditMarks(false); return; }
+  m[field] = v;
+  // only the chip's own hint changes, and repainting mid-keystroke would take the cursor with it
+  const chip = $('pdMarks');
+  if (chip && chip.querySelector) {
+    const b = chip.querySelector('.mk-chip.is-sel');
+    if (b && b.classList) b.classList[markHasDetail(m) ? 'add' : 'remove']('has-more');
+  }
+}
+function toggleEditMarkPin(id) {
+  const m = (prodEditMarks || []).find(x => x.id === id);
+  if (!m) return;
+  m.pinned = !m.pinned;
+  renderEditMarks(false);
 }
 function addEditMark() {
   const el = $('pdMarkIn');
@@ -12071,6 +12274,7 @@ function addEditMark() {
 }
 function removeEditMark(id) {
   prodEditMarks = (prodEditMarks || []).filter(m => m.id !== id);
+  if (prodEditMark === id) prodEditMark = null;
   renderEditMarks();
 }
 /* Enter or comma finishes one. Backspace on an empty box takes the last one back off, which is
@@ -12082,7 +12286,8 @@ function markInKey(ev) {
     addEditMark();
   } else if (ev.key === 'Backspace' && el && !el.value && (prodEditMarks || []).length) {
     ev.preventDefault();
-    prodEditMarks.pop();
+    const gone = prodEditMarks.pop();
+    if (gone && prodEditMark === gone.id) prodEditMark = null;
     renderEditMarks();
   }
 }
@@ -12125,6 +12330,32 @@ function toggleProduct(id) {
   prodOpen = prodOpen[id] ? {} : { [id]: true };
   repaintProducts(id);
 }
+/* A sub-category folds away with everything under it. Sixteen items across six of them is a long
+   scroll when you are only after the drains; shutting the five you are not looking at gets the
+   list back onto one screen. Shut is the thing worth remembering, so a new one turns up open. */
+let prodGroupShut = {};
+function toggleProdGroup(name) {
+  const k = groupKey(name);
+  if (prodGroupShut[k]) delete prodGroupShut[k]; else prodGroupShut[k] = 1;
+  repaintProducts('grp:' + k);
+}
+/* Renaming it renames it on everything filed under it — that is the whole of what a sub-category
+   is. Emptying the name takes them all back out of it rather than leaving a heading with nothing
+   underneath, which is the only way there is to undo the filing. */
+async function renameProdGroup(key, name) {
+  const s = findSection(key); if (!s) return;
+  const raw = prompt('Name for this sub-category — leave it blank to take these back out of it:', name);
+  if (raw === null) return;
+  const next = normGroup(raw);
+  if (next === normGroup(name)) return;
+  const mine = sectionProducts(s).filter(p => groupKey(p.group) === groupKey(name));
+  if (!mine.length) return;
+  // renaming it onto one that already exists merges the two, which is what you meant by it
+  const clash = sectionGroups(s).find(g => groupKey(g) === groupKey(next) && groupKey(g) !== groupKey(name));
+  for (const p of mine) p.group = clash || next;
+  delete prodGroupShut[groupKey(name)];
+  await saveProducts(key, s, next ? 'grp:' + groupKey(next) : mine[0].id);
+}
 async function toggleProdPin(key, id) {
   const s = findSection(key); if (!s) return;
   const p = productById(s, id); if (!p) return;
@@ -12133,21 +12364,65 @@ async function toggleProdPin(key, id) {
   await saveProducts(key, s, null);
 }
 function productRows(s) {
-  const list = productsInOrder(s);
-  if (!list.length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
+  if (!sectionProducts(s).length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
     Paste the schedule straight in — "AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…" —
     and it comes apart into its mark, what it is, and what to buy.</div>`;
   const relMarks = releasedMarks(s);
-  return list.map((p, i) => {
-    if (prodEdit === p.id) return `
+  const blocks = productBlocks(s);
+  // where "wanted first" stops: the last of the leading run of starred blocks, and no further
+  let lastHot = -1;
+  for (let n = 0; n < blocks.length; n++) { if (!blocks[n].pinned) break; lastHot = n; }
+  return blocks.map((b, bi) => {
+    if (!b.name) return productRow(s, b.items[0], b, relMarks, bi === lastHot);
+    const shut = !!prodGroupShut[b.key];
+    const gaps = b.items.reduce((n, p) => n + productGaps(p).length, 0);
+    const marks = b.items.reduce((n, p) => n + productMarks(p).length, 0);
+    return `
+      <div class="pr-group${shut ? ' is-shut' : ''}${b.pinned ? ' is-first' : ''}${
+        bi === lastHot ? ' ends-first' : ''}" data-prod="grp:${esc(b.key)}">
+        <div class="pg-head" onclick="toggleProdGroup('${jsStr(b.name)}')">
+          <span class="pr-caret">${shut ? '▸' : '▾'}</span>
+          <span class="pg-name">${esc(b.name)}</span>
+          <span class="pg-n">${b.items.length} item${b.items.length === 1 ? '' : 's'}${
+            marks ? ' · ' + marks + ' mark' + (marks === 1 ? '' : 's') : ''}</span>
+          <span class="spacer" style="flex:1"></span>
+          ${gaps ? `<span class="pr-gap" title="${gaps} thing${gaps === 1 ? '' : 's'} still to fill in under ${esc(b.name)}">${gaps}</span>` : ''}
+          ${b.items.some(p => productMarks(p).some(m => !relMarks[m.id])) ? `<button class="x pr-go"
+            title="Release everything under ${esc(b.name)} that has not gone out"
+            onclick="event.stopPropagation();releaseGroup('${s.key}','${jsStr(b.name)}')">↗</button>` : ''}
+          <button class="x" title="Add another under ${esc(b.name)}"
+            onclick="event.stopPropagation();addBlankProduct('${s.key}','${jsStr(b.name)}')">+</button>
+          <button class="x" title="Rename ${esc(b.name)}"
+            onclick="event.stopPropagation();renameProdGroup('${s.key}','${jsStr(b.name)}')">✎</button>
+        </div>
+        ${shut ? '' : `<div class="pg-body">${
+          b.items.map(p => productRow(s, p, b, relMarks)).join('')}</div>`}
+      </div>`;
+  }).join('');
+}
+/* One product: the form when it is being written, the row when it is being read. */
+function productRow(s, p, b, relMarks, endsBand) {
+  const list = b.items;
+  const i = list.indexOf(p);
+  if (prodEdit === p.id) {
+      const groups = sectionGroups(findSection(openKey) || s);
+      return `
       <div class="prod-row is-edit${p.pinned ? ' is-first' : ''}" data-prod="${p.id}">
         <div class="grid2">
-          <div class="field"><label class="fl">Marks${(prodEditMarks || []).length ? ' <span class="fl-tag">' + prodEditMarks.length + '</span>' : ''}</label>
-            <div class="mk-wrap" id="pdMarks" onclick="var i=document.getElementById('pdMarkIn');if(i)i.focus()">${editMarksHtml()}</div>
-            <div class="muted" style="margin-top:4px;font-size:11.5px">One at a time — Enter after each.</div></div>
+          <div class="field"><label class="fl">Sub-category <span class="fl-note">optional</span></label>
+            <input class="input" id="pdGroup" list="pdGroupList" autocomplete="off"
+              placeholder="Drains" value="${esc(p.group || '')}">
+            <datalist id="pdGroupList">${groups.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+            <div class="muted" style="margin-top:4px;font-size:11.5px">Files it with the others under that name.</div></div>
           <div class="field"><label class="fl">What it is</label>
             <input class="input" id="pdName" value="${esc(p.name || '')}"></div>
         </div>
+        <div class="field"><label class="fl">Marks <span class="fl-tag" id="pdMarkTally">${
+            (prodEditMarks || []).length || ''}</span></label>
+          <div class="mk-wrap" id="pdMarks" onclick="if(event.target===this){var i=document.getElementById('pdMarkIn');if(i)i.focus()}">${editMarksHtml()}</div>
+          <div class="muted" style="margin-top:4px;font-size:11.5px">One at a time — Enter after each.
+            Click one to say where it goes, add a note, or star it as wanted first.</div>
+          <div id="pdMarkDet">${markDetailHtml()}</div></div>
         <div class="field"><label class="fl">What to buy<span class="fl-tools">
             <button type="button" class="fl-tool" title="Bold whatever you have selected" onclick="wrapSel('pdDesc','**')"><b>B</b></button>
             <button type="button" class="fl-tool hl" title="Highlight whatever you have selected" onclick="wrapSel('pdDesc','==')">Highlight</button>
@@ -12169,15 +12444,18 @@ function productRows(s) {
           <button class="btn sm ghost" onclick="cancelProductEdit()">Cancel</button>
         </div>
       </div>`;
+    }
     // Shut, a product is its mark and what it is — forty of those is a list you can read. What to
     // buy, who makes it and how long it takes are a click away, where they do not crowd the rest.
     const out = productOutState(s, p);
-    const marks = productMarks(p);
+    const marks = marksInOrder(p);
     const open = !!prodOpen[p.id];
     const gaps = productGaps(p);
     const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
-    // a line under the last starred one, so where "first" stops is not something to work out
-    const lastFirst = !!p.pinned && !(list[i + 1] && list[i + 1].pinned);
+    // A line under the last starred one, so where "first" stops is not something to work out.
+    // Inside a sub-category that means the last starred item there; outside one it is the end of
+    // the whole starred band, which the list has already been walked for.
+    const lastFirst = !!p.pinned && (b.name ? !!(list[i + 1] && !list[i + 1].pinned) : !!endsBand);
     return `
       <div class="prod-row${open ? ' is-open' : ''}${p.pinned ? ' is-first' : ''}${lastFirst ? ' ends-first' : ''}" data-prod="${p.id}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
@@ -12185,7 +12463,9 @@ function productRows(s) {
             title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
           ${marks.length ? marks.slice(0, PR_MARKS_ON_ROW).map(m =>
-                `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}">${esc(m.tag)}</span>`).join('') +
+                `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}${m.pinned ? ' is-first' : ''}"${
+                  markHasDetail(m) ? ` title="${esc([m.loc, m.note].filter(Boolean).join(' · '))}"` : ''
+                }>${m.pinned ? '★ ' : ''}${esc(m.tag)}</span>`).join('') +
               (marks.length > PR_MARKS_ON_ROW
                 ? `<span class="pr-tag is-more" title="${esc(marks.map(m => m.tag).join(', '))}">+${marks.length - PR_MARKS_ON_ROW}</span>` : '')
             : `<span class="pr-none">${PR_DASH}</span>`}
@@ -12195,6 +12475,9 @@ function productRows(s) {
                     : out.n + ' of ' + out.of + ' out'}</span>` : ''}
           <span class="spacer" style="flex:1"></span>
           ${gaps.length ? `<span class="pr-gap" title="${esc(gapNote)}">${gaps.length}</span>` : ''}
+          ${marks.some(m => !relMarks[m.id]) ? `<button class="x pr-go" title="Release ${
+            esc(marks.filter(m => !relMarks[m.id]).map(m => m.tag).join(', '))}"
+            onclick="event.stopPropagation();releaseProduct('${s.key}','${p.id}')">↗</button>` : ''}
           <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${s.key}','${p.id}')">✎</button>
           <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
@@ -12203,18 +12486,24 @@ function productRows(s) {
             <span><i>Manufacturer</i>${p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`}</span>
             <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
           </div>
-          ${marks.length > 1 ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
-          <div class="pr-marks">${marks.map(m => { const r = relMarks[m.id];
-            return `<span class="pr-mark${r ? (r.delivered ? ' is-done' : ' is-out') : ''}"
-              title="${r ? (r.delivered ? 'Delivered' : 'Released ' + esc(r.date ? fmtDate(r.date + 'T00:00:00') : '')
-                  + (r.expected ? ', due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : ''))
-                : 'Still to go out'}">${esc(m.tag)}${r ? (r.delivered ? ' ✓' : ' · out') : ''}</span>`; }).join('')}</div>` : ''}
+          ${marks.length > 1 || marks.some(markHasDetail) ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
+          <div class="pr-mklist">${marks.map(m => { const r = relMarks[m.id];
+            return `<div class="pr-mk${r ? (r.delivered ? ' is-done' : ' is-out') : ''}${m.pinned ? ' is-first' : ''}">
+              <span class="pr-mk-tag">${m.pinned ? '★ ' : ''}${esc(m.tag)}</span>
+              <span class="pr-mk-loc">${m.loc ? esc(m.loc) : ''}</span>
+              <span class="spacer" style="flex:1"></span>
+              ${r ? `<span class="pr-mk-out">${r.delivered ? '✓ delivered'
+                  : 'out ' + esc(r.date ? fmtDate(r.date + 'T00:00:00') : '')
+                    + (r.expected ? ' · due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : '')}</span>`
+                : `<button class="pr-mk-go" onclick="event.stopPropagation();releaseMark('${s.key}','${p.id}','${m.id}')"
+                    title="Record ${esc(m.tag)} going out">Release</button>`}
+              ${m.note ? `<div class="pr-mk-note">${richText(m.note)}</div>` : ''}
+            </div>`; }).join('')}</div>` : ''}
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
           <div class="pr-desc${p.desc ? '' : ' is-none'}">${p.desc ? richText(p.desc) : PR_DASH}</div>
           ${p.note ? `<div class="pr-note">${richText(p.note)}</div>` : ''}
         </div>` : ''}
       </div>`;
-  }).join('');
 }
 /* Which marks are already out, so the same one is not released twice by mistake. A release made
    before marks existed named only its product; it stands for that product's first mark. */
@@ -12241,13 +12530,14 @@ function productOutState(s, p) {
 async function editProduct(key, id) {
   if (prodEdit && prodEdit !== id) await saveProduct(key, prodEdit);
   const s = findSection(key);
-  prodEdit = id; prodOpen = { [id]: true };
-  prodEditMarks = productMarks(productById(s, id)).map(m => ({ id: m.id, tag: m.tag }));
+  prodEdit = id; prodOpen = { [id]: true }; prodEditMark = null;
+  prodEditMarks = productMarks(productById(s, id)).map(m => ({ id: m.id, tag: m.tag,
+    loc: m.loc || '', note: m.note || '', pinned: !!m.pinned }));
   repaintProducts(id);
   const b = $('pdName'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
 }
 function cancelProductEdit() {
-  const was = prodEdit; prodEdit = null; prodEditMarks = null;
+  const was = prodEdit; prodEdit = null; prodEditMarks = null; prodEditMark = null;
   if (was) prodOpen = { [was]: true };
   repaintProducts(was);
 }
@@ -12262,17 +12552,21 @@ async function saveProducts(key, s, anchorId) {
 }
 /* The ordinary way in: an empty item, opened on its form, so what it wants is asked for
    rather than guessed at. */
-async function addBlankProduct(key) {
+async function addBlankProduct(key, group) {
   const s = findSection(key); if (!s) return;
-  const p = { id: uid('prd'), tag: '', marks: [], name: '', desc: '', make: '', leadWeeks: '', note: '' };
+  const g = normGroup(group);
+  const p = { id: uid('prd'), tag: '', marks: [], name: '', desc: '', make: '', leadWeeks: '', note: '', group: g };
   s.products = sectionProducts(s).concat([p]);
-  prodEdit = p.id; prodOpen = { [p.id]: true }; prodEditMarks = [];
+  // adding one to a folded-away sub-category has to open it, or the form goes in where it cannot be seen
+  if (g) delete prodGroupShut[groupKey(g)];
+  prodEdit = p.id; prodOpen = { [p.id]: true }; prodEditMarks = []; prodEditMark = null;
   // nothing to hold still here — it did not exist a moment ago — so go to it instead
   await saveProducts(key, s, null);
   const host = $('prodList');
   const row = host && typeof host.querySelector === 'function' ? host.querySelector('[data-prod="' + p.id + '"]') : null;
   if (row && row.scrollIntoView) { try { row.scrollIntoView({ block: 'center' }); } catch (e) {} }
-  const b = $('pdTag'); if (b) b.focus();
+  // the mark is what you read off the schedule first, so that is where the cursor goes
+  const b = $('pdMarkIn'); if (b && b.focus) b.focus();
 }
 async function saveProduct(key, id) {
   const s = findSection(key); if (!s) return;
@@ -12286,6 +12580,10 @@ async function saveProduct(key, id) {
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   p.marks = (marksNow || productMarks(p)).slice();
   p.tag = (p.marks[0] || {}).tag || '';      // kept in step for anything still reading the old field
+  // typing "drains" files it with the existing "Drains" instead of starting a second heading
+  const g = normGroup(v('pdGroup'));
+  p.group = sectionGroups(s).find(x => groupKey(x) === groupKey(g)) || autoCap(g);
+  if (p.group) delete prodGroupShut[groupKey(p.group)];
   p.name = titleCaseWords(v('pdName'));
   p.desc = autoCap(v('pdDesc'));
   // left exactly as typed: title-casing it would turn "J.R. Smith" into "J.r. Smith". The
@@ -12293,7 +12591,7 @@ async function saveProduct(key, id) {
   p.make = v('pdMake');
   p.leadWeeks = v('pdLead');
   p.note = autoCap(v('pdNote'));
-  prodEditMarks = null;
+  prodEditMarks = null; prodEditMark = null;
   await saveProducts(key, s, id);
 }
 async function removeProduct(key, id) {
@@ -12515,8 +12813,8 @@ function keepDrawerPlace() {
   if (!y) return;
   setTimeout(() => { const n = drawerBody(); if (n) n.scrollTop = y; }, 0);
 }
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodOpen = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
-function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; prodGroupShut = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
@@ -12984,9 +13282,38 @@ function releaseStateFromProducts(s) {
   const n = marks.filter(m => out[m.id]).length;
   return n === 0 ? (s.releaseState || 'not_ready') : n === marks.length ? 'released' : 'partial';
 }
-function releaseModal(key, relId) {
+/* Releasing straight from the product list. Walking down to the release log and finding the same
+   four marks again, in a list of forty, is the long way round to something you were already
+   looking at — so the row, the mark and the sub-category each offer it, and the form opens with
+   exactly those ticked. It is still the same form: the date, the lead time and the note are asked
+   for once, and nothing goes out until it is submitted. */
+function releaseWith(key, markIds) {
+  const ids = (markIds || []).filter(Boolean);
+  if (!ids.length) { toast('Everything here has already gone out.'); return; }
+  releaseModal(key, null, ids);
+}
+function releaseMark(key, prodId, markId) {
+  const s = findSection(key); if (!s) return;
+  releaseWith(key, releasedMarks(s)[markId] ? [] : [markId]);
+}
+function releaseProduct(key, prodId) {
+  const s = findSection(key); if (!s) return;
+  const out = releasedMarks(s);
+  releaseWith(key, marksInOrder(productById(s, prodId)).filter(m => !out[m.id]).map(m => m.id));
+}
+function releaseGroup(key, name) {
+  const s = findSection(key); if (!s) return;
+  const out = releasedMarks(s), ids = [];
+  for (const p of sectionProducts(s)) {
+    if (groupKey(p.group) !== groupKey(name)) continue;
+    for (const m of marksInOrder(p)) if (!out[m.id]) ids.push(m.id);
+  }
+  releaseWith(key, ids);
+}
+function releaseModal(key, relId, preset) {
   const s = findSection(key);
   if (!s) return;
+  const pick = preset || [];
   const r = relId ? (s.releases || []).find(x => x.id === relId) : null;
   const n = (s.releases || []).length + 1;
   const date = r ? r.date : today();
@@ -13001,13 +13328,23 @@ function releaseModal(key, relId) {
           <label class="fl">What is going out</label>
           <div class="rel-pick" id="rlPick">${(function () {
             const done = releasedMarks(s), rows = [];
-            for (const pr of productsInOrder(s)) for (const mk of productMarks(pr)) {
-              const out = done[mk.id];
-              rows.push(`<label class="tick-row${out ? ' is-out' : ''}">
-                <input type="checkbox" class="rlItem" value="${esc(mk.id)}" data-prod="${esc(pr.id)}" ${out ? 'disabled' : ''}>
-                <span><b>${esc(mk.tag)}</b> ${esc(pr.name || (pr.desc || '').slice(0, 40))}${
-                  pr.leadWeeks ? ` <span class="muted">· ${esc(leadLabel(pr.leadWeeks))}</span>` : ''}${
-                  out ? ` <span class="muted">· already out</span>` : ''}</span></label>`);
+            let heading = null;
+            for (const pr of productsInOrder(s)) {
+              const g = normGroup(pr.group);
+              if (groupKey(g) !== groupKey(heading)) {
+                heading = g;
+                if (g) rows.push(`<div class="tick-head">${esc(g)}</div>`);
+              }
+              for (const mk of marksInOrder(pr)) {
+                const out = done[mk.id];
+                rows.push(`<label class="tick-row${out ? ' is-out' : ''}">
+                  <input type="checkbox" class="rlItem" value="${esc(mk.id)}" data-prod="${esc(pr.id)}" ${
+                    out ? 'disabled' : (pick.indexOf(mk.id) >= 0 ? 'checked' : '')}>
+                  <span><b>${mk.pinned ? '★ ' : ''}${esc(mk.tag)}</b> ${esc(pr.name || (pr.desc || '').slice(0, 40))}${
+                    mk.loc ? ` <span class="muted">· ${esc(mk.loc)}</span>` : ''}${
+                    pr.leadWeeks ? ` <span class="muted">· ${esc(leadLabel(pr.leadWeeks))}</span>` : ''}${
+                    out ? ` <span class="muted">· already out</span>` : ''}</span></label>`);
+              }
             }
             return rows.join('') || '<div class="muted" style="padding:6px 9px">No marks on this section yet.</div>';
           })()}</div>
@@ -13062,6 +13399,14 @@ function releaseModal(key, relId) {
   $('rlWeeks').addEventListener('input', recalc);
   for (const id of ['rlExpected', 'rlExpectedTo']) {
     $(id).addEventListener('input', () => { $('rlExpected').dataset.touched = '1'; });
+  }
+  // Ticked from the product list, the marks in question can be anywhere in a list of forty — so
+  // go to the first of them rather than opening on whatever happens to be at the top.
+  if (pick.length) {
+    const box = $('rlPick');
+    const first = box && box.querySelector && box.querySelector('input.rlItem:checked');
+    const row = first && first.closest && first.closest('.tick-row');
+    if (row && row.scrollIntoView) { try { row.scrollIntoView({ block: 'center' }); } catch (e) {} }
   }
   $('rlLabel').focus(); $('rlLabel').select();
 }
