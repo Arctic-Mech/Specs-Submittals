@@ -1280,7 +1280,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.77';
+const APP_VERSION = 'v7.78';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2653,6 +2653,9 @@ function assignModal(i) {
   if (item.type === 'xlsx') return assignEstimateModal(i, item, total);
   const dv = DIVISIONS.find(d => sectionsOf(job).some(s => s.division === d)) || '22';
   const firstKey = (sectionsOf(job).filter(s => s.division === dv).sort(sectionOrder)[0] || {}).key || '';
+  // with nothing to pick from, "make one" is not an afterthought at the bottom of a list — it is
+  // the only answer, so the picker opens on it with its fields already showing
+  const noSecs = !sectionsOf(job).length, noRfis = !rfis.length, noCos = !cos.length;
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
     <div class="modal-head"><h3>New PDF ${i + 1} of ${total}</h3>
       <button class="icon-btn" onclick="closePdf()">✕</button></div>
@@ -2668,7 +2671,13 @@ function assignModal(i) {
         </select></div>
       <div id="asgSubmittalFields">
         <div class="field"><label class="fl">Spec section</label>
-          <select class="input" id="asgSection">${specSectionOptions(firstKey)}</select></div>
+          <select class="input" id="asgSection">${specSectionOptions(firstKey)}${ASG_NEW_OPT('section')}</select></div>
+        <div class="grid2" id="asgNewSecWrap"${noSecs ? '' : ' style="display:none"'}>
+          <div class="field"><label class="fl">New section number</label>
+            <input class="input" id="asgNewSecNum" placeholder="23 05 93" autocomplete="off"></div>
+          <div class="field"><label class="fl">Section title</label>
+            <input class="input" id="asgNewSecTitle" placeholder="Testing, Adjusting and Balancing" autocomplete="off"></div>
+        </div>
         <div class="grid2">
           <div class="field"><label class="fl">What is it</label>
             <select class="input" id="asgKind">
@@ -2681,21 +2690,28 @@ function assignModal(i) {
         <div class="muted" style="margin-top:4px">It becomes the section's current status, and the PDF moves into the matching status folder.</div>
       </div>
       <div id="asgRfiFields" hidden>
-        ${rfis.length ? `
         <div class="field"><label class="fl">RFI</label>
-          <select class="input" id="asgRfi">${rfis.map(r => `<option value="${r.id}">${esc(r.number || '—')}${r.subject ? ' · ' + esc(r.subject) : ''}</option>`).join('')}</select></div>
+          <select class="input" id="asgRfi">${rfis.map(r => `<option value="${r.id}">${esc(r.number || '—')}${r.subject ? ' · ' + esc(r.subject) : ''}</option>`).join('')}${ASG_NEW_OPT('RFI')}</select></div>
+        <div class="field" id="asgNewRfiWrap"${noRfis ? '' : ' style="display:none"'}>
+          <label class="fl">What the new RFI is about</label>
+          <input class="input" id="asgNewRfi" placeholder="e.g. Chilled water pipe routing at grid C4" autocomplete="off">
+          <div class="muted" style="margin-top:4px">It is numbered ${esc(nextRfiNumber())} and opened as sent today — the rest can be filled in on the RFIs tab.</div>
+        </div>
         <div class="field"><label class="fl">What is it</label>
           <select class="input" id="asgRfiKind">
             <option value="question">RFI question (sent out)</option>
             <option value="answer">RFI response (came back)</option>
-          </select></div>` : `<div class="muted">No RFIs yet — create one on the RFIs tab first, then assign this file to it.</div>`}
+          </select></div>
       </div>
       <div id="asgCoFields" hidden>
-        ${cos.length ? `
         <div class="field"><label class="fl">Change order</label>
-          <select class="input" id="asgCo">${cos.map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : '—')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('')}</select></div>
-        <div class="muted" style="margin-top:4px">It goes into that change order's folder, alongside its proposal and its emails.</div>`
-        : `<div class="muted">No change orders yet — create one on the Change Orders tab first, then assign this file to it.</div>`}
+          <select class="input" id="asgCo">${cos.map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : '—')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('')}${ASG_NEW_OPT('change order')}</select></div>
+        <div class="field" id="asgNewCoWrap"${noCos ? '' : ' style="display:none"'}>
+          <label class="fl">What the new change order is for</label>
+          <input class="input" id="asgNewCo" placeholder="e.g. Added trench drains at the loading dock" autocomplete="off">
+          <div class="muted" style="margin-top:4px">It is numbered CO ${esc(nextCoNumber())} and left pending — price it on the Change Orders tab.</div>
+        </div>
+        <div class="muted" style="margin-top:4px">It goes into that change order's folder, alongside its proposal and its emails.</div>
       </div>
     </div>
     <div class="modal-foot">
@@ -2709,10 +2725,71 @@ function assignModal(i) {
     document.getElementById('asgRfiFields').hidden = destSel.value !== 'rfi';
     document.getElementById('asgCoFields').hidden = destSel.value !== 'co';
   };
+  // each picker shows its two "make one" fields only while ➕ New is the thing chosen
+  asgWireNew('asgSection', 'asgNewSecWrap', noSecs, 'asgNewSecNum');
+  asgWireNew('asgRfi', 'asgNewRfiWrap', noRfis, 'asgNewRfi');
+  asgWireNew('asgCo', 'asgNewCoWrap', noCos, 'asgNewCo');
   // default the status to match the kind
   const kindSel = document.getElementById('asgKind'), stSel = document.getElementById('asgStatus');
   kindSel.onchange = () => { stSel.value = kindSel.value === 'responses' ? 'approved' : 'submitted_gc'; };
   stSel.value = 'submitted_gc';
+}
+/* The bottom entry of every picker in the assign modal. One spelling, so the three destinations
+   behave alike and `assignPdf` has one value to test for. */
+const ASG_NEW = '__new';
+const ASG_NEW_OPT = what => `<option value="${ASG_NEW}">➕ New ${esc(what)}…</option>`;
+function asgWireNew(selId, wrapId, empty, focusId) {
+  const sel = document.getElementById(selId), wrap = document.getElementById(wrapId);
+  if (!sel || !wrap) return;
+  if (empty) sel.value = ASG_NEW;                  // nothing to pick from: start on making one
+  sel.onchange = () => {
+    const on = sel.value === ASG_NEW;
+    wrap.style.display = on ? '' : 'none';
+    if (on) { const f = document.getElementById(focusId); if (f && f.focus) f.focus(); }
+  };
+}
+/* ── making the thing you are filing onto, without leaving ──
+   The file is in your hand and the RFI it belongs to has not been written down yet. Being told to
+   go to another tab, make it, come back and start the pile again is the long way round something
+   that takes two fields. Each picker offers "➕ New …" at the bottom; choosing it opens those two
+   fields underneath, and the one button at the bottom makes it and files onto it in one go.
+
+   None of these three may re-render or open a drawer: the modal asking the question is still up,
+   and the answer to it only exists as the values in its own inputs. So they build the record,
+   save it, and hand it back — the tab behind will catch up when the modal closes. */
+const asgNewVal = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+async function makeRfiHere() {
+  const subject = asgNewVal('asgNewRfi');
+  if (!subject) { toast('Say what the new RFI is about', true); return null; }
+  const r = blankRfi(subject);
+  rfis.unshift(r);
+  await saveRfi(r);
+  return r;
+}
+async function makeCoHere() {
+  const desc = asgNewVal('asgNewCo');
+  if (!desc) { toast('Say what the new change order is for', true); return null; }
+  const c = blankCo(desc);
+  cos.unshift(c);
+  await saveCo(c);
+  return c;
+}
+async function makeSectionHere() {
+  const key = normNum(asgNewVal('asgNewSecNum'));
+  if (!key) { toast('Use a 6-digit section number, e.g. 23 05 93', true); return null; }
+  const had = findSection(key);
+  if (had) return had;                     // already there under that number — just file onto it
+  const rec = newSectionRecord({
+    key, number: prettyNum(key), division: divOf(key),
+    title: titleCaseWords(asgNewVal('asgNewSecTitle')),
+    manual: true, inBody: true, requirements: [], includes: []
+  });
+  markPending(key);
+  job.sections.push(rec);
+  sortSections();
+  try { await saveSection(rec); }
+  catch (e) { job.sections = job.sections.filter(x => x !== rec); toast(writeError(e), true); return null; }
+  return rec;
 }
 function assignPdf(i) {
   const dest = (document.getElementById('asgDest') || {}).value;
@@ -2727,9 +2804,9 @@ async function assignPdfToCo(i) {
   const item = _assignQueue[i];
   if (!item) return;
   const csel = document.getElementById('asgCo');
-  if (!csel) { toast('No change orders yet — create one on the Change Orders tab first', true); return; }
-  const c = coById(csel.value);
-  if (!c) { toast('Pick a change order', true); return; }
+  if (!csel) { toast('Pick a change order', true); return; }
+  const c = csel.value === ASG_NEW ? await makeCoHere() : coById(csel.value);
+  if (!c) { if (csel.value !== ASG_NEW) toast('Pick a change order', true); return; }
   stickyToast(`Filing ${item.name}…`);
   try {
     const blob = await readLooseBlob(item);
@@ -2756,9 +2833,9 @@ async function assignPdfToRfi(i) {
   const item = _assignQueue[i];
   if (!item) return;
   const rsel = document.getElementById('asgRfi');
-  if (!rsel) { toast('No RFIs yet — create one on the RFIs tab first', true); return; }
-  const r = rfiById(rsel.value);
-  if (!r) { toast('Pick an RFI', true); return; }
+  if (!rsel) { toast('Pick an RFI', true); return; }
+  const r = rsel.value === ASG_NEW ? await makeRfiHere() : rfiById(rsel.value);
+  if (!r) { if (rsel.value !== ASG_NEW) toast('Pick an RFI', true); return; }
   const kind = document.getElementById('asgRfiKind').value;   // 'question' | 'answer'
   stickyToast(`Filing ${item.name}…`);
   try {
@@ -2921,8 +2998,8 @@ async function assignUnassigned(i) {
   const key = document.getElementById('asgSection').value;
   const kind = document.getElementById('asgKind').value;
   const status = document.getElementById('asgStatus').value;
-  const s = findSection(key);
-  if (!s) { toast('Pick a spec section', true); return; }
+  const s = key === ASG_NEW ? await makeSectionHere() : findSection(key);
+  if (!s) { if (key !== ASG_NEW) toast('Pick a spec section', true); return; }
   stickyToast(`Filing ${item.name}…`);
   try {
     const blob = await readLooseBlob(item);
@@ -3864,12 +3941,18 @@ function rfiRowHtml(r) {
     <td class="c-rfidates${dates.length ? '' : ' is-empty'}" data-label="Dates">${dates.length ? '<small>' + dates.map(esc).join('<br>') + '</small>' : '<span class="muted">—</span>'}</td>
   </tr>`;
 }
-function newRfi() {
-  if (!job) return;
-  const r = { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: '',
+/* The record on its own, with nothing rendered and nothing opened. The tab's own "New RFI" button
+   wants the drawer open on what it just made; something creating one in passing — the assign
+   modal, mid-question — very much does not. */
+function blankRfi(subject) {
+  return { id: uid('rfi'), number: nextRfiNumber(), gcNumber: '', subject: String(subject == null ? '' : subject).trim(),
     status: 'open', dateSent: today(), dateDue: '', dateAnswered: '', questionText: '', answerText: '',
     notes: '', docs: [], checklist: [],
     created: Date.now(), updated: Date.now() };
+}
+function newRfi() {
+  if (!job) return;
+  const r = blankRfi('');
   rfis.unshift(r);
   openRfi = r.id;
   renderRfis(); renderRfiDrawer();
@@ -4622,11 +4705,15 @@ function coRowHtml(c) {
     </td>
   </tr>`;
 }
-function newChangeOrder() {
-  if (!job) return;
-  const c = { id: uid('co'), number: nextCoNumber(), description: '', amount: '',
+/* As with an RFI: the record alone, for anything that is not the Change Orders tab's own button. */
+function blankCo(description) {
+  return { id: uid('co'), number: nextCoNumber(), description: String(description == null ? '' : description).trim(), amount: '',
     status: 'pending', paid: false, paidDate: '', dateSubmitted: today(), dateApproved: '',
     notes: '', docs: [], checklist: [], created: Date.now(), updated: Date.now() };
+}
+function newChangeOrder() {
+  if (!job) return;
+  const c = blankCo('');
   cos.unshift(c);
   openCo = c.id;
   renderCos(); renderCoDrawer();
