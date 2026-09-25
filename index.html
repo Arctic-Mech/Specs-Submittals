@@ -440,6 +440,26 @@ textarea.autosize[rows="1"] { min-height: 0; }
    strips a button in there back to plain text, which is right for a ✎ and wrong for these two. */
 .hist-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 7px; }
 .hist-foot small { font-size: 11px; color: var(--text-3); }
+/* ── the product log: what actually has to be bought off this section ── */
+.prod-row { border-left: 3px solid var(--border-2); padding: 6px 0 7px 11px; margin-bottom: 9px; }
+.prod-row.is-edit { border-left-color: var(--accent); padding-right: 2px; }
+.pr-head { display: flex; align-items: baseline; gap: 7px; }
+.pr-tag { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent);
+  background: var(--accent-sf); border-radius: 4px; padding: 1px 6px; }
+.pr-name { font-size: 13.5px; font-weight: 600; }
+.pr-lead { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.pr-out { flex: none; font-size: 10.5px; font-weight: 700; color: var(--green); background: var(--green-sf);
+  border-radius: 999px; padding: 1px 7px; }
+.pr-desc { font-size: 13px; color: var(--text-2); line-height: 1.45; margin-top: 3px; }
+.pr-note { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.prod-row .pr-head .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.prod-row .pr-head .x:hover { color: var(--text); }
+/* the pick list in the release modal */
+.rel-pick { border: 1px solid var(--border); border-radius: 6px; padding: 4px 2px; max-height: 260px; overflow-y: auto; }
+.rel-pick .tick-row { display: flex; align-items: flex-start; gap: 9px; padding: 5px 9px; font-size: 13px; cursor: pointer; }
+.rel-pick .tick-row:hover { background: var(--surface-2); }
+.rel-pick .tick-row.is-out { opacity: .55; cursor: default; }
+.rel-pick .tick-row input { margin-top: 2px; }
 .email-drop {
   border: 1.5px dashed var(--border-2); border-radius: 8px; padding: 11px 14px; text-align: center;
   color: var(--text-3); font-size: 12.5px; cursor: pointer; margin-top: 10px;
@@ -1120,7 +1140,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.63';
+const APP_VERSION = 'v7.64';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -11446,7 +11466,9 @@ function secRowHtml(s) {
     ? `<input class="cell-in cell-desc" data-key="${s.key}" data-field="description"
         value="${esc(s.description || '')}" placeholder="Add a description…"
         onpointerdown="event.stopPropagation()" oninput="setField('${s.key}','description',this.value)">`
-    : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : '');
+    : (sectionProducts(s).length
+        ? `<div class="sub cell-desc">${sectionProducts(s).map(p => esc(productLabel(p))).join(' · ')}</div>`
+        : (s.description ? `<div class="sub cell-desc">${esc(s.description)}</div>` : ''));
 
   const rowOpen = editing ? '' : ` onclick="openSection('${s.key}')"`;
   const specEmpty = !editing && !mfrVal, vendorEmpty = !editing && !s.vendor;
@@ -11788,6 +11810,168 @@ function pinnedLine(cls, item) {
   return `<div class="${cls}${item.done ? ' is-done' : ''}">${item.done ? '✓' : '📌'} ${esc(item.text)}</div>`;
 }
 
+/* ── the product log ──
+   A spec section says what class of thing is wanted; the schedule says which ones. "22 05 23
+   General Duty Valves" is not what you buy — "AD-1 Area Drain: J.R. Smith 2142 Series, cast iron
+   body, 12-inch round vandal-proof tractor grate, no-hub outlet, sediment bucket" is. So a section
+   holds the list of what actually has to be bought and submitted on, each with its own lead time,
+   because a floor drain and a chiller do not turn up in the same week.
+
+   The vendor stays on the section: one section, one supplier, many items off them. */
+function sectionProducts(s) { return (s && s.products) || []; }
+function productById(s, id) { return sectionProducts(s).find(p => p.id === id) || null; }
+function productLabel(p) {
+  if (!p) return '';
+  return [p.tag, p.name].filter(Boolean).join(' ') || (p.desc || '').slice(0, 40);
+}
+/* A mark, what it is, then what to buy: "AD-1 - Area Drain: J.R. Smith 2142 Series, …". That is the
+   shape a spec is read in and the shape it gets pasted in, so take it apart that way. */
+const PROD_TAG_RE = /^\s*([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?)\s*[-–:.]*\s+(.*)$/;
+function parseProductLine(line) {
+  const raw = String(line || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  let tag = '', rest = raw;
+  const m = PROD_TAG_RE.exec(raw);
+  if (m) { tag = m[1].replace(/\s+/g, '').toUpperCase(); rest = m[2].trim(); }
+  let name = '', desc = rest;
+  const c = rest.indexOf(':');
+  if (c > 0 && c <= 60) { name = rest.slice(0, c).trim(); desc = rest.slice(c + 1).trim(); }
+  return { id: uid('prd'), tag, name: titleCaseWords(name), desc: autoCap(desc), leadWeeks: '', note: '' };
+}
+/* A spec is usually pasted as one run of prose with several items in it, not one per line. A mark
+   at the start of a sentence begins a new item — but only where a colon follows soon after, which
+   is what tells a real entry apart from a standard being cited mid-paragraph. */
+function splitProductText(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return [];
+  const re = /(^|[.;]\s+)([A-Z]{1,5}[-–]?\s?\d{1,3}[A-Z]?\s*[-–:.]*\s+)/g;
+  const cuts = [];
+  let m;
+  while ((m = re.exec(t))) {
+    const at = m.index + m[1].length;
+    const head = t.slice(at, at + 90);
+    const colon = head.indexOf(':');
+    if (colon > 0 && colon <= 60) cuts.push(at);
+  }
+  if (!cuts.length) return [t];
+  const out = [];
+  if (cuts[0] > 0) out.push(t.slice(0, cuts[0]).trim());
+  for (let i = 0; i < cuts.length; i++) {
+    out.push(t.slice(cuts[i], i + 1 < cuts.length ? cuts[i + 1] : undefined).trim());
+  }
+  return out.filter(Boolean);
+}
+function parseProductBlock(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    for (const piece of splitProductText(line)) {
+      const p = parseProductLine(piece);
+      if (p && (p.tag || p.desc)) out.push(p);
+    }
+  }
+  return out;
+}
+
+let prodEdit = null;                 // the product open for editing, if any
+function productRows(s) {
+  const list = sectionProducts(s);
+  if (!list.length) return `<div class="muted" style="font-size:13px">Nothing listed yet.
+    Paste the schedule straight in — "AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…" —
+    and it comes apart into its mark, what it is, and what to buy.</div>`;
+  const rel = releasedProducts(s);
+  return list.map(p => {
+    if (prodEdit === p.id) return `
+      <div class="prod-row is-edit">
+        <div class="grid2">
+          <div class="field"><label class="fl">Mark</label>
+            <input class="input" id="pdTag" value="${esc(p.tag || '')}" placeholder="AD-1"></div>
+          <div class="field"><label class="fl">What it is</label>
+            <input class="input" id="pdName" value="${esc(p.name || '')}" placeholder="Area Drain"></div>
+        </div>
+        <div class="field"><label class="fl">What to buy</label>
+          <textarea class="input autosize" rows="2" id="pdDesc"
+            placeholder="J.R. Smith 2142 Series, cast iron body…">${esc(p.desc || '')}</textarea></div>
+        <div class="grid2">
+          <div class="field"><label class="fl">Lead time (weeks)</label>
+            <input class="input" id="pdLead" value="${esc(p.leadWeeks === 0 ? '0' : (p.leadWeeks || ''))}" placeholder="6 or 6-7"></div>
+          <div class="field"><label class="fl">Anything else</label>
+            <input class="input" id="pdNote" value="${esc(p.note || '')}" placeholder="Finish, options, who to ask…"></div>
+        </div>
+        <div class="hist-foot">
+          <button class="btn sm" onclick="saveProduct('${s.key}','${p.id}')">Save</button>
+          <button class="btn sm ghost" onclick="cancelProductEdit()">Cancel</button>
+        </div>
+      </div>`;
+    const out = rel[p.id];
+    return `
+      <div class="prod-row">
+        <div class="pr-head">
+          ${p.tag ? `<span class="pr-tag">${esc(p.tag)}</span>` : ''}
+          <span class="pr-name">${esc(p.name || '(unnamed)')}</span>
+          ${p.leadWeeks ? `<span class="pr-lead">${esc(leadLabel(p.leadWeeks))}</span>` : ''}
+          ${out ? `<span class="pr-out" title="Released ${esc(out.date ? fmtDate(out.date + 'T00:00:00') : '')}">${out.delivered ? '✓ delivered' : 'released'}</span>` : ''}
+          <span class="spacer" style="flex:1"></span>
+          <button class="x" title="Edit" onclick="editProduct('${p.id}')">✎</button>
+          <button class="x" title="Remove" onclick="removeProduct('${s.key}','${p.id}')">✕</button>
+        </div>
+        ${p.desc ? `<div class="pr-desc">${esc(p.desc)}</div>` : ''}
+        ${p.note ? `<div class="pr-note">${esc(p.note)}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+/* Which products are already out, so the same one is not released twice by mistake. */
+function releasedProducts(s) {
+  const out = {};
+  for (const r of (s.releases || [])) if (r.item) out[r.item] = r;
+  return out;
+}
+function editProduct(id) {
+  prodEdit = id; renderDrawer();
+  const b = $('pdTag'); if (b) { b.focus(); try { b.select(); } catch (e) {} }
+}
+function cancelProductEdit() { prodEdit = null; renderDrawer(); }
+async function saveProducts(key, s) {
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { products: s.products || [] }); }
+  catch (e) { toast(writeError(e), true); }
+}
+async function addProducts(key) {
+  const s = findSection(key); if (!s) return;
+  const el = $('prodInput'); const text = (el && el.value || '').trim();
+  if (!text) return;
+  const found = parseProductBlock(text);
+  if (!found.length) return;
+  s.products = sectionProducts(s).concat(found);
+  if (el) el.value = '';
+  prodEdit = null;
+  await saveProducts(key, s);
+  const ne = $('prodInput'); if (ne) ne.focus();
+  if (found.length > 1) toast(found.length + ' products added');
+}
+async function saveProduct(key, id) {
+  const s = findSection(key); if (!s) return;
+  const p = productById(s, id);
+  prodEdit = null;
+  if (!p) { renderDrawer(); return; }
+  const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
+  p.tag = v('pdTag').toUpperCase();
+  p.name = titleCaseWords(v('pdName'));
+  p.desc = autoCap(v('pdDesc'));
+  p.leadWeeks = v('pdLead');
+  p.note = autoCap(v('pdNote'));
+  await saveProducts(key, s);
+}
+async function removeProduct(key, id) {
+  const s = findSection(key); if (!s) return;
+  const p = productById(s, id); if (!p) return;
+  const rel = releasedProducts(s)[id];
+  if (!confirm('Remove ' + (productLabel(p) || 'this product') + ' from this section?' +
+    (rel ? '\n\nIt has been released; that release stays in the log.' : ''))) return;
+  s.products = sectionProducts(s).filter(x => x.id !== id);
+  if (prodEdit === id) prodEdit = null;
+  await saveProducts(key, s);
+}
+
 /* ── the history log ──
    A section's story in one list: every status change the app records on its own, and alongside
    them anything you write down — who you chased, what you are waiting on, who still needs to look
@@ -11976,8 +12160,8 @@ async function setStatus(key, value) {
 /* ═══════════════════════════════════════════════════════════════════════════
    7. SECTION DRAWER
    ═══════════════════════════════════════════════════════════════════════════ */
-function openSection(key) { openKey = key; histEdit = null; renderDrawer(); renderTable(); navSync(); }
-function closeDrawer() { openKey = null; histEdit = null; $('drawerHost').innerHTML = ''; navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; renderDrawer(); renderTable(); navSync(); }
+function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
   g.hidden = !g.hidden;
@@ -12073,6 +12257,19 @@ function renderDrawer() {
         </div>
         ${historyLog(s)}
         <div class="muted" style="margin-top:8px">The newest line you write shows on the register row.</div>
+      </div>
+
+      <div class="sec">
+        <h4>Products ${sectionProducts(s).length ? `<span class="muted" style="font-weight:400">${sectionProducts(s).length}</span>` : ''}</h4>
+        <div class="add-row">
+          <textarea class="input autosize" rows="1" id="prodInput"
+            placeholder="Paste the schedule…  AD-1 - Area Drain: J.R. Smith 2142 Series, cast iron body…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addProducts('${s.key}')}"></textarea>
+          <button class="btn sm" onclick="addProducts('${s.key}')">Add</button>
+        </div>
+        ${productRows(s)}
+        <div class="muted" style="margin-top:8px">One supplier for the section, many items off them —
+          the vendor stays in Details. Each item carries its own lead time, and releases are made from this list.</div>
       </div>
 
       <div class="sec">
@@ -12393,7 +12590,7 @@ function releaseList(s) {
         <input type="checkbox" ${r.delivered ? 'checked' : ''}
           onchange="toggleDelivered('${s.key}','${r.id}', this.checked)">
       </label>
-      <span class="rn"><b>${esc(r.label)}</b>
+      <span class="rn"><b>${esc(r.item ? (productLabel(productById(s, r.item)) || r.label) : r.label)}</b>
         <small>Released ${esc(r.date ? fmtDate(r.date + 'T00:00:00') : '—')}${
           r.weeks ? ' · lead time ' + esc(leadLabel(r.weeks)) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>
       <span class="due" style="color:${r.delivered ? cvar('green') : (r.expected ? cvar('blue') : 'var(--text-3)')}">${
@@ -12425,6 +12622,15 @@ async function setRelease(key, state) {
   catch (e) { toast(writeError(e), true); }
 }
 
+/* With a product list there is nothing to ask: the section is fully released once every item on it
+   is out, and partly released while any is still to go. */
+function releaseStateFromProducts(s) {
+  const list = sectionProducts(s);
+  if (!list.length) return s.releaseState || 'released';
+  const out = releasedProducts(s);
+  const n = list.filter(p => out[p.id]).length;
+  return n === 0 ? (s.releaseState || 'not_ready') : n === list.length ? 'released' : 'partial';
+}
 function releaseModal(key, relId) {
   const s = findSection(key);
   if (!s) return;
@@ -12438,9 +12644,21 @@ function releaseModal(key, relId) {
       <div class="modal-head"><h3>${r ? 'Edit release' : 'Record a release'}</h3>
         <button class="icon-btn" onclick="closePdf()">✕</button></div>
       <div class="modal-body">
-        <div class="field">
+        ${(!r && sectionProducts(s).length) ? `<div class="field">
           <label class="fl">What is going out</label>
-          <input class="input" id="rlLabel" value="${esc(r ? r.label : 'Release ' + n)}"
+          <div class="rel-pick" id="rlPick">${sectionProducts(s).map(pr => {
+            const out = releasedProducts(s)[pr.id];
+            return `<label class="tick-row${out ? ' is-out' : ''}">
+              <input type="checkbox" class="rlItem" value="${esc(pr.id)}" ${out ? 'disabled' : ''}>
+              <span>${pr.tag ? `<b>${esc(pr.tag)}</b> ` : ''}${esc(pr.name || pr.desc.slice(0, 40))}${
+                pr.leadWeeks ? ` <span class="muted">· ${esc(leadLabel(pr.leadWeeks))}</span>` : ''}${
+                out ? ` <span class="muted">· already out</span>` : ''}</span></label>`; }).join('')}</div>
+          <div class="muted" style="margin-top:6px">Each one goes into the log on its own, with its own
+            lead time and its own delivery date. Tick none and it is recorded as one release instead.</div>
+        </div>` : ''}
+        <div class="field">
+          <label class="fl">${(!r && sectionProducts(s).length) ? '…or describe it' : 'What is going out'}</label>
+          <input class="input" id="rlLabel" value="${esc(r ? r.label : (sectionProducts(s).length ? '' : 'Release ' + n))}"
             placeholder="e.g. Phase 1 — TU boxes" autocomplete="off">
         </div>
         <div class="grid2">
@@ -12462,7 +12680,7 @@ function releaseModal(key, relId) {
           <label class="fl">Note (optional)</label>
           <input class="input" id="rlNote" value="${esc(r && r.note || '')}" autocomplete="off">
         </div>
-        ${r ? '' : `<div class="field" style="margin-top:12px;margin-bottom:0">
+        ${(r || sectionProducts(s).length) ? '' : `<div class="field" style="margin-top:12px;margin-bottom:0">
           <label class="fl">Does this finish the section?</label>
           <div class="seg-sm" id="rlScope">
             <button class="on" data-scope="released" onclick="pickScope(this)">All of it</button>
@@ -12509,11 +12727,26 @@ async function saveRelease(key, relId) {
   const scopeEl = $('rlScope') && $('rlScope').querySelector('button.on');
   const scope = scopeEl ? scopeEl.dataset.scope : null;
 
+  // Ticked items each become their own line in the release log, carrying their own lead time, so a
+  // drain due in six weeks and a pump due in twenty stop pretending to arrive together.
+  const picked = [];
+  const box = $('rlPick');
+  if (box) for (const el of box.querySelectorAll('input.rlItem')) if (el.checked) picked.push(el.value);
+
   markPending(key);
   s.releases = s.releases || [];
   const existing = relId ? s.releases.find(x => x.id === relId) : null;
   if (existing) Object.assign(existing, { label, date, weeks, expected, expectedTo, note, expectedManual });
-  else {
+  else if (picked.length) {
+    for (const pid of picked) {
+      const pr = productById(s, pid);
+      const w = (pr && pr.leadWeeks) || weeks;
+      const e = expectedManual ? { from: expected, to: expectedTo } : expectedRange(date, w);
+      s.releases.push({ id: uid('rel'), item: pid, label: productLabel(pr) || label,
+        date, weeks: w, expected: e.from, expectedTo: e.to, note, expectedManual });
+    }
+    s.releaseState = releaseStateFromProducts(s);
+  } else {
     s.releases.push({ id: uid('rel'), label, date, weeks, expected, expectedTo, note, expectedManual });
     s.releaseState = scope === 'partial' ? 'partial' : 'released';
   }
@@ -12549,7 +12782,9 @@ async function removeRelease(key, relId) {
   if (!r || !confirm(`Remove "${r.label}"?`)) return;
   markPending(key);
   s.releases = s.releases.filter(x => x.id !== relId);
-  if (!s.releases.length && s.releaseState === 'partial') s.releaseState = 'ready';
+  // pulling a release takes its item back off the released list, so it can go out again
+  if (sectionProducts(s).length) s.releaseState = releaseStateFromProducts(s);
+  else if (!s.releases.length && s.releaseState === 'partial') s.releaseState = 'ready';
   s.releaseChangedAt = Date.now();
   renderDrawer(); renderTable();
   try { await patchSection(key, { releases: s.releases, releaseState: s.releaseState, releaseChangedAt: s.releaseChangedAt }); }
@@ -12912,7 +13147,7 @@ function newSectionRecord(base) {
   return Object.assign({
     status: 'not_started', vendor: '', spec: '', description: '', manufacturer: '',
     package: '', submittedDate: '', returnedDate: '',
-    notes: '', submittals: [], responses: [], history: [],
+    notes: '', submittals: [], responses: [], history: [], products: [],
     tags: [], autoTags: [], leadWeeks: '', releaseState: 'not_ready', releases: []
   }, base);
 }
