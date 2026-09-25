@@ -1197,7 +1197,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.72';
+const APP_VERSION = 'v7.73';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -14144,10 +14144,10 @@ function drawPdfHeader(doc, pageW, M) {
   doc.text('HVAC · Pipefitting · Plumbing · Fabrication', pageW - M, 46, { align: 'right' });
   doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.4); doc.line(M, 80, pageW - M, 80);
 }
-function exportPdf() {
-  if (!job) return;
-  stickyToast('Building the PDF register…');
-  ensureJsPDF().then(jspdf => {
+/* The register as a document. Built once, then either downloaded or written into the job folder
+   — the folder should hold the same thing you would have sent, not a lesser version of it. */
+function buildRegisterPdfDoc() {
+  return ensureJsPDF().then(jspdf => {
     const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
     const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 34;
     const secs = sectionsOf(job).slice().sort(sectionOrder);
@@ -14201,9 +14201,15 @@ function exportPdf() {
     });
     const n = doc.internal.getNumberOfPages();
     for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165); doc.text(`Page ${i} of ${n}`, pageW - M, pageH - 14, { align: 'right' }); }
-    doc.save(jobFileBase() + '_Submittal_Register.pdf');
-    toast('PDF register downloaded');
-  }).catch(e => { console.error(e); toast('Could not build the PDF: ' + (e.message || e), true); });
+    return doc;
+  });
+}
+function exportPdf() {
+  if (!job) return;
+  stickyToast('Building the PDF register…');
+  buildRegisterPdfDoc()
+    .then(doc => { doc.save(jobFileBase() + '_Submittal_Register.pdf'); toast('PDF register downloaded'); })
+    .catch(e => { console.error(e); toast('Could not build the PDF: ' + (e.message || e), true); });
 }
 
 /* ── Change Order Log PDF — reproduces the Arctic Sheet Metal grid template ── */
@@ -14531,7 +14537,9 @@ const MARKER_FILE      = 'The Dingus - job link (do not delete).json';
 const MARKER_FILE_OLDS = ['ASM Job Tool - job link (do not delete).json', 'job.json'];
 const REGISTER_JSON     = 'Submittal Register - data (do not delete).json';
 const REGISTER_JSON_OLD = 'register.json';
-const REGISTER_CSV      = 'Submittal Register.csv';
+const REGISTER_XLSX     = 'Submittal Register.xlsx';   // the log Arctic keeps by hand
+const REGISTER_PDF      = 'Submittal Register.pdf';    // the branded one, ready to send
+const REGISTER_CSV      = 'Submittal Register.csv';    // what those two replace
 const REGISTER_CSV_OLD  = 'register.csv';
 const FOLDER_README     = 'READ ME - do not delete.txt';
 const LAUNCHER_FILE     = 'Open The Dingus.html';   // double-click in ShareFile to open the tool at this job (stays at the folder root)
@@ -14640,7 +14648,8 @@ function folderReadmeText() {
     '  • the "' + LINK_DIR + '" folder — the tool’s bookkeeping (do not delete):',
     '        "' + MARKER_FILE + '"  links this folder to the job in the tool.',
     '        "' + REGISTER_JSON + '"  a backup copy of the register data.',
-    '        "' + REGISTER_CSV + '"  the register as a spreadsheet you can open or send.',
+    '        "' + REGISTER_XLSX + '"  the submittal and procurement log, as a spreadsheet.',
+    '        "' + REGISTER_PDF + '"  the same register on Arctic letterhead, ready to send.',
     '        "' + FOLDER_README + '"  this file.',
     '  • the "' + DOCS_DIR + '" folder — every PDF, sorted into subfolders:',
     '        ' + DOCS_DIR + '/Submittals/<where it is>/  current submittals & responses — see below',
@@ -15338,6 +15347,27 @@ function scheduleFolderSave() {
   }, 12000);
 }
 function saveNow() { clearTimeout(_folderSaveTimer); saveToFolder(false); }   // clicking the indicator forces an immediate save
+/* The register in the two shapes anyone actually opens: the Excel log Arctic keeps by hand, and
+   the branded PDF. Both are written on every save, so the folder holds a current copy of each
+   without anyone remembering to go and export one. A plain CSV was there before, which nobody
+   wanted to look at and nobody could send.
+
+   Neither is the backup — that is the JSON sitting beside them — so failing to build one is
+   worth a line in the console and nothing more. It must never cost the save. */
+async function writeRegisterExports(ld) {
+  const secs = sectionsOf(job).slice().sort(sectionOrder);
+  if (!secs.length) return;
+  try {
+    const bytes = await buildSubmittalLogXlsx(secs);
+    await writeFolderFile(REGISTER_XLSX, bytes,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ld);
+  } catch (e) { console.error('submittal log xlsx', e); }
+  try {
+    const doc = await buildRegisterPdfDoc();
+    await writeFolderFile(REGISTER_PDF, doc.output('arraybuffer'), 'application/pdf', ld);
+  } catch (e) { console.error('register pdf', e); }
+  try { await ld.removeEntry(REGISTER_CSV); } catch (e) {}      // the one they replace
+}
 async function saveToFolder(auto) {
   if (!job) return;
   if (saveToFolder._busy) { if (!auto) toast('A save is already in progress…', true); return; }
@@ -15364,7 +15394,7 @@ async function saveToFolder(auto) {
     const ld = await linkDirHandle(jobFolder);
     const snap = await buildRegisterSnapshot();
     await writeFolderFile(REGISTER_JSON, JSON.stringify(snap, null, 2), 'application/json', ld);
-    await writeFolderFile(REGISTER_CSV, '﻿' + buildCsv(), 'text/csv;charset=utf-8', ld);
+    await writeRegisterExports(ld);
     await ensureFolderDocs(jobFolder);
 
     folderSaveAt = Date.now(); folderSaveState = 'saved'; _lastSavedSig = registerSig();
@@ -15372,7 +15402,7 @@ async function saveToFolder(auto) {
     if (moved) { if (openKey) renderDrawer(); renderTable(); }
     await noteFolderChanged();
     renderSaveStatus();
-    if (!auto) toast(`Saved to the ShareFile folder — "${REGISTER_CSV}" written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
+    if (!auto) toast(`Saved to the ShareFile folder — "${REGISTER_XLSX}" and "${REGISTER_PDF}" written${moved ? `, ${moved} file${moved === 1 ? '' : 's'} re-filed` : ''}`);
   } catch (e) {
     console.error(e);
     folderSaveState = 'error'; renderSaveStatus();
