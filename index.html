@@ -459,6 +459,25 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-star:hover { opacity: 1; color: var(--amber); }
 .prod-row.is-first { border-left-color: var(--amber); }
 .prod-row.ends-first { margin-bottom: 14px; box-shadow: 0 10px 0 -9px var(--border-2); }
+/* ── what changed inside a spec section ── */
+.tx-row { cursor: pointer; }
+.tx-row:hover .rt { color: var(--accent); }
+.tx-body { margin-top: 7px; padding-left: 2px; display: flex; flex-direction: column; gap: 5px; }
+.tx-line { display: flex; gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.45; }
+.tx-mark { flex: none; width: 10px; font-family: var(--mono); font-weight: 700; }
+.tx-line.is-add .tx-mark { color: var(--green); }
+.tx-line.is-cut .tx-mark { color: var(--red, #e5484d); }
+.tx-line.is-mod .tx-mark { color: var(--amber); }
+.tx-at { flex: none; width: 46px; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+.tx-txt { flex: 1; min-width: 0; color: var(--text-2); }
+.tx-line.is-cut .tx-txt { text-decoration: line-through; color: var(--text-3); }
+.tx-arrow { color: var(--text-3); margin: 0 3px; }
+.tx-txt b { color: var(--text); font-weight: 600; }
+/* and the same thing read back later, in the section's own panel */
+.sx-item { border-left: 2px solid var(--border); padding: 2px 0 6px 10px; margin-bottom: 8px; }
+.sx-item:last-child { margin-bottom: 0; }
+.sx-head { font-size: 11.5px; color: var(--text-3); margin-bottom: 4px; }
+.sx-head b { color: var(--text-2); }
 /* ── drawings ── */
 .dw-list { display: flex; flex-direction: column; gap: 8px; }
 .dw-card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 7px;
@@ -1322,7 +1341,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.80';
+const APP_VERSION = 'v7.81';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2248,9 +2267,9 @@ async function saveSpecData(jobId, list) {
   for (let i = 0; i < list.length; i += 400) {
     const batch = FB.writeBatch(FB.db);
     for (const s of list.slice(i, i + 400)) {
-      batch.set(specDataRef(jobId, s.key), clean({
+      batch.set(specDataRef(jobId, s.key), clean(Object.assign({
         key: s.key, requirements: s.requirements || [], includes: s.includes || []
-      }));
+      }, s.__specChanges ? { changes: s.__specChanges } : {})));
     }
     await batch.commit();
   }
@@ -13173,14 +13192,38 @@ function renderDrawer() {
   autosizeAll($('drawerHost'));
 
   // The spec text is a separate document so that opening a job stays light.
-  specDataFor(s.key).then(data => {
+  rawSpecData(s.key).then(data => {
     const host = $('reqBlock');
     if (!host || openKey !== s.key) return;      // moved on while it loaded
-    host.innerHTML = renderReqs(data.requirements) + renderIncludes(data.includes);
+    host.innerHTML = renderReqs(data.requirements) + renderIncludes(data.includes)
+      + renderSpecChanges(data.changes);
   }).catch(() => {
     const host = $('reqBlock');
     if (host) host.innerHTML = '<div class="muted">Could not load the spec text.</div>';
   });
+}
+
+/* What earlier issues of the book did to this section's wording, newest last, read back from the
+   record the import wrote. The log line says it happened; this says what it was. */
+function renderSpecChanges(changes) {
+  const list = (changes || []).filter(c => c && (c.summary || (c.added || []).length ||
+    (c.removed || []).length || (c.changed || []).length));
+  if (!list.length) return '';
+  const bit = (mark, cls, text, at, to) => `<div class="tx-line ${cls}">
+    <span class="tx-mark">${mark}</span>
+    <span class="tx-at">${esc(at || '')}</span>
+    <span class="tx-txt" title="${esc(text)}">${esc(revClip(text, 150))}${
+      to ? ` <span class="tx-arrow">\u2192</span> <b title="${esc(to)}">${esc(revClip(to, 150))}</b>` : ''}</span></div>`;
+  return `<div class="sec" style="margin-top:12px"><h4>What the issues changed here
+      <span class="fl-tag">${list.length}</span></h4>
+    ${list.map(c => `<div class="sx-item">
+      <div class="sx-head"><b>${esc(c.book || 'A later issue')}</b>${
+        c.at ? ' \u00b7 ' + esc(fmtDate(c.at)) : ''}${c.by ? ' \u00b7 ' + esc(c.by) : ''}${
+        c.summary ? ' \u00b7 ' + esc(c.summary) : ''}</div>
+      ${(c.added || []).map(x => bit('+', 'is-add', x.text, x.article)).join('')}
+      ${(c.changed || []).map(x => bit('~', 'is-mod', x.from, x.article, x.to)).join('')}
+      ${(c.removed || []).map(x => bit('\u2212', 'is-cut', x.text, x.article)).join('')}
+    </div>`).join('')}</div>`;
 }
 
 const isLink = d => d && d.type === 'link';
@@ -14505,6 +14548,95 @@ function specDiff(oldList, newList) {
   return changes;
 }
 const specTally = ch => ch.reduce((a, c) => { a[c.kind] = (a[c.kind] || 0) + 1; return a; }, {});
+
+/* ── what changed INSIDE a spec section ──
+   The section list tells you a section exists. It does not tell you that 1.03 now wants six
+   copies where it wanted four, or that a new paragraph appeared demanding certified technician
+   qualifications — and that is the part that costs money when it is missed.
+
+   Both sides are already parsed: requirements are articles ("1.03 ACTION SUBMITTALS") holding
+   items, and "Section Includes" is a list of lines. Matching them is the same conservative game
+   as matching sections: exact first, then same slot, then near-enough, and only then call it new. */
+const specTextKey = t => String(t == null ? '' : t).toLowerCase()
+  .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+function textTokens(t) {
+  const out = {};
+  for (const w of specTextKey(t).split(' ')) if (w.length > 2) out[w] = 1;
+  return out;
+}
+/* How much two paragraphs have in common, 0 to 1. Used only to tell a rewording from a fresh
+   paragraph — the threshold is deliberately high, because calling a new requirement a reword
+   hides it, and that is the failure that matters. */
+function textLike(a, b) {
+  const A = textTokens(a), B = textTokens(b);
+  const ak = Object.keys(A), bk = Object.keys(B);
+  if (!ak.length || !bk.length) return 0;
+  let hit = 0;
+  for (const w of ak) if (B[w]) hit++;
+  return hit / Math.max(ak.length, bk.length);
+}
+const REWORD_AT = 0.6;
+function flatReqs(reqs) {
+  const out = [];
+  for (const g of (reqs || [])) for (const it of (g.items || [])) {
+    out.push({ article: g.article || '', group: g.name || '', kind: g.kind || '',
+      label: it.label || '', text: it.text || '' });
+  }
+  return out;
+}
+/* Exact wording, then the same slot in the same article, then near-enough, then new or gone. */
+function listDiff(oldList, newList, slotOf) {
+  const usedOld = {}, usedNew = {};
+  const same = [], changed = [], added = [], removed = [];
+  const byText = {};
+  oldList.forEach((o, i) => { const k = specTextKey(o.text); (byText[k] = byText[k] || []).push(i); });
+  newList.forEach((n, j) => {
+    const hit = (byText[specTextKey(n.text)] || []).find(i => !usedOld[i]);
+    if (hit !== undefined) { usedOld[hit] = 1; usedNew[j] = 1; same.push({ from: oldList[hit], to: n }); }
+  });
+  if (slotOf) {                                   // "1.03 B." still exists, but it reads differently
+    const bySlot = {};
+    oldList.forEach((o, i) => { if (usedOld[i]) return; const k = slotOf(o); if (k) (bySlot[k] = bySlot[k] || []).push(i); });
+    newList.forEach((n, j) => {
+      if (usedNew[j]) return;
+      const k = slotOf(n); if (!k) return;
+      const hit = (bySlot[k] || []).find(i => !usedOld[i]);
+      if (hit !== undefined) { usedOld[hit] = 1; usedNew[j] = 1; changed.push({ from: oldList[hit], to: n }); }
+    });
+  }
+  newList.forEach((n, j) => {                     // moved to another article but plainly the same words
+    if (usedNew[j]) return;
+    let best = -1, score = 0;
+    oldList.forEach((o, i) => { if (usedOld[i]) return;
+      const sc = textLike(o.text, n.text); if (sc > score) { score = sc; best = i; } });
+    if (best >= 0 && score >= REWORD_AT) { usedOld[best] = 1; usedNew[j] = 1; changed.push({ from: oldList[best], to: n }); }
+  });
+  newList.forEach((n, j) => { if (!usedNew[j]) added.push(n); });
+  oldList.forEach((o, i) => { if (!usedOld[i]) removed.push(o); });
+  return { same, changed, added, removed };
+}
+const reqSlot = x => (x.article && x.label) ? x.article + '|' + specTextKey(x.label) : '';
+function specTextDiff(oldData, newSec) {
+  const reqs = listDiff(flatReqs(oldData && oldData.requirements), flatReqs(newSec && newSec.requirements), reqSlot);
+  const asItems = list => (list || []).map(t => ({ text: String(t || ''), article: '', group: 'Section Includes', label: '', kind: '' }));
+  const inc = listDiff(asItems(oldData && oldData.includes), asItems(newSec && newSec.includes), null);
+  const n = reqs.added.length + reqs.removed.length + reqs.changed.length
+          + inc.added.length + inc.removed.length + inc.changed.length;
+  return { reqs, inc, n };
+}
+/* Said in a line: "2 added, 1 reworded, 1 taken out". */
+function textChangeLabel(d) {
+  if (!d || !d.n) return '';
+  const a = d.reqs.added.length + d.inc.added.length;
+  const r = d.reqs.removed.length + d.inc.removed.length;
+  const c = d.reqs.changed.length + d.inc.changed.length;
+  const bits = [];
+  if (a) bits.push(a + ' added');
+  if (c) bits.push(c + ' reworded');
+  if (r) bits.push(r + ' taken out');
+  return bits.join(', ');
+}
+
 /* What a section would take with it if it went. One the new book has dropped and that was never
    touched is noise — it was parsed out of the old book and nothing was ever hung off it, so it
    can go quietly. One carrying a single approved submittal cannot, and the difference between
@@ -14545,8 +14677,28 @@ function workLabel(w) {
    book sharing most of its sections with the register is a reissue and one sharing almost none
    is not. */
 let importMode = null;                    // 'add' | 'revise' — worked out, then yours to change
+/* The section's wording as it stands, and what earlier issues already said about it. One read:
+   a section still holding its text in memory from this session is believed over the server for
+   the wording, but the change log only ever lives in the document. */
+async function rawSpecData(key) {
+  const s = findSection(key);
+  let doc = null;
+  try { const snap = await FB.getDoc(specDataRef(job.id, key)); if (snap.exists()) doc = snap.data(); }
+  catch (e) { /* offline: treat it as having nothing recorded */ }
+  const inMem = s && (Array.isArray(s.requirements) || Array.isArray(s.includes));
+  return {
+    requirements: inMem ? (s.requirements || []) : ((doc && doc.requirements) || []),
+    includes: inMem ? (s.includes || []) : ((doc && doc.includes) || []),
+    changes: (doc && doc.changes) || []
+  };
+}
+
 function showImportReview(file, pageCount, result) {
-  pendingImport = { file, pageCount, result };
+  /* Re-shown for the same file — flipping the mode, opening a section's wording, or the wording
+     finishing loading — this must be the same pending import, not a fresh one. Replacing it threw
+     away what had just been read and started reading it again, for ever. */
+  pendingImport = (pendingImport && pendingImport.file === file && pendingImport.result === result)
+    ? pendingImport : { file, pageCount, result };
   const have = sectionsOf(job);
   if (!have.length) { importMode = 'add'; return showAddReview(file, pageCount, result); }
   const ch = specDiff(have, result.sections);
@@ -14555,8 +14707,61 @@ function showImportReview(file, pageCount, result) {
     const matched = (t.same || 0) + (t.retitled || 0) + (t.renumbered || 0);
     importMode = (result.sections.length && matched / result.sections.length >= 0.5) ? 'revise' : 'add';
   }
+  if (importMode === 'revise' && !pendingImport.textLoaded && !pendingImport.textReading) loadRevisionText(ch);
   return importMode === 'revise' ? showRevisionReview(file, pageCount, result, ch)
                                  : showAddReview(file, pageCount, result);
+}
+/* The section list says a section exists. It does not say that 1.03 now wants six copies where it
+   wanted four, and that is the part that costs money when it is missed. So for every section that
+   is in both books, the stored wording is read back and compared with what this issue says — in
+   batches, because a big job is a hundred and fifty reads and the screen should not sit blank. */
+let revTextOpen = {};
+async function loadRevisionText(ch) {
+  const p = pendingImport;
+  if (!p || p.textReading || p.textLoaded) return;
+  p.textReading = true; p.textDiffs = {}; p.textPrev = {};
+  const pairs = ch.filter(c => c.kind === 'same' || c.kind === 'retitled' || c.kind === 'renumbered')
+    .map(c => ({ from: c.from, to: c.to }));
+  p.textTotal = pairs.length; p.textDone = 0;
+  const tick = () => { const el = $('revTextStep');
+    if (el) el.textContent = 'Comparing the wording — ' + p.textDone + ' of ' + p.textTotal + ' sections…'; };
+  try {
+    for (let i = 0; i < pairs.length; i += 12) {
+      await Promise.all(pairs.slice(i, i + 12).map(async pr => {
+        try {
+          const raw = await rawSpecData(pr.from.key);
+          const d = specTextDiff(raw, pr.to);
+          if (d.n) p.textDiffs[pr.to.key] = { diff: d, from: pr.from, to: pr.to };
+          p.textPrev[pr.to.key] = raw.changes || [];
+        } catch (e) { console.error(e); }
+        p.textDone++;
+      }));
+      tick();
+    }
+  } finally {
+    p.textReading = false; p.textLoaded = true;
+    if (pendingImport === p) showImportReview(p.file, p.pageCount, p.result);
+  }
+}
+function toggleRevText(key) { revTextOpen[key] = !revTextOpen[key]; 
+  if (pendingImport) showImportReview(pendingImport.file, pendingImport.pageCount, pendingImport.result); }
+const revClip = (t, n) => { const x = String(t == null ? '' : t).trim();
+  return x.length > n ? x.slice(0, n - 1) + '\u2026' : x; };
+/* One changed paragraph, said the way a person would read it. */
+function revTextLines(d) {
+  const line = (mark, cls, it, to) => `<div class="tx-line ${cls}">
+    <span class="tx-mark">${mark}</span>
+    <span class="tx-at">${esc(it.article || (it.group === 'Section Includes' ? 'Includes' : ''))}</span>
+    <span class="tx-txt" title="${esc(it.text)}">${esc(revClip(it.text, 150))}${
+      to ? ` <span class="tx-arrow">\u2192</span> <b title="${esc(to.text)}">${esc(revClip(to.text, 150))}</b>` : ''}</span></div>`;
+  const out = [];
+  for (const x of d.reqs.added) out.push(line('+', 'is-add', x));
+  for (const x of d.inc.added) out.push(line('+', 'is-add', x));
+  for (const x of d.reqs.changed) out.push(line('~', 'is-mod', x.from, x.to));
+  for (const x of d.inc.changed) out.push(line('~', 'is-mod', x.from, x.to));
+  for (const x of d.reqs.removed) out.push(line('\u2212', 'is-cut', x));
+  for (const x of d.inc.removed) out.push(line('\u2212', 'is-cut', x));
+  return out.join('');
 }
 function setImportMode(m) {
   importMode = m;
@@ -14571,6 +14776,9 @@ const importModePicker = () => {
       <button class="${importMode === 'add' ? 'on' : ''}" onclick="setImportMode('add')">Another book, alongside</button>
     </div></div>`;
 };
+/* Whether there was any stored wording to compare against at all — a job imported before the text
+   was kept separately has nothing on the old side, and "nothing changed" would be a lie. */
+const prevHadText = ch => ch.some(c => c.kind === 'same' || c.kind === 'retitled' || c.kind === 'renumbered');
 const revHead = (a, b) => `<div class="review-row review-head is-rev"><span class="rn">${esc(a)}</span>
   <span class="rt">${esc(b)}</span></div>`;
 /* The whole of what is about to change, before a line of it is written. */
@@ -14588,6 +14796,8 @@ function showRevisionReview(file, pageCount, result, ch) {
   if (t.added) bits.push(t.added + ' new');
   if (t.renumbered) bits.push(t.renumbered + ' renumbered');
   if (t.gone) bits.push(t.gone + ' not in this book');
+  { const n = Object.keys((pendingImport || {}).textDiffs || {}).length;
+    if (n) bits.push(n + ' with different wording'); }
 
   let rows = '';
   if (moved.length) {
@@ -14625,6 +14835,27 @@ function showRevisionReview(file, pageCount, result, ch) {
         <span class="rt">${esc(c.to.title || '(untitled)')}${c.to.inBody ? '' : ' <span class="flag">Index only</span>'}${
           c.murky ? ' <span class="flag">same name as a dropped one</span>' : ''}</span></div>`;
     }
+  }
+  /* The wording inside the sections. This is the part a section list cannot tell you. */
+  const p = pendingImport || {};
+  const txKeys = Object.keys(p.textDiffs || {});
+  if (p.textReading) {
+    rows += revHead('Wording', 'reading what changed inside the sections');
+    rows += `<div class="review-row is-rev"><span class="rt muted" id="revTextStep">Comparing the wording — ${
+      p.textDone || 0} of ${p.textTotal || 0} sections\u2026</span></div>`;
+  } else if (txKeys.length) {
+    rows += revHead('Wording changed', txKeys.length + ' section' + (txKeys.length === 1 ? '' : 's') +
+      ' read differently \u2014 click one to see what');
+    for (const k of txKeys) {
+      const e = p.textDiffs[k], open = !!revTextOpen[k];
+      rows += `<div class="review-row is-rev tx-row" onclick="toggleRevText('${esc(k)}')">
+        <span class="rn">${open ? '\u25be' : '\u25b8'} ${esc(e.to.number)}</span>
+        <span class="rt">${esc(e.to.title || e.from.title || '(untitled)')}
+          <span class="muted">\u00b7 ${esc(textChangeLabel(e.diff))}</span>
+          ${open ? `<div class="tx-body">${revTextLines(e.diff)}</div>` : ''}</span></div>`;
+    }
+  } else if (p.textLoaded && prevHadText(ch)) {
+    rows += revHead('Wording', 'nothing inside the sections reads differently');
   }
   if (named.length) {
     rows += revHead('Renamed', 'same section, new wording \u2014 anything you retyped by hand is left alone');
@@ -14760,8 +14991,9 @@ async function confirmImport() {
       replaces: outgoing.map(sp => sp.id) });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
+    const txBit = x => ({ article: x.article || '', group: x.group || '', text: x.text || '' });
     const relinked = [], movedDocs = [];      // section documents left behind by a move or a drop
-    let added = 0, updated = 0, moved = 0, retired = 0, dropped = 0;
+    let added = 0, updated = 0, moved = 0, retired = 0, dropped = 0, reworded = 0;
     /* A line in the section's own log, so a year from now the register says why the number
        changed. Written straight onto the record — the save at the end carries it. */
     const historyLine = (sec, text) => {
@@ -14780,6 +15012,22 @@ async function confirmImport() {
       cur.autoTags = (s.autoTags || []).slice();
       if (!cur.titleEdited) { cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource; }
       delete cur.retired; delete cur.retiredAt; delete cur.retiredBy;   // it is back in the book
+      /* What this issue did to the wording, kept next to the wording itself so it can be read
+         back a year from now, with a line in the section's own log saying it happened. */
+      const tx = ((pendingImport || {}).textDiffs || {})[s.key];
+      if (tx && tx.diff && tx.diff.n) {
+        const prior = (((pendingImport || {}).textPrev || {})[s.key]) || [];
+        cur.__specChanges = prior.concat([{
+          specId, book: file.name, at: Date.now(), by: meName() || '',
+          summary: textChangeLabel(tx.diff),
+          added: tx.diff.reqs.added.concat(tx.diff.inc.added).map(txBit),
+          removed: tx.diff.reqs.removed.concat(tx.diff.inc.removed).map(txBit),
+          changed: tx.diff.reqs.changed.concat(tx.diff.inc.changed)
+            .map(c => ({ article: c.from.article || '', from: c.from.text || '', to: c.to.text || '' }))
+        }]);
+        historyLine(cur, `${file.name} changed the wording: ${textChangeLabel(tx.diff)}`);
+        reworded++;
+      }
       relinked.push(cur);
     };
     for (const s of result.sections) {
@@ -14859,6 +15107,7 @@ async function confirmImport() {
     if (added) bits.push(`${added} section${added === 1 ? '' : 's'} added`);
     if (updated) bits.push(`${updated} re-pointed at this file`);
     if (moved) bits.push(`${moved} renumbered, work carried across`);
+    if (reworded) bits.push(`${reworded} with changed wording`);
     if (retired) bits.push(`${retired} marked not in this book`);
     if (dropped) bits.push(`${dropped} removed`);
     noteFolderChanged();
