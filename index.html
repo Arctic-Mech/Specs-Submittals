@@ -908,6 +908,11 @@ tbody tr.row-edit td { background: var(--accent-sf); cursor: default; }
 .review-row:last-child { border-bottom: none; }
 .review-row .rn { font-family: var(--mono); font-size: 12px; color: var(--text-2); width: 88px; flex: none; }
 .review-row .rt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A revision review says what each change is carrying — "1 submittal, 1 release and 1 log line" —
+   and that is the part you are deciding on. Cutting it off at the column edge hides the very
+   thing being weighed, so these rows wrap instead. */
+.review-row.is-rev, .review-row.is-rev .rt { white-space: normal; overflow: visible; align-items: flex-start; }
+.review-row.is-rev .rn { padding-top: 1px; }
 .review-head { background: var(--surface-2); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); }
 
@@ -1280,7 +1285,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.78';
+const APP_VERSION = 'v7.79';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2310,6 +2315,13 @@ const STATUS_DIR = {
   na:               'Submittals/Not Required',
   spec:             'Submittals/Specs'
 };
+/* A spec book that a later issue has replaced. It is kept — an approved submittal was made
+   against it and the page it was made against still matters — but it moves out of the way so the
+   book in Specs is always the one in force. */
+const SPEC_OLD_DIR = 'Submittals/Specs/Superseded';
+/* Where a spec book belongs. Every other doc goes through docWantDir; specs had their home
+   hard-coded, which would have dragged a superseded book back into Specs on the next organise. */
+const specWantDir = sp => (sp && sp.superseded) ? SPEC_OLD_DIR : statusDirName('spec');
 /* Folders that used to hold a status of their own and now share one. Their contents are moved
    into the folder that took over and the empty folder is removed, so nobody is left browsing a
    folder that no longer fills up. */
@@ -14286,13 +14298,14 @@ function promptImportSpec() {
 }
 
 function nextImport() {
+  importMode = null;                  // the next file is a fresh question, not this one's answer
   const file = importQueue.shift();
   if (file) importSpec(file);
   else { importTotal = 0; closePdf(); }
 }
 
 function cancelImport() {
-  importQueue = []; importTotal = 0; pendingImport = null;
+  importQueue = []; importTotal = 0; pendingImport = null; importMode = null;
   closePdf();
 }
 
@@ -14363,8 +14376,210 @@ async function importSpec(file) {
 }
 
 let pendingImport = null;
+/* ── what changed between one spec book and the next ──
+   A revised issue is not a new job. It is the same job with some sections renamed, a few added, a
+   few dropped, and — the dangerous one — the occasional section renumbered. Every bit of work is
+   hung off a section: its status, its submittals, the responses that came back, the releases, the
+   product list, the log. Matching the new book onto the old one wrongly is precisely how that
+   work gets orphaned, so the matching is deliberately conservative and says when it is unsure
+   rather than guessing.
+
+   Section keys are already canonical (normNum), so the number is compared straight off the key.
+   Titles need their own normaliser: spec books are inconsistent about whether a section's title
+   repeats its own number, and a reprint that starts saying "SECTION 22 40 00 - PLUMBING FIXTURES"
+   where it used to say "Plumbing Fixtures" has not renamed anything. */
+const specCmpTitle = t => String(t == null ? '' : t).toUpperCase()
+  .replace(/^\s*SECTION\b/, '')
+  .replace(/^\s*\d{2}\s*\d{2}\s*\d{2}(?:\s*\.\s*\d{2})?\s*[-–—:.]*/, '')
+  .replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+function specDiff(oldList, newList) {
+  const changes = [], byKey = {}, usedOld = {}, pending = [];
+  oldList.forEach((s, i) => { (byKey[s.key] = byKey[s.key] || []).push(i); });
+  // the same number is the same section, whatever this printing decided to call it
+  for (const n of newList) {
+    const hit = (byKey[n.key] || []).find(i => !usedOld[i]);
+    if (hit === undefined) { pending.push(n); continue; }
+    usedOld[hit] = 1;
+    const from = oldList[hit];
+    changes.push({ kind: specCmpTitle(from.title) === specCmpTitle(n.title) ? 'same' : 'retitled', from, to: n });
+  }
+  const leftover = oldList.filter((s, i) => !usedOld[i]);
+  /* A section that kept its name and changed its number carries all of its work with it — but
+     only where there is exactly one candidate on each side. Two sections both called "Hangers And
+     Supports" is not a move, it is a coin toss, and a coin toss is what loses the work. */
+  const group = list => { const m = {};
+    for (const x of list) { const t = specCmpTitle(x.title); if (t) (m[t] = m[t] || []).push(x); } return m; };
+  const oldT = group(leftover), newT = group(pending);
+  const movedOld = new Set(), movedNew = new Set(), murky = new Set();
+  for (const t of Object.keys(oldT)) {
+    if (!newT[t]) continue;
+    if (oldT[t].length === 1 && newT[t].length === 1) {
+      movedOld.add(oldT[t][0]); movedNew.add(newT[t][0]);
+      changes.push({ kind: 'renumbered', from: oldT[t][0], to: newT[t][0] });
+    } else {                               // said out loud, rather than passed off as add + drop
+      for (const x of oldT[t]) murky.add(x);
+      for (const x of newT[t]) murky.add(x);
+    }
+  }
+  for (const n of pending) if (!movedNew.has(n)) changes.push({ kind: 'added', to: n, murky: murky.has(n) });
+  for (const s of leftover) if (!movedOld.has(s)) changes.push({ kind: 'gone', from: s, murky: murky.has(s) });
+  return changes;
+}
+const specTally = ch => ch.reduce((a, c) => { a[c.kind] = (a[c.kind] || 0) + 1; return a; }, {});
+/* What a section would take with it if it went. One the new book has dropped and that was never
+   touched is noise — it was parsed out of the old book and nothing was ever hung off it, so it
+   can go quietly. One carrying a single approved submittal cannot, and the difference between
+   those two is the whole reason there is a screen to confirm. */
+function sectionWork(s) {
+  const n = {
+    submittals: ((s && s.submittals) || []).length,
+    responses: ((s && s.responses) || []).length,
+    releases: ((s && s.releases) || []).length,
+    products: ((s && s.products) || []).length,
+    log: ((s && s.history) || []).filter(h => h && h.text).length
+  };
+  n.touched = !!(s && s.status && s.status !== 'not_started');
+  n.notes = !!(s && (String(s.notes || '').trim() || String(s.vendor || '').trim() ||
+    String(s.manufacturer || '').trim() || String(s.spec || '').trim() || String(s.description || '').trim()));
+  n.byHand = !!(s && (s.manual || s.titleEdited || s.pinned || (s.tags || []).length));
+  n.any = n.touched || n.notes || n.byHand ||
+    !!(n.submittals || n.responses || n.releases || n.products || n.log);
+  return n;
+}
+/* Said out loud: "4 submittals, 2 products and 6 log lines". */
+function workLabel(w) {
+  if (!w || !w.any) return '';
+  const bits = [], add = (n, one, many) => { if (n) bits.push(n + ' ' + (n === 1 ? one : many)); };
+  add(w.submittals, 'submittal', 'submittals');
+  add(w.responses, 'response', 'responses');
+  add(w.releases, 'release', 'releases');
+  add(w.products, 'product', 'products');
+  add(w.log, 'log line', 'log lines');
+  if (!bits.length) return w.touched ? 'a status set on it' : 'things typed on it';
+  return bits.length === 1 ? bits[0] : bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1];
+}
+
+/* Two quite different things arrive as "a spec PDF": a revised issue of the book this job is
+   already working to, and a second book covering divisions the first one never mentioned. Told
+   apart wrongly, a reissue reports every section of the other book as dropped, or an addendum
+   quietly retires half the job. So it is asked — with the likely answer already chosen, because a
+   book sharing most of its sections with the register is a reissue and one sharing almost none
+   is not. */
+let importMode = null;                    // 'add' | 'revise' — worked out, then yours to change
 function showImportReview(file, pageCount, result) {
   pendingImport = { file, pageCount, result };
+  const have = sectionsOf(job);
+  if (!have.length) { importMode = 'add'; return showAddReview(file, pageCount, result); }
+  const ch = specDiff(have, result.sections);
+  if (importMode === null) {
+    const t = specTally(ch);
+    const matched = (t.same || 0) + (t.retitled || 0) + (t.renumbered || 0);
+    importMode = (result.sections.length && matched / result.sections.length >= 0.5) ? 'revise' : 'add';
+  }
+  return importMode === 'revise' ? showRevisionReview(file, pageCount, result, ch)
+                                 : showAddReview(file, pageCount, result);
+}
+function setImportMode(m) {
+  importMode = m;
+  if (pendingImport) showImportReview(pendingImport.file, pendingImport.pageCount, pendingImport.result);
+}
+const importModePicker = () => {
+  const n = sectionsOf(job).length;
+  return `<div class="field" style="margin:0 0 12px">
+    <label class="fl">This job already has ${n} section${n === 1 ? '' : 's'}</label>
+    <div class="seg-sm" id="impMode">
+      <button class="${importMode === 'revise' ? 'on' : ''}" onclick="setImportMode('revise')">A revised issue</button>
+      <button class="${importMode === 'add' ? 'on' : ''}" onclick="setImportMode('add')">Another book, alongside</button>
+    </div></div>`;
+};
+const revHead = (a, b) => `<div class="review-row review-head is-rev"><span class="rn">${esc(a)}</span>
+  <span class="rt">${esc(b)}</span></div>`;
+/* The whole of what is about to change, before a line of it is written. */
+function showRevisionReview(file, pageCount, result, ch) {
+  const t = specTally(ch);
+  const moved = ch.filter(c => c.kind === 'renumbered');
+  const gone  = ch.filter(c => c.kind === 'gone');
+  const added = ch.filter(c => c.kind === 'added');
+  const named = ch.filter(c => c.kind === 'retitled');
+  const outgoing = specsOf(job).filter(sp => !sp.superseded && !isLink(sp));
+
+  const bits = [];
+  if (t.same) bits.push(t.same + ' unchanged');
+  if (t.retitled) bits.push(t.retitled + ' renamed');
+  if (t.added) bits.push(t.added + ' new');
+  if (t.renumbered) bits.push(t.renumbered + ' renumbered');
+  if (t.gone) bits.push(t.gone + ' not in this book');
+
+  let rows = '';
+  if (moved.length) {
+    rows += revHead('Renumbered', 'same name, new number — the work moves across with it');
+    for (const c of moved) {
+      const lbl = workLabel(sectionWork(c.from));
+      rows += `<div class="review-row is-rev">
+        <input type="checkbox" checked data-mode="move" data-key="${esc(c.to.key)}" data-from="${esc(c.from.key)}">
+        <span class="rn">${esc(c.from.number)} \u2192 ${esc(c.to.number)}</span>
+        <span class="rt">${esc(c.to.title || '(untitled)')}${lbl
+          ? ` <span class="muted">\u00b7 carrying ${esc(lbl)}</span>` : ''}</span></div>`;
+    }
+  }
+  if (gone.length) {
+    const keeping = gone.filter(c => sectionWork(c.from).any).length;
+    rows += revHead('Not in this book', keeping
+      ? 'kept and marked, because they are carrying work \u2014 untick to remove one anyway'
+      : 'nothing was ever hung off these, so they are removed \u2014 tick to keep one');
+    for (const c of gone) {
+      const w = sectionWork(c.from), lbl = workLabel(w);
+      rows += `<div class="review-row is-rev">
+        <input type="checkbox" ${w.any ? 'checked' : ''} data-mode="keep" data-key="${esc(c.from.key)}">
+        <span class="rn">${esc(c.from.number)}</span>
+        <span class="rt">${esc(c.from.title || '(untitled)')} <span class="muted">\u00b7 ${
+          lbl ? esc(lbl) : 'nothing on it'}</span>${c.murky
+          ? ' <span class="flag">same name as a new one \u2014 check it did not just move</span>' : ''}</span></div>`;
+    }
+  }
+  if (added.length) {
+    rows += revHead('New', 'not in the register yet');
+    for (const c of added) {
+      rows += `<div class="review-row is-rev">
+        <input type="checkbox" checked data-mode="add" data-key="${esc(c.to.key)}">
+        <span class="rn">${esc(c.to.number)}</span>
+        <span class="rt">${esc(c.to.title || '(untitled)')}${c.to.inBody ? '' : ' <span class="flag">Index only</span>'}${
+          c.murky ? ' <span class="flag">same name as a dropped one</span>' : ''}</span></div>`;
+    }
+  }
+  if (named.length) {
+    rows += revHead('Renamed', 'same section, new wording \u2014 anything you retyped by hand is left alone');
+    for (const c of named) {
+      rows += `<div class="review-row is-rev"><span class="rn">${esc(c.to.number)}</span>
+        <span class="rt">${esc(c.from.title || '(untitled)')} \u2192 <b>${esc(c.to.title || '(untitled)')}</b>${
+          c.from.titleEdited ? ' <span class="flag">you renamed this one \u2014 kept</span>' : ''}</span></div>`;
+    }
+  }
+  if (!rows) rows = `<div class="review-row"><span class="rt muted">Nothing has changed \u2014 every section reads the same as the one in the register.</span></div>`;
+
+  importModal(`
+    <div class="modal-head"><h3>What this issue changes${queueLabel()}</h3></div>
+    <div class="modal-body">
+      ${importModePicker()}
+      <div class="muted">${esc(file.name)} \u00b7 ${pageCount} pages \u00b7 ${result.sections.length} section${
+        result.sections.length === 1 ? '' : 's'} read</div>
+      <div class="muted" style="margin-top:5px"><b>${bits.join(' \u00b7 ') || 'no changes'}</b></div>
+      ${outgoing.length ? `<div class="muted" style="margin-top:5px">${
+        outgoing.map(sp => esc(sp.name)).join(', ')} ${outgoing.length === 1 ? 'is' : 'are'
+        } kept, filed under Specs/Superseded.</div>` : ''}
+      <div class="review-list">${rows}</div>
+      <div class="muted" style="margin-top:8px">Everything still in the book is re-pointed at this file
+        — its pages, its submittal requirements and its tags. Statuses, uploads, products, releases and
+        logs are never touched.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="cancelImport()">Cancel${importQueue.length ? ' all' : ''}</button>
+      <button class="btn primary" onclick="confirmImport()">Replace the spec book${
+        importQueue.length ? ' &amp; continue' : ''}</button>
+    </div>`);
+}
+
+function showAddReview(file, pageCount, result) {
   const existing = new Set(sectionsOf(job).map(s => s.key));
   const fresh = result.sections.filter(s => !existing.has(s.key));
   const dupes = result.sections.filter(s => existing.has(s.key));
@@ -14405,6 +14620,7 @@ function showImportReview(file, pageCount, result) {
   importModal(`
     <div class="modal-head"><h3>Found ${result.sections.length} spec section${result.sections.length === 1 ? '' : 's'}${queueLabel()}</h3></div>
     <div class="modal-body">
+      ${sectionsOf(job).length ? importModePicker() : ''}
       <div class="muted">${esc(file.name)} · ${pageCount} pages · ${result.diagnostics.pagesMapped} pages matched to a section${
         result.diagnostics.tocEntries ? ' · table of contents cross-checked' : ''}</div>
       ${already ? `<div class="muted" style="margin-top:5px">Adding alongside ${already} spec file${already === 1 ? '' : 's'} already in this job.</div>` : ''}
@@ -14426,9 +14642,17 @@ async function confirmImport() {
   if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the spec PDF', true); return; } }
   beginJobEdit();
   const { file, pageCount, result } = pendingImport;
-  const ticked = Array.from(document.querySelectorAll('.review-row input[type=checkbox]')).filter(c => c.checked);
+  const boxes = Array.from(document.querySelectorAll('.review-row input[type=checkbox]'));
+  const ticked = boxes.filter(c => c.checked);
   const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
   const relink = new Set(ticked.filter(c => c.dataset.mode === 'update').map(c => c.dataset.key));
+  const revising = importMode === 'revise';
+  // newKey -> the key it is moving from, for the ones whose number changed
+  const moving = {};
+  for (const c of ticked) if (c.dataset.mode === 'move') moving[c.dataset.key] = c.dataset.from;
+  // the dropped sections, and which of them you said to hold on to
+  const droppedAll = boxes.filter(c => c.dataset.mode === 'keep').map(c => c.dataset.key);
+  const keeping = new Set(ticked.filter(c => c.dataset.mode === 'keep').map(c => c.dataset.key));
 
   importModal(`<div class="modal-head"><h3>Saving ${esc(file.name)}</h3></div>
     <div class="modal-body"><div class="muted" id="upStep">Saving the spec PDF to the ShareFile folder…</div>
@@ -14442,31 +14666,67 @@ async function confirmImport() {
     if (bar) bar.style.width = '100%';
     if (step) step.textContent = 'Saved. Filing the sections…';
     job.specs = job.specs || [];
+    /* The book being replaced is kept — an approved submittal was made against it and the page it
+       was made against still matters — but it moves to Specs/Superseded so the one in Specs is
+       always the one in force. Its own name is left alone; the flag is what marks it. */
+    const outgoing = revising ? specsOf(job).filter(sp => !sp.superseded && !isLink(sp)) : [];
+    for (const sp of outgoing) {
+      sp.superseded = true; sp.supersededAt = Date.now(); sp.supersededBy = specId;
+      if (meName()) sp.supersededByWho = meName();
+    }
+    // the flag is all that is needed: specWantDir now sends a superseded book to Specs/Superseded,
+    // and the organise that runs on every save moves the file there with the usual rollback
     job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
-      dir, file: onDisk, added: Date.now() });
+      dir, file: onDisk, added: Date.now(), by: meName() || '',
+      replaces: outgoing.map(sp => sp.id) });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
-    const relinked = [];
-    let added = 0, updated = 0;
+    const relinked = [], movedDocs = [];      // section documents left behind by a move or a drop
+    let added = 0, updated = 0, moved = 0, retired = 0, dropped = 0;
+    /* A line in the section's own log, so a year from now the register says why the number
+       changed. Written straight onto the record — the save at the end carries it. */
+    const historyLine = (sec, text) => {
+      sec.history = (sec.history || []).concat([Object.assign(
+        { id: uid('log'), ts: Date.now(), text }, meName() ? { by: meName() } : {})]);
+    };
+    /* Point a section that is still in the book at this issue of it. Only what came out of the
+       PDF is rewritten — the status, the uploads, the products, the releases and the log are the
+       job, not the book, and none of them are touched here. A title you retyped by hand stands. */
+    const repoint = (cur, s) => {
+      cur.specId = specId;
+      cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
+      cur.requirements = s.requirements || []; cur.includes = s.includes || [];
+      const fresh = (s.autoTags || []).filter(t => !(cur.autoTags || []).includes(t));
+      cur.tags = (cur.tags || []).concat(fresh.filter(t => !(cur.tags || []).includes(t)));
+      cur.autoTags = (s.autoTags || []).slice();
+      if (!cur.titleEdited) { cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource; }
+      delete cur.retired; delete cur.retiredAt; delete cur.retiredBy;   // it is back in the book
+      relinked.push(cur);
+    };
     for (const s of result.sections) {
-      if (relink.has(s.key)) {
-        const cur = sectionsOf(job).find(x => x.key === s.key);
+      /* The number changed and the name did not. It is the same section and it keeps everything:
+         its status, its PDFs, its products, its log. The key is the Firestore document id, so
+         this is a new document and a deleted one rather than an edit — the delete comes last, and
+         only once the new one is safely written. */
+      if (moving[s.key]) {
+        const cur = findSection(moving[s.key]);
         if (cur) {
-          cur.specId = specId;
-          cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
-          cur.requirements = s.requirements || []; cur.includes = s.includes || [];
-          const fresh = (s.autoTags || []).filter(t => !(cur.autoTags || []).includes(t));
-          cur.tags = (cur.tags || []).concat(fresh.filter(t => !(cur.tags || []).includes(t)));
-          cur.autoTags = (s.autoTags || []).slice();
-          relinked.push(cur);
-          if (!cur.titleEdited) {                       // never clobber a hand-typed title
-            cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource;
-          }
-          updated++;
+          const wasKey = cur.key;
+          cur.key = s.key; cur.number = s.number; cur.division = s.division;
+          repoint(cur, s);
+          historyLine(cur, `Renumbered from ${prettyNum(wasKey)} by ${file.name}`);
+          markPending(s.key);
+          movedDocs.push(wasKey);
+          moved++;
+          continue;
         }
-        continue;
       }
-      if (!chosen.has(s.key) || existing.has(s.key)) continue;
+      const cur = (revising || relink.has(s.key)) ? findSection(s.key) : null;
+      if (cur) { repoint(cur, s); updated++; continue; }
+      if (relink.has(s.key)) continue;                 // ticked but gone from under us
+      if (!revising && !chosen.has(s.key)) continue;   // adding alongside: only what you ticked
+      if (revising && !chosen.has(s.key)) continue;
+      if (existing.has(s.key)) continue;
       job.sections.push(newSectionRecord({
         key: s.key, number: s.number, division: s.division, title: s.title, rawTitle: s.rawTitle,
         titleSource: s.titleSource, specId, startPage: s.startPage, endPage: s.endPage,
@@ -14475,18 +14735,53 @@ async function confirmImport() {
       }));
       added++;
     }
+    /* Sections this issue no longer lists. Nothing is thrown away that anyone worked on: one
+       carrying a status, a PDF, a product or a log line is kept and marked, so it still reads and
+       still exports, it just says it is not in the book any more. Only the ones nothing was ever
+       hung off are removed, and only because you left them unticked. */
+    for (const key of droppedAll) {
+      const cur = findSection(key);
+      if (!cur) continue;
+      if (keeping.has(key)) {
+        if (!cur.retired) {
+          cur.retired = true; cur.retiredAt = Date.now(); cur.retiredBy = meName() || '';
+          historyLine(cur, `Not in ${file.name} — kept for the work on it`);
+          markPending(key);
+          relinked.push(cur);
+          retired++;
+        }
+      } else {
+        job.sections = sectionsOf(job).filter(x => x.key !== key);
+        movedDocs.push(key);
+        dropped++;
+      }
+    }
     sortSections();
     const mine = sectionsOf(job).filter(x => x.specId === specId);
-    await saveSpecData(job.id, mine.concat(relinked));   // spec text first, then the log rows
-    await saveSections(mine);
+    // a retired section keeps its old specId, so it is in `relinked` and not in `mine` — save the
+    // union or the mark saying it left the book never reaches Firestore
+    const touched = mine.slice();
+    for (const r of relinked) if (touched.indexOf(r) < 0) touched.push(r);
+    await saveSpecData(job.id, touched);                 // spec text first, then the log rows
+    await saveSections(touched);
+    /* Only now that every new and changed document is durable: clear out the ones left behind by
+       a renumber or a removal. Doing it the other way round would, on a failed write, leave the
+       section in neither place. */
+    for (const key of movedDocs) {
+      try { await FB.deleteDoc(sectionRef(job.id, key)); } catch (e) { console.error(e); }
+      try { await FB.deleteDoc(specDataRef(job.id, key)); } catch (e) {}
+    }
     await saveJobMeta();
     if (!sectionsOf(job).some(x => x.division === divFilter)) {
       divFilter = DIVISIONS.find(d => sectionsOf(job).some(x => x.division === d)) || divFilter;
     }
     renderJob();
     const bits = [];
-    if (added) bits.push(`${added} section${added === 1 ? '' : 's'} imported`);
+    if (added) bits.push(`${added} section${added === 1 ? '' : 's'} added`);
     if (updated) bits.push(`${updated} re-pointed at this file`);
+    if (moved) bits.push(`${moved} renumbered, work carried across`);
+    if (retired) bits.push(`${retired} marked not in this book`);
+    if (dropped) bits.push(`${dropped} removed`);
     noteFolderChanged();
     toast(bits.length ? bits.join(' · ') : `${file.name} added`);
     nextImport();                        // review the next queued file, or close
@@ -15570,7 +15865,7 @@ async function refileAll(filesRoot) {
 
   for (const s of sectionsOf(job)) for (const kind of ['submittals', 'responses'])
     for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
-  for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, statusDirName('spec'), () => { specChanged = true; }); }
+  for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, specWantDir(sp), () => { specChanged = true; }); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, coDocDir(c), () => coSet.add(c)); }
   for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, coEmailDir(c), () => coSet.add(c)); }
