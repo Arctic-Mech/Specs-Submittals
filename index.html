@@ -459,6 +459,42 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-star:hover { opacity: 1; color: var(--amber); }
 .prod-row.is-first { border-left-color: var(--amber); }
 .prod-row.ends-first { margin-bottom: 14px; box-shadow: 0 10px 0 -9px var(--border-2); }
+/* ── drawings ── */
+.dw-list { display: flex; flex-direction: column; gap: 8px; }
+.dw-card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 7px;
+  padding: 10px 13px 11px; cursor: pointer; background: var(--surface); }
+.dw-card:hover { border-color: var(--border-2); background: var(--surface-2); }
+.dw-card.is-old { border-left-color: var(--border-2); opacity: .75; }
+.dw-top { display: flex; align-items: baseline; gap: 9px; }
+.dw-name { font-size: 14.5px; font-weight: 700; }
+.dw-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-3); background: var(--surface-3); border-radius: 999px; padding: 1px 8px; }
+.dw-tag.is-now { color: var(--green); background: var(--green-sf); }
+.dw-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.dw-peek { margin-top: 7px; display: flex; flex-direction: column; gap: 3px; }
+.dw-peek span { font-size: 12px; color: var(--text-2); }
+.dw-peek b { font-family: var(--mono); font-size: 11.5px; color: var(--accent); margin-right: 6px; }
+/* one sheet, and what was written about it */
+.sh-row { border-bottom: 1px solid var(--border); padding: 8px 2px 9px; }
+.sh-row:last-child { border-bottom: none; }
+.sh-head { display: flex; align-items: baseline; gap: 9px; }
+.sh-num { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent);
+  min-width: 62px; }
+.sh-title { font-size: 13px; font-weight: 600; }
+.sh-row .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.sh-row .x:hover { color: var(--accent); }
+.sh-note-in { margin-top: 5px; font-size: 12.5px; }
+.sh-hist { margin-top: 5px; padding-left: 10px; border-left: 2px solid var(--border); }
+.sh-hist div { font-size: 11.5px; color: var(--text-3); }
+.sh-hist b { color: var(--text-2); margin-right: 5px; }
+/* the boxes on the review screen, where the sheet list gets corrected and annotated */
+.sh-in { width: 100%; border: none; border-bottom: 1px solid var(--border); background: none;
+  font: inherit; font-size: 13px; color: inherit; padding: 1px 0; outline: none; }
+.sh-in.mono { font-family: var(--mono); font-size: 11.5px; }
+.sh-in:focus { border-bottom-color: var(--accent); }
+.sh-note { width: 100%; margin-top: 4px; border: 1px solid var(--border-2); border-radius: 5px;
+  background: var(--surface); font: inherit; font-size: 12.5px; color: inherit; padding: 3px 7px; outline: none; }
+.sh-note:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-sf); }
 /* ── sub-categories ──
    The heading is the only thing on its line and its items sit in from it, so where one stops and
    the next starts is seen rather than worked out. Shut, it closes up to a single line. */
@@ -1261,6 +1297,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 
     <!-- CONTRACTS / VENDOR QUOTES / PO's / ESTIMATES TABS (rendered by JS) -->
     <div id="tab-contracts" hidden></div>
+    <div id="tab-drawings" hidden></div>
     <div id="tab-quotes" hidden></div>
     <div id="tab-pos" hidden></div>
     <div id="tab-estimates" hidden></div>
@@ -1285,7 +1322,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.79';
+const APP_VERSION = 'v7.80';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2084,6 +2121,8 @@ const sectionRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'sections', Stri
 const specDataRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'specdata', String(key));
 const rfisCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'rfis');
 const rfiRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'rfis', String(id));
+const drawingsCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'drawings');
+const drawingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'drawings', String(id));
 const trackingCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'tracking');
 const trackingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'tracking', String(id));
 const coCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'changeorders');
@@ -2319,6 +2358,11 @@ const STATUS_DIR = {
    against it and the page it was made against still matters — but it moves out of the way so the
    book in Specs is always the one in force. */
 const SPEC_OLD_DIR = 'Submittals/Specs/Superseded';
+/* Drawings live outside the Submittals tree on purpose: syncAllSubmittals deletes, recursively
+   and without asking, every directory under All Submittals it does not recognise. */
+const DRAWING_DIR = 'Drawings';
+const DRAWING_OLD_DIR = 'Drawings/Superseded';
+const drawingWantDir = d => (d && d.superseded) ? DRAWING_OLD_DIR : DRAWING_DIR;
 /* Where a spec book belongs. Every other doc goes through docWantDir; specs had their home
    hard-coded, which would have dragged a superseded book back into Specs on the next organise. */
 const specWantDir = sp => (sp && sp.superseded) ? SPEC_OLD_DIR : statusDirName('spec');
@@ -2549,6 +2593,7 @@ function trackedPaths() {
   for (const s of sectionsOf(job)) { (s.submittals || []).forEach(add); (s.responses || []).forEach(add); }
   (job.specs || []).forEach(add);
   for (const r of rfis) { (r.docs || []).forEach(add); }
+  for (const d of drawings) { add(d.doc); (d.markups || []).forEach(add); }
   for (const c of tracking) { (c.files || []).forEach(add); }
   for (const c of cos) { (c.docs || []).forEach(add); (c.emails || []).forEach(add); }
   for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) { (it.docs || []).forEach(add); (it.emails || []).forEach(add); }
@@ -3093,6 +3138,10 @@ let jobsLoaded = false;      // false until the first snapshot lands
 let jobTab = 'submittals';   // 'submittals' | 'rfis' | 'tracking'
 let rfis = [];               // RFI records for the open job
 let openRfi = null;          // RFI open in the drawer
+let drawings = [];           // drawing sets for the open job, newest issue first
+let openDrawing = null;      // the set open in the drawer
+let drawingQuery = '';
+let unsubDrawings = null;
 let rfiQuery = '', rfiStatusFilter = null;
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
 let trackCat = null;         // selected category id
@@ -3231,6 +3280,24 @@ function watchSections(jobId) {
         if (openKey && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawer();
       }
       if (jobFolder) { maybeAutoOrganize(); fileStagedUploads(); scheduleFolderSave(); }   // sections arrived / changed after the folder loaded
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
+function watchDrawings(jobId) {
+  if (unsubDrawings) { unsubDrawings(); unsubDrawings = null; }
+  unsubDrawings = FB.onSnapshot(drawingsCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      drawings = snap.docs.map(d => d.data());
+      drawings.sort(drawingOrder);
+      if (view === 'job' && jobTab === 'drawings') {
+        renderJob();
+        // re-rendering while someone is writing a what-changed note would eat the caret
+        const ae = document.activeElement;
+        if (openDrawing && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawingDrawer();
+      }
+      if (jobFolder) { maybeAutoOrganize(); scheduleFolderSave(); }
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -3401,7 +3468,7 @@ let _navSkip = 0;         // ...of which this many are ours to take back, not th
 let _navPopping = false;  // the browser is already moving us, so do not ask it to move again
 function navLevel() {
   if (view !== 'job') return 0;
-  return (openKey || openRfi || openCo || openContract || (openLedger && openLedger.id)) ? 2 : 1;
+  return (openKey || openRfi || openCo || openContract || openDrawing || (openLedger && openLedger.id)) ? 2 : 1;
 }
 function navSync() {
   if (_navPopping || typeof history === 'undefined') return;
@@ -3421,6 +3488,7 @@ function navBackOne() {
   else if (openRfi) closeRfiDrawer();
   else if (openCo) closeCoDrawer();
   else if (openContract) closeContractDrawer();
+  else if (openDrawing) closeDrawingDrawer();
   else if (openLedger && openLedger.id) closeLedgerDrawer();
   else if (view === 'job') { go('jobs'); renderJobs(); }
 }
@@ -3455,6 +3523,7 @@ function go(where, id) {
   if (where === 'jobs') {
     if (unsubSections) { unsubSections(); unsubSections = null; }
     if (unsubRfis) { unsubRfis(); unsubRfis = null; }
+    if (unsubDrawings) { unsubDrawings(); unsubDrawings = null; }
     if (unsubTracking) { unsubTracking(); unsubTracking = null; }
     if (unsubCos) { unsubCos(); unsubCos = null; }
     if (window._unsub_quotes) { window._unsub_quotes(); window._unsub_quotes = null; }
@@ -3462,7 +3531,8 @@ function go(where, id) {
     if (_unsubContracts) { _unsubContracts(); _unsubContracts = null; }
     if (_unsubEstimates) { _unsubEstimates(); _unsubEstimates = null; }
     clearTimeout(_folderSaveTimer); clearInterval(_saveTicker); folderSaveState = 'idle';
-    job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = [];
+    job = null; jobFolder = null; folderRemembered = null; rfis = []; tracking = []; cos = []; drawings = [];
+    openDrawing = null;
     ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null };
     $('crumbJob').textContent = ''; renderJobs();
   }
@@ -3478,15 +3548,16 @@ async function openJob(id) {
   clearTimeout(_folderSaveTimer); clearInterval(_saveTicker);   // reset the per-job save indicator
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
-  jobTab = 'submittals'; rfis = []; tracking = []; cos = [];
+  jobTab = 'submittals'; rfis = []; tracking = []; cos = []; drawings = []; drawingQuery = '';
   ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
-  openRfi = null; trackCat = null; trackItem = null; openCo = null; estCompare = [];
+  openRfi = null; trackCat = null; trackItem = null; openCo = null; openDrawing = null; estCompare = [];
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
   $('searchBox').value = '';
   $('crumbJob').textContent = j.name;
   go('job');
   watchSections(job.id);          // sections stream in and re-render
   watchRfis(job.id);              // RFIs for this job
+  watchDrawings(job.id);          // drawing sets and their revisions
   watchTracking(job.id);          // job-tracking categories
   watchCos(job.id);               // change orders
   watchLedger('quotes'); watchLedger('pos'); watchContracts(job.id);   // vendor quotes, POs, contracts
@@ -3760,6 +3831,9 @@ function renderJob() {
     : 'No spec imported yet');
   else if (jobTab === 'rfis') bits.push(`${rfis.length} RFI${rfis.length === 1 ? '' : 's'}`);
   else if (jobTab === 'changeorders') bits.push(`${cos.length} change order${cos.length === 1 ? '' : 's'}`);
+  else if (jobTab === 'drawings') bits.push(currentDrawingSet()
+    ? `${drawings.length} issue${drawings.length === 1 ? '' : 's'} \u00b7 current: ${currentDrawingSet().label || 'unnamed'}`
+    : 'No drawings yet');
   else if (jobTab === 'quotes') bits.push(`${litems('quotes').length} vendor quote${litems('quotes').length === 1 ? '' : 's'}`);
   else if (jobTab === 'pos') bits.push(`${litems('pos').length} PO${litems('pos').length === 1 ? '' : 's'}`);
   else if (jobTab === 'contracts') bits.push(`${(contracts || []).length} contract${(contracts || []).length === 1 ? '' : 's'}`);
@@ -3772,6 +3846,7 @@ function renderJob() {
   applyTabVisibility();
   if (jobTab === 'rfis') { renderRfis(); return; }
   if (jobTab === 'changeorders') { renderCos(); if (jobFolder) reconcileCoFiles().catch(() => {}); return; }
+  if (jobTab === 'drawings') { renderDrawings(); return; }
   if (jobTab === 'quotes') { renderLedger('quotes'); return; }
   if (jobTab === 'pos') { renderLedger('pos'); return; }
   if (jobTab === 'contracts') { renderContracts(); return; }
@@ -3830,6 +3905,7 @@ function renderJobTabs() {
     { id: 'submittals',   label: 'Submittals',    n: sectionsOf(job).length },
     { id: 'rfis',         label: 'RFIs',          n: rfis.length },
     { id: 'changeorders', label: 'Change Orders', n: cos.length },
+    { id: 'drawings',     label: 'Drawings',      n: drawings.length },
     { id: 'contracts',    label: 'Contracts',     n: (contracts || []).length },
     { id: 'quotes',       label: 'Vendor Quotes', n: litems('quotes').length },
     { id: 'pos',          label: "PO's",          n: litems('pos').length },
@@ -3845,6 +3921,7 @@ const TAB_ACTIONS = {
   submittals:   '+ Add section',
   rfis:         '+ New RFI',
   changeorders: '+ New change order',
+  drawings:     '+ Add a drawing set',
   quotes:       '+ New quote',
   pos:          '+ New PO',
   estimates:    '+ New estimate',
@@ -3854,6 +3931,7 @@ function applyTabVisibility() {
   $('tab-submittals').hidden   = jobTab !== 'submittals';
   $('tab-rfis').hidden         = jobTab !== 'rfis';
   $('tab-changeorders').hidden = jobTab !== 'changeorders';
+  $('tab-drawings').hidden     = jobTab !== 'drawings';
   $('tab-quotes').hidden       = jobTab !== 'quotes';
   $('tab-pos').hidden          = jobTab !== 'pos';
   $('tab-contracts').hidden    = jobTab !== 'contracts';
@@ -3868,7 +3946,7 @@ function applyTabVisibility() {
 function setJobTab(t) {
   if (jobTab === t) return;
   jobTab = t;
-  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer(); closeEstimateEditor();
+  closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer(); closeDrawingDrawer(); closeEstimateEditor();
   renderJob();
   window.scrollTo(0, 0);
 }
@@ -3876,6 +3954,7 @@ function tabAction() {
   if (jobTab === 'submittals') addSectionManually();
   else if (jobTab === 'rfis') newRfi();
   else if (jobTab === 'changeorders') newChangeOrder();
+  else if (jobTab === 'drawings') promptImportDrawings();
   else if (jobTab === 'quotes') newLedger('quotes');
   else if (jobTab === 'pos') newLedger('pos');
   else if (jobTab === 'estimates') newEstimate();
@@ -14796,6 +14875,402 @@ async function confirmImport() {
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9b. DRAWINGS  —  issues of the drawing set, and what changed on each sheet
+   ═══════════════════════════════════════════════════════════════════════════
+   Drawings arrive the way specs do: a set, then a Delta, then an ASI, each one replacing the last
+   while the last still matters. What is different is that nothing can read a drawing and say what
+   moved on it — a wall shifts six inches and every pixel is in a new place. So the sheets are
+   listed automatically and the diff says which ones were added, dropped or resheeted, but WHAT
+   CHANGED on a sheet is written by the person who read it, one sheet at a time.
+
+   The sheet list is worth getting right once: the next issue inherits it, so a name corrected
+   today is a name that stays correct. */
+function drawingOrder(a, b) {
+  const s = (x) => (x && x.superseded) ? 1 : 0;              // the one in force first
+  return s(a) - s(b)
+    || String(b.issued || '').localeCompare(String(a.issued || ''))
+    || (b.created || 0) - (a.created || 0);
+}
+function drawingById(id) { return drawings.find(d => d.id === id) || null; }
+function currentDrawingSet() { return drawings.find(d => !d.superseded) || null; }
+function sheetsOf(d) { return (d && d.sheets) || []; }
+const sheetKey = n => String(n == null ? '' : n).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const drawingLabel = d => (d && String(d.label || '').trim()) || 'Untitled issue';
+async function saveDrawing(d) {
+  d.updated = Date.now();
+  try { await FB.setDoc(drawingRef(job.id, d.id), clean(d)); }
+  catch (e) { toast(writeError(e), true); }
+}
+
+/* ── reading the sheets off the PDF ──
+   Every office lays a title block out differently, so none of this is certain. It is a first
+   guess you can correct, and correcting it is cheap because the next issue starts from it. */
+const SHEET_NUM_RE = /^([A-Z]{1,3})[\s-]?(\d{1,3})(?:\.(\d{1,3}))?([A-Z])?$/;
+function guessSheet(items, w, h) {
+  const cand = [];
+  for (const it of items) {
+    const t = String(it.str || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!t || t.length > 10 || !SHEET_NUM_RE.test(t)) continue;
+    const x = (it.transform && it.transform[4]) || 0, y = (it.transform && it.transform[5]) || 0;
+    const size = Math.abs((it.transform && it.transform[3]) || 0) || 1;
+    // the sheet number is the big text in the bottom-right corner on nearly every set drawn
+    cand.push({ tag: t, size, corner: (x > w * 0.6 && y < h * 0.3) ? 1 : 0 });
+  }
+  if (!cand.length) return null;
+  cand.sort((a, b) => (b.corner - a.corner) || (b.size - a.size));
+  let title = '', best = 0;
+  for (const it of items) {
+    const t = String(it.str || '').trim();
+    if (t.length < 6 || t.length > 64 || !/[A-Za-z]{3}/.test(t)) continue;
+    const x = (it.transform && it.transform[4]) || 0, y = (it.transform && it.transform[5]) || 0;
+    if (!(x > w * 0.5 && y < h * 0.4)) continue;             // still in the title block
+    const size = Math.abs((it.transform && it.transform[3]) || 0) || 1;
+    if (size > best) { best = size; title = t; }
+  }
+  return { number: cand[0].tag, title: smartTitleCase(title.trim()) };
+}
+/* Where the guess came up empty, the previous issue's sheet at the same page is almost always
+   right — a Delta reissues the same book in the same order. So a name corrected once carries. */
+function mergeSheets(found, prev) {
+  return found.map((sh, i) => {
+    if (sh && sh.number) return sh;
+    const p = prev[i];
+    return p ? { number: p.number, title: p.title } : { number: '', title: '' };
+  });
+}
+
+let pendingDrawings = null;
+function promptImportDrawings() {
+  if (!job) return;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/pdf,.pdf';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) importDrawings(f); };
+  inp.click();
+}
+async function importDrawings(file) {
+  importModal(`<div class="modal-head"><h3>Reading ${esc(file.name)}</h3></div>
+    <div class="modal-body"><div id="impStep" class="muted">Loading the PDF engine…</div>
+    <div class="progress"><div id="impBar"></div></div></div>`);
+  try { await loadPdfJs(); }
+  catch (e) {
+    importModal(`<div class="modal-head"><h3>Could not read that PDF</h3></div>
+      <div class="modal-body"><p class="muted">${esc(String(e.message || e))} — check the connection and try again.</p></div>
+      <div class="modal-foot"><button class="btn" onclick="cancelDrawingImport()">Close</button></div>`);
+    return;
+  }
+  const step = (t, pct) => { const a = $('impStep'), b = $('impBar');
+    if (a) a.textContent = t; if (b) b.style.width = Math.round(pct * 100) + '%'; };
+  const yieldUi = () => new Promise(r => setTimeout(r, 0));
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const found = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pg = await pdf.getPage(i);
+      const vp = pg.getViewport({ scale: 1 });
+      const tc = await pg.getTextContent();
+      found.push(guessSheet(tc.items, vp.width, vp.height));
+      pg.cleanup();
+      if (i % 10 === 0 || i === pdf.numPages) { step(`Reading sheet ${i} of ${pdf.numPages}…`, i / pdf.numPages * 0.95); await yieldUi(); }
+    }
+    const prevSet = currentDrawingSet();
+    const prev = sheetsOf(prevSet);
+    const sheets = mergeSheets(found, prev).map((sh, i) => ({
+      id: uid('sh'), number: sh.number || '', title: sh.title || '', page: i + 1, note: '', changed: false }));
+    pendingDrawings = { file, pageCount: pdf.numPages, sheets, prevSet };
+    showDrawingReview();
+  } catch (e) {
+    console.error(e);
+    importModal(`<div class="modal-head"><h3>Could not read that PDF</h3></div>
+      <div class="modal-body"><p class="muted">${esc(String(e.message || e))}</p></div>
+      <div class="modal-foot"><button class="btn" onclick="cancelDrawingImport()">Close</button></div>`);
+  }
+}
+function cancelDrawingImport() { pendingDrawings = null; closePdf(); }
+let drawingShowAll = false;
+function toggleDrawingShowAll() { drawingShowAll = !drawingShowAll; showDrawingReview(); }
+
+/* The screen where what changed gets written down. The site says which sheets came, went or were
+   resheeted; the rest of the truth is yours to type, so every sheet has a box and the ones worth
+   looking at are already ticked and shown. */
+function showDrawingReview() {
+  const p = pendingDrawings;
+  if (!p) return;
+  const prev = sheetsOf(p.prevSet);
+  const ch = prev.length ? specDiff(
+      prev.map(x => ({ key: sheetKey(x.number), number: x.number, title: x.title, ref: x })),
+      p.sheets.map(x => ({ key: sheetKey(x.number), number: x.number, title: x.title, ref: x }))) : [];
+  const t = specTally(ch);
+  const flag = {};                      // sheet id -> why the site thinks it changed
+  for (const c of ch) {
+    if (c.kind === 'added' && c.to.ref) flag[c.to.ref.id] = 'new sheet';
+    if (c.kind === 'renumbered' && c.to.ref) flag[c.to.ref.id] = 'was ' + c.from.number;
+    if (c.kind === 'retitled' && c.to.ref) flag[c.to.ref.id] = 'renamed';
+  }
+  for (const sh of p.sheets) if (flag[sh.id] && !sh.note) sh.changed = true;
+  const dropped = ch.filter(c => c.kind === 'gone');
+  const marked = p.sheets.filter(sh => sh.changed || sh.note).length;
+  const show = p.sheets.filter(sh => drawingShowAll || flag[sh.id] || sh.changed || sh.note);
+
+  const bits = [];
+  if (t.same) bits.push(t.same + ' unchanged');
+  if (t.retitled) bits.push(t.retitled + ' renamed');
+  if (t.added) bits.push(t.added + ' new');
+  if (t.renumbered) bits.push(t.renumbered + ' resheeted');
+  if (t.gone) bits.push(t.gone + ' not in this issue');
+
+  const rows = show.map(sh => `<div class="review-row is-rev">
+      <input type="checkbox" ${sh.changed ? 'checked' : ''} onchange="markSheetChanged('${sh.id}',this.checked)">
+      <span class="rn"><input class="sh-in mono" value="${esc(sh.number)}" placeholder="M1.1"
+        onchange="setSheetField('${sh.id}','number',this.value)"></span>
+      <span class="rt"><input class="sh-in" value="${esc(sh.title)}" placeholder="Sheet name"
+          onchange="setSheetField('${sh.id}','title',this.value)">
+        ${flag[sh.id] ? `<span class="flag">${esc(flag[sh.id])}</span>` : ''}
+        <input class="sh-note" value="${esc(sh.note)}" placeholder="What changed on this sheet?"
+          onchange="setSheetField('${sh.id}','note',this.value)"></span></div>`).join('');
+
+  importModal(`
+    <div class="modal-head"><h3>${p.prevSet ? 'A new issue of the drawings' : 'The first drawing set'}</h3></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label class="fl">What this issue is called</label>
+          <input class="input" id="dwLabel" placeholder="Delta 2" autocomplete="off"
+            value="${esc(p.label || suggestDrawingLabel())}"></div>
+        <div class="field"><label class="fl">Issued</label>
+          <input class="input" type="date" id="dwIssued" value="${esc(p.issued || today())}"></div>
+      </div>
+      <div class="muted">${esc(p.file.name)} · ${p.pageCount} sheet${p.pageCount === 1 ? '' : 's'} read</div>
+      ${p.prevSet ? `<div class="muted" style="margin-top:5px">Against <b>${esc(drawingLabel(p.prevSet))}</b>:
+        <b>${bits.join(' · ') || 'no sheets added or dropped'}</b></div>
+        <div class="muted" style="margin-top:5px">The site can see sheets arrive, go and get resheeted.
+          It cannot see what moved inside one — that part is yours to write.</div>` :
+        `<div class="muted" style="margin-top:5px">Check the sheet numbers and names below. The next
+          issue starts from this list, so a correction now is a correction for good.</div>`}
+      ${dropped.length ? `<div class="notice" style="margin-top:10px;margin-bottom:0"><span>Not in this issue:
+        ${dropped.map(c => esc(c.from.number || '?')).join(', ')} — kept on the issue they came with.</span></div>` : ''}
+      <div class="review-list">${rows || `<div class="review-row"><span class="rt muted">
+        No sheet came out different. Tick "show every sheet" to write a note on one anyway.</span></div>`}</div>
+      <div class="muted" style="margin-top:8px">
+        <label><input type="checkbox" ${drawingShowAll ? 'checked' : ''} onchange="toggleDrawingShowAll()">
+          Show every sheet (${p.sheets.length})</label>
+        ${marked ? ` · ${marked} marked as changed` : ''}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="cancelDrawingImport()">Cancel</button>
+      <button class="btn primary" onclick="confirmDrawingImport()">${
+        p.prevSet ? 'Add this issue' : 'Add the drawings'}</button>
+    </div>`);
+}
+function suggestDrawingLabel() {
+  const cur = currentDrawingSet();
+  if (!cur) return 'Permit Set';
+  const m = String(cur.label || '').match(/^(.*?)(\d+)\s*$/);
+  return m ? m[1] + (parseInt(m[2], 10) + 1) : '';
+}
+function markSheetChanged(id, on) {
+  const p = pendingDrawings; if (!p) return;
+  const sh = p.sheets.find(x => x.id === id); if (!sh) return;
+  sh.changed = !!on;
+}
+function setSheetField(id, field, val) {
+  const p = pendingDrawings; if (!p) return;
+  const sh = p.sheets.find(x => x.id === id); if (!sh) return;
+  const v = String(val == null ? '' : val).trim();
+  sh[field] = field === 'title' ? titleCaseWords(v) : v;
+  if (field === 'note' && v) sh.changed = true;
+}
+async function confirmDrawingImport() {
+  const p = pendingDrawings;
+  if (!p) return;
+  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the drawings', true); return; } }
+  const label = (($('dwLabel') || {}).value || '').trim() || suggestDrawingLabel() || 'Drawings';
+  const issued = (($('dwIssued') || {}).value || '') || today();
+  importModal(`<div class="modal-head"><h3>Saving ${esc(p.file.name)}</h3></div>
+    <div class="modal-body"><div class="muted">Writing the drawings into the ShareFile folder…</div>
+    <div class="progress"><div id="upBar" style="width:60%"></div></div></div>`);
+  try {
+    const rec = await putFileInDir(p.file, DRAWING_DIR, sanitizeFileName(p.file.name));
+    const prevSet = p.prevSet;
+    const d = {
+      id: uid('dwg'), label, issued, received: today(),
+      doc: { id: uid('doc'), name: p.file.name, size: p.file.size, dir: rec.dir, file: rec.file },
+      sheets: p.sheets.map(sh => ({ id: sh.id, number: sh.number, title: sh.title, page: sh.page,
+        note: sh.note || '', changed: !!(sh.changed || sh.note) })),
+      replaces: prevSet ? prevSet.id : '',
+      by: meName() || '', created: Date.now(), updated: Date.now()
+    };
+    drawings.unshift(d);
+    await saveDrawing(d);
+    /* The issue it replaces is kept — a submittal was approved against those sheets — but it moves
+       to Drawings/Superseded so the set in Drawings is always the one being built to. */
+    if (prevSet) {
+      prevSet.superseded = true; prevSet.supersededAt = Date.now(); prevSet.supersededBy = d.id;
+      if (meName()) prevSet.supersededByWho = meName();
+      await saveDrawing(prevSet);
+    }
+    drawings.sort(drawingOrder);
+    pendingDrawings = null;
+    closePdf();
+    renderJob();
+    noteFolderChanged();
+    const n = d.sheets.filter(sh => sh.changed).length;
+    toast(`${label} added${n ? ` · ${n} sheet${n === 1 ? '' : 's'} marked as changed` : ''}`);
+  } catch (e) {
+    console.error(e);
+    importModal(`<div class="modal-head"><h3>Could not save</h3></div>
+      <div class="modal-body"><p>${esc(storageError(e))}</p></div>
+      <div class="modal-foot"><button class="btn" onclick="cancelDrawingImport()">Close</button></div>`);
+  }
+}
+
+/* ── the list ── */
+function matchDrawing(d, q) {
+  if (!q) return true;
+  const hay = [d.label, d.issued, d.note, (d.doc || {}).name,
+    ...sheetsOf(d).map(sh => [sh.number, sh.title, sh.note].filter(Boolean).join(' '))]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.indexOf(q.toLowerCase()) >= 0;
+}
+const visibleDrawings = () => drawings.filter(d => matchDrawing(d, drawingQuery));
+function renderDrawings() {
+  const host = $('tab-drawings');
+  if (!host) return;
+  const list = visibleDrawings();
+  host.innerHTML = `
+    <div class="bar">
+      <input class="input search" id="drawingSearch" placeholder="Search a sheet number, a name, or what changed…"
+        value="${esc(drawingQuery)}" autocomplete="off">
+    </div>
+    ${!drawings.length ? `<div class="empty">No drawings yet. <b>Add a drawing set</b> to start —
+      the sheets are read off it, and each issue after this one says what changed on which sheet.</div>`
+    : !list.length ? `<div class="empty">Nothing matches “${esc(drawingQuery)}”.</div>`
+    : `<div class="dw-list">${list.map(d => {
+        const n = sheetsOf(d).filter(sh => sh.changed).length;
+        return `<div class="dw-card${d.superseded ? ' is-old' : ''}" onclick="openDrawingDrawer('${d.id}')">
+          <div class="dw-top">
+            <span class="dw-name">${esc(drawingLabel(d))}</span>
+            ${d.superseded ? '<span class="dw-tag">superseded</span>'
+                           : '<span class="dw-tag is-now">current</span>'}
+            <span class="spacer" style="flex:1"></span>
+            <span class="muted">${esc(d.issued ? fmtDate(d.issued + 'T00:00:00') : '')}</span>
+          </div>
+          <div class="dw-sub">${sheetsOf(d).length} sheet${sheetsOf(d).length === 1 ? '' : 's'}${
+            n ? ` · <b>${n} changed</b>` : ''}${d.by ? ` · added by ${esc(d.by)}` : ''}</div>
+          ${n ? `<div class="dw-peek">${sheetsOf(d).filter(sh => sh.changed).slice(0, 3)
+            .map(sh => `<span><b>${esc(sh.number || '?')}</b> ${esc((sh.note || '').slice(0, 60)) || 'changed'}</span>`)
+            .join('')}${n > 3 ? `<span class="muted">+${n - 3} more</span>` : ''}</div>` : ''}
+        </div>`;
+      }).join('')}</div>`}`;
+  const box = $('drawingSearch');
+  if (box) box.addEventListener('input', e => { drawingQuery = e.target.value; renderDrawings(); });
+}
+
+/* ── one issue, and the sheet history behind it ── */
+function openDrawingDrawer(id) {
+  openKey = null; openRfi = null; openCo = null; openContract = null;
+  openLedger = { key: null, id: null };
+  openDrawing = id; _drawerFresh = true;
+  renderDrawingDrawer(); navSync();
+}
+function closeDrawingDrawer() {
+  openDrawing = null;
+  const h = $('drawerHost'); if (h) h.innerHTML = '';
+  navSync();
+}
+/* Every issue that touched this sheet, and what each one said about it. */
+function sheetHistory(number) {
+  const k = sheetKey(number), out = [];
+  // oldest issue first: a sheet's story reads forwards, the way it happened
+  for (const d of drawings.slice().sort(drawingOrder).reverse()) {
+    const sh = sheetsOf(d).find(x => sheetKey(x.number) === k);
+    if (sh) out.push({ set: d, sheet: sh });
+  }
+  return out;
+}
+function renderDrawingDrawer() {
+  keepDrawerPlace();
+  const d = drawingById(openDrawing);
+  if (!d) { closeDrawingDrawer(); return; }
+  const sheets = sheetsOf(d);
+  const changed = sheets.filter(sh => sh.changed);
+  const rest = sheets.filter(sh => !sh.changed);
+  const row = sh => {
+    const hist = sheetHistory(sh.number).filter(h => h.set.id !== d.id && (h.sheet.note || h.sheet.changed));
+    return `<div class="sh-row">
+      <div class="sh-head"><span class="sh-num">${esc(sh.number || '—')}</span>
+        <span class="sh-title">${esc(sh.title || '')}</span>
+        <span class="spacer" style="flex:1"></span>
+        ${sh.page ? `<button class="x" title="Open this sheet" onclick="openDrawingAt('${d.id}',${sh.page})">↗</button>` : ''}</div>
+      <textarea class="input autosize sh-note-in" rows="1" placeholder="What changed on this sheet?"
+        onchange="saveSheetNote('${d.id}','${sh.id}',this.value)">${esc(sh.note || '')}</textarea>
+      ${hist.length ? `<div class="sh-hist">${hist.map(h =>
+        `<div><b>${esc(drawingLabel(h.set))}</b> ${esc(h.sheet.note || 'marked changed')}</div>`).join('')}</div>` : ''}
+    </div>`;
+  };
+  $('drawerHost').innerHTML = `
+    <div class="drawer">
+      <div class="drawer-head">
+        <div><div class="muted mono">${esc(d.issued ? fmtDate(d.issued + 'T00:00:00') : '')}${
+          d.superseded ? ' · superseded' : ' · current'}</div>
+          <h3>${esc(drawingLabel(d))}</h3></div>
+        <div class="spacer" style="flex:1"></div>
+        ${d.doc ? `<button class="icon-btn" title="Open the drawings" onclick="openDrawingAt('${d.id}',0)">📄</button>` : ''}
+        <button class="icon-btn" onclick="closeDrawingDrawer()">✕</button>
+      </div>
+      <div class="drawer-body">
+        <div class="sec"><h4>This issue</h4>
+          <div class="grid2">
+            <div class="field"><label class="fl">Called</label>
+              <input class="input" value="${esc(d.label || '')}"
+                onchange="patchDrawing('${d.id}','label',this.value)"></div>
+            <div class="field"><label class="fl">Issued</label>
+              <input class="input" type="date" value="${esc(d.issued || '')}"
+                onchange="patchDrawing('${d.id}','issued',this.value)"></div>
+          </div>
+          <div class="field" style="margin-bottom:0"><label class="fl">Anything about the issue as a whole</label>
+            <textarea class="input autosize" rows="1" placeholder="Optional — the per-sheet notes below are the useful ones"
+              onchange="patchDrawing('${d.id}','note',this.value)">${esc(d.note || '')}</textarea></div>
+        </div>
+        <div class="sec"><h4>What changed <span class="fl-tag">${changed.length}</span></h4>
+          ${changed.length ? changed.map(row).join('')
+            : '<div class="muted" style="font-size:13px">Nothing marked as changed on this issue yet.</div>'}
+        </div>
+        ${rest.length ? `<div class="sec"><h4>The rest of the set <span class="fl-tag">${rest.length}</span></h4>
+          <div class="muted" style="font-size:12px;margin-bottom:8px">Write on one and it moves up into
+            "What changed".</div>
+          ${rest.map(row).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  autosizeAll($('drawerHost'));
+}
+async function patchDrawing(id, field, val) {
+  const d = drawingById(id); if (!d) return;
+  d[field] = String(val == null ? '' : val).trim();
+  renderDrawings(); renderDrawingDrawer();
+  await saveDrawing(d);
+}
+async function saveSheetNote(id, sheetId, val) {
+  const d = drawingById(id); if (!d) return;
+  const sh = sheetsOf(d).find(x => x.id === sheetId); if (!sh) return;
+  sh.note = autoCap(String(val == null ? '' : val).trim());
+  sh.changed = !!sh.note || sh.changed;
+  if (!sh.note) sh.changed = false;                  // clearing the note takes the mark off with it
+  sh.by = meName() || '';
+  sh.at = Date.now();
+  renderDrawings(); renderDrawingDrawer();
+  await saveDrawing(d);
+}
+async function openDrawingAt(id, page) {
+  const d = drawingById(id);
+  if (!d || !d.doc) return;
+  const url = await docUrl(d.doc);
+  if (!url) { toast('Could not open that file — make the folder available offline in ShareFile', true); return; }
+  showPdf(url, (d.doc.name || 'Drawings') + (page ? ' · sheet ' + page : ''), page || 0);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    10. CSV EXPORT
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -15333,7 +15808,7 @@ document.addEventListener('keydown', e => {
    and codes like GC-RFI-042 keep their case, and emails and URLs are left alone.
    The search boxes and the identifier / number / URL fields opt out. */
 const NO_CAPS_IDS = new Set([
-  'searchBox', 'rfiSearch', 'coSearch', 'tagInput',            // search + tags
+  'searchBox', 'rfiSearch', 'coSearch', 'drawingSearch', 'tagInput',   // search + tags
   'rfiGc', 'rfiNum', 'coNum', 'coAmt', 'jfNumber', 'jfFolder', 'lkUrl',   // identifiers / numbers / URLs
   'lkNote'                                                    // the label on a link, not prose
 ]);
@@ -15860,12 +16335,13 @@ async function planRefile(filesRoot, doc, wantDir) {
 async function refileAll(filesRoot) {
   const moves = [];
   const secs = new Set(); let specChanged = false;
-  const rfiSet = new Set(), coSet = new Set(), catSet = new Set();
+  const rfiSet = new Set(), coSet = new Set(), catSet = new Set(), dwSet = new Set();
   const plan = async (doc, wantDir, mark) => { const m = await planRefile(filesRoot, doc, wantDir); if (m) { moves.push(m); mark(); } };
 
   for (const s of sectionsOf(job)) for (const kind of ['submittals', 'responses'])
     for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, specWantDir(sp), () => { specChanged = true; }); }
+  for (const dw of drawings) { if (dw.doc && !isLink(dw.doc)) await plan(dw.doc, drawingWantDir(dw), () => dwSet.add(dw)); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, coDocDir(c), () => coSet.add(c)); }
   for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, coEmailDir(c), () => coSet.add(c)); }
@@ -15881,6 +16357,7 @@ async function refileAll(filesRoot) {
     for (const r of rfiSet) await FB.setDoc(rfiRef(job.id, r.id), clean(r));
     for (const c of coSet) await FB.setDoc(coRef(job.id, c.id), clean(c));
     for (const cat of catSet) await FB.setDoc(trackingRef(job.id, cat.id), clean(cat));
+    for (const dw of dwSet) await FB.setDoc(drawingRef(job.id, dw.id), clean(dw));
   } catch (e) {
     for (const m of moves) {                    // undo: restore records, drop the new copies
       m.doc.dir = m.oldDir; m.doc.file = m.oldFile;
@@ -16211,7 +16688,7 @@ let folderSaveAt = 0, folderSaveState = 'idle';   // 'idle' | 'saving' | 'saved'
 let _lastSavedSig = null, _folderSaveTimer = null, _saveTicker = null;
 /* A cheap in-memory signature of everything the folder copy captures. */
 function registerSig() {
-  try { return JSON.stringify([job && job.name, job && job.number, job && job.specs, sectionsOf(job), rfis, cos, tracking]); }
+  try { return JSON.stringify([job && job.name, job && job.number, job && job.specs, sectionsOf(job), rfis, cos, tracking, drawings]); }
   catch (e) { return 'sig' + Date.now(); }
 }
 function relTime(ts) {
