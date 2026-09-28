@@ -564,6 +564,12 @@ textarea.autosize[rows="1"] { min-height: 0; }
   text-overflow: ellipsis; white-space: nowrap; }
 .spec-choice.is-old { opacity: .6; }
 .spec-choice.is-old .choice-btn b { font-weight: 600; }
+/* the switch that says "do not read this section off the page" */
+.assist-row { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+  font-size: 12.5px; color: var(--text-3); cursor: pointer; }
+.assist-row input { margin: 0; cursor: pointer; }
+.assist-row:hover { color: var(--text-2); }
+.assist-off { color: var(--amber); font-weight: 600; }
 .pr-art { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
 /* a fold-away for the one thing most products have nothing to say about */
 .pr-std { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
@@ -1367,7 +1373,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.87';
+const APP_VERSION = 'v7.88';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13481,12 +13487,20 @@ function renderDrawer() {
 
       <div class="sec">
         <h4>Products <span class="muted" style="font-weight:400" id="prodCount">${prodCountHtml(s)}</span></h4>
+        <label class="assist-row" title="Reading Part 2 off the spec is right most of the time. When it is wrong for this section, turn it off and fill the section in yourself — the other sections are not affected.">
+          <input type="checkbox" ${assistOn(s) ? 'checked' : ''} onchange="toggleAssist('${s.key}', this.checked)">
+          <span>Read this section from the spec${assistOn(s) ? ''
+            : ' <b class="assist-off">— off, you are filling this one in by hand</b>'}</span>
+        </label>
         <div class="add-row">
           <button class="btn sm" onclick="addBlankProduct('${s.key}')">+ Add a product</button>
         </div>
         <div id="prodList">${productRows(s)}</div>
-        <div class="muted" style="margin-top:8px">One supplier for the section, many items off them —
-          the vendor stays in Details. Each item carries its own lead time, and releases are made from this list.</div>
+        <div class="muted" style="margin-top:8px">${assistOn(s)
+          ? `One supplier for the section, many items off them — the vendor stays in Details. Each item
+             carries its own lead time, and releases are made from this list.`
+          : `Nothing here is read off the spec. Products, manufacturers and wording are yours to type,
+             and a later spec import will leave this section alone.`}</div>
       </div>
 
       <div class="sec">
@@ -15096,6 +15110,61 @@ async function pickMaker(key, prodId, name) {
   await saveProducts(key, sec, prodId);
 }
 
+/* ── turning the spec assist off for one section ──
+   Reading Part 2 off the page is right most of the time and wrong some of the time — a title
+   block laid out oddly, an article numbered in a way nobody else numbers it, a table that is not
+   the table it looks like. When it is wrong for one section there has to be a way to say so and
+   type that section in yourself, without giving up the parsing on the other hundred and forty.
+
+   Off means off: no products read in, no manufacturers spread onto it, no wording compared, no
+   requirements, no tags, no lines written into its log by an import. A later issue still moves
+   the page reference, because that is how the Spec button finds the right page and is not
+   content; it leaves the title alone, along with everything else you typed. */
+const assistOn = sec => !(sec && sec.noAssist);
+function sectionParsedProducts(sec) {
+  return sectionProducts(sec).filter(p => p && (p.fromSpec || p.fromTable));
+}
+/* What a parsed product is carrying that nobody would want thrown away. */
+function parsedProductHasWork(p) {
+  return !!(productMarks(p).length || String(p.desc || '').trim() || String(p.note || '').trim() ||
+    String(p.make || '').trim() || String(p.leadWeeks || '').trim() || p.pinned ||
+    String(p.group || '').trim());
+}
+async function toggleAssist(key, on) {
+  const sec = findSection(key);
+  if (!sec) return;
+  if (on) {                                   // turning it back on
+    delete sec.noAssist;
+    renderDrawer(); renderTable();
+    try { await patchSection(key, { noAssist: FB.deleteField ? FB.deleteField() : false }); }
+    catch (e) { toast(writeError(e), true); }
+    toast('The next spec import will fill this section in again');
+    return;
+  }
+  const parsed = sectionParsedProducts(sec);
+  const keep = parsed.filter(parsedProductHasWork);
+  const drop = parsed.filter(p => !parsedProductHasWork(p));
+  if (parsed.length && !confirm(
+      'Fill in ' + (sec.number || 'this section') + ' by hand?\n\n' +
+      (drop.length ? drop.length + ' product' + (drop.length === 1 ? '' : 's') +
+        ' read off the spec will be removed.\n' : '') +
+      (keep.length ? keep.length + ' you have worked on ' + (keep.length === 1 ? 'is' : 'are') +
+        ' kept, with what the spec put on ' + (keep.length === 1 ? 'it' : 'them') + ' cleared off.\n' : '') +
+      '\nNothing else on the section is touched.')) return;
+  sec.noAssist = true;
+  sec.products = sectionProducts(sec).filter(p => drop.indexOf(p) < 0);
+  for (const p of keep) {                     // yours from here on, with nothing parsed left on it
+    delete p.fromSpec; delete p.fromTable; delete p.spec; delete p.standards;
+    delete p.topics; delete p.makers; delete p.anyOther; delete p.article;
+  }
+  prodEdit = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {};
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { noAssist: true, products: sec.products || [] }); }
+  catch (e) { toast(writeError(e), true); }
+  toast(drop.length ? drop.length + ' parsed product' + (drop.length === 1 ? '' : 's') + ' removed — this section is yours now'
+                    : 'This section is filled in by hand from now on');
+}
+
 function productsFromSpec(list) {
   return (list || []).map(x => {
     const text = productSpecText(x);
@@ -15115,6 +15184,7 @@ function productsFromSpec(list) {
    that is the one thing a spec keeps still. Marks, lead times, stars, groups and anything typed
    are left exactly as they are. */
 function mergeSpecProducts(sec, parsed) {
+  if (!assistOn(sec)) return { added: 0, updated: 0 };   // this one is filled in by hand
   const have = sectionProducts(sec);
   const fresh = productsFromSpec(parsed);
   if (!fresh.length) return { added: 0, updated: 0 };
@@ -15167,7 +15237,8 @@ async function loadRevisionText(ch) {
   const p = pendingImport;
   if (!p || p.textReading || p.textLoaded) return;
   p.textReading = true; p.textDiffs = {}; p.textPrev = {};
-  const pairs = ch.filter(c => c.kind === 'same' || c.kind === 'retitled' || c.kind === 'renumbered')
+  const pairs = ch.filter(c => (c.kind === 'same' || c.kind === 'retitled' || c.kind === 'renumbered')
+      && assistOn(c.from))
     .map(c => ({ from: c.from, to: c.to }));
   p.textTotal = pairs.length; p.textDone = 0;
   const tick = () => { const el = $('revTextStep');
@@ -15492,6 +15563,9 @@ async function confirmImport() {
     const repoint = (cur, s) => {
       cur.specId = specId;
       cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
+      /* Off means off. The page reference above is how you open the spec and is kept; everything
+         below here is content the parse decided, and this section said it would rather not. */
+      if (!assistOn(cur)) { relinked.push(cur); return; }
       cur.requirements = s.requirements || []; cur.includes = s.includes || [];
       const fresh = (s.autoTags || []).filter(t => !(cur.autoTags || []).includes(t));
       cur.tags = (cur.tags || []).concat(fresh.filter(t => !(cur.tags || []).includes(t)));
@@ -15528,7 +15602,7 @@ async function confirmImport() {
           const wasKey = cur.key;
           cur.key = s.key; cur.number = s.number; cur.division = s.division;
           repoint(cur, s);
-          if (!quiet) historyLine(cur, `Renumbered from ${prettyNum(wasKey)} by ${file.name}`);
+          if (!quiet && assistOn(cur)) historyLine(cur, `Renumbered from ${prettyNum(wasKey)} by ${file.name}`);
           markPending(s.key);
           movedDocs.push(wasKey);
           moved++;
@@ -15562,7 +15636,7 @@ async function confirmImport() {
       if (keeping.has(key)) {
         if (!cur.retired) {
           cur.retired = true; cur.retiredAt = Date.now(); cur.retiredBy = meName() || '';
-          if (!quiet) historyLine(cur, `Not in ${file.name} — kept for the work on it`);
+          if (!quiet && assistOn(cur)) historyLine(cur, `Not in ${file.name} — kept for the work on it`);
           markPending(key);
           relinked.push(cur);
           retired++;
