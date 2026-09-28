@@ -1373,7 +1373,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.88';
+const APP_VERSION = 'v7.89';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2573,6 +2573,12 @@ async function saveSpecData(jobId, list) {
   for (let i = 0; i < list.length; i += 400) {
     const batch = FB.writeBatch(FB.db);
     for (const s of list.slice(i, i + 400)) {
+      /* This is a set, not a merge — it replaces the whole document. A section that was carried
+         along without its wording being read on this pass (one filled in by hand, or one marked
+         as no longer in the book) has neither field in memory once they have been migrated out,
+         so writing here would put two empty arrays over its stored text and take its change log
+         with them. Nothing read, nothing written. */
+      if (!Array.isArray(s.requirements) && !Array.isArray(s.includes) && !s.__specChanges) continue;
       batch.set(specDataRef(jobId, s.key), clean(Object.assign({
         key: s.key, requirements: s.requirements || [], includes: s.includes || []
       }, s.__specChanges ? { changes: s.__specChanges } : {})));
@@ -15133,10 +15139,14 @@ function parsedProductHasWork(p) {
 async function toggleAssist(key, on) {
   const sec = findSection(key);
   if (!sec) return;
+  markPending(key);                           // a snapshot arriving mid-write must not undo this
   if (on) {                                   // turning it back on
     delete sec.noAssist;
     renderDrawer(); renderTable();
-    try { await patchSection(key, { noAssist: FB.deleteField ? FB.deleteField() : false }); }
+    /* Written as false, never deleted. patchSection runs its fields through clean(), which
+       rebuilds every object from its own keys — a Firestore deleteField sentinel comes out the
+       far side as a plain truthy map, and the section would read as switched off for ever. */
+    try { await patchSection(key, { noAssist: false }); }
     catch (e) { toast(writeError(e), true); }
     toast('The next spec import will fill this section in again');
     return;
@@ -15155,12 +15165,26 @@ async function toggleAssist(key, on) {
   sec.products = sectionProducts(sec).filter(p => drop.indexOf(p) < 0);
   for (const p of keep) {                     // yours from here on, with nothing parsed left on it
     delete p.fromSpec; delete p.fromTable; delete p.spec; delete p.standards;
-    delete p.topics; delete p.makers; delete p.anyOther; delete p.article;
+    delete p.topics; delete p.makers; delete p.anyOther;
+    // the article number stays: it is how a later import finds this product again if the switch
+    // is ever turned back on, and without it every kept product would gain a parsed twin
   }
+  /* Products were never all of it. The submittal requirements, the Section Includes and the tags
+     the parse guessed are all still on the record — still drawn in the panel, still matched by
+     search, still written into the register export. Saying "off" and leaving those would make
+     this switch a half-truth. */
+  const auto = new Set(sec.autoTags || []);
+  sec.tags = (sec.tags || []).filter(t => !auto.has(t));
+  sec.autoTags = [];
+  sec.requirements = []; sec.includes = [];
+  specDataCache.delete(job.id + ':' + key);   // or the panel keeps drawing what was just cleared
   prodEdit = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {};
   renderDrawer(); renderTable();
-  try { await patchSection(key, { noAssist: true, products: sec.products || [] }); }
-  catch (e) { toast(writeError(e), true); }
+  try {
+    await patchSection(key, { noAssist: true, products: sec.products || [],
+      tags: sec.tags || [], autoTags: [] });
+    await saveSpecData(job.id, [sec]);        // and clear the stored wording, deliberately
+  } catch (e) { toast(writeError(e), true); }
   toast(drop.length ? drop.length + ' parsed product' + (drop.length === 1 ? '' : 's') + ' removed — this section is yours now'
                     : 'This section is filled in by hand from now on');
 }
@@ -15177,7 +15201,7 @@ function productsFromSpec(list) {
       anyOther: !!x.anyOther,
       // the book's own words, kept whole and folded away — not pasted into a box you have to
       // clear out before you can write "Ruskin FSD-60, 24x24" in it
-      spec: text, desc: '', leadWeeks: '', note: '', fromSpec: true };
+      spec: text, desc: '', leadWeeks: '', note: '', fromSpec: true, fromTable: !!x.fromTable };
   });
 }
 /* Fold this issue's Part 2 into whatever is already on the section. Matched by article, because
@@ -15563,6 +15587,9 @@ async function confirmImport() {
     const repoint = (cur, s) => {
       cur.specId = specId;
       cur.startPage = s.startPage; cur.endPage = s.endPage; cur.inBody = s.inBody;
+      // being in the book again is a fact about the register, not something the parse decided,
+      // so it is cleared either way — a hand-typed section that reappears must not stay marked
+      delete cur.retired; delete cur.retiredAt; delete cur.retiredBy;
       /* Off means off. The page reference above is how you open the spec and is kept; everything
          below here is content the parse decided, and this section said it would rather not. */
       if (!assistOn(cur)) { relinked.push(cur); return; }
@@ -15571,7 +15598,6 @@ async function confirmImport() {
       cur.tags = (cur.tags || []).concat(fresh.filter(t => !(cur.tags || []).includes(t)));
       cur.autoTags = (s.autoTags || []).slice();
       if (!cur.titleEdited) { cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource; }
-      delete cur.retired; delete cur.retiredAt; delete cur.retiredBy;   // it is back in the book
       { const got = mergeSpecProducts(cur, s.specProducts); prodAdded += got.added; }
       /* What this issue did to the wording, kept next to the wording itself so it can be read
          back a year from now, with a line in the section's own log saying it happened. */
