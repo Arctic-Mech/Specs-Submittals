@@ -566,6 +566,14 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .spec-choice.is-old .choice-btn b { font-weight: 600; }
 .pr-art { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
 /* a fold-away for the one thing most products have nothing to say about */
+.pr-std { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--accent); background: var(--accent-sf); border-radius: 4px; padding: 1px 7px;
+  margin: 2px 5px 0 0; }
+.pr-cov { display: block; font-size: 12.5px; color: var(--text-2); }
+/* the book's own paragraphs, folded away until asked for */
+.pr-spec { margin-top: 5px; padding: 8px 10px; border-left: 2px solid var(--border-2);
+  background: var(--surface); border-radius: 0 5px 5px 0; font-size: 12px; line-height: 1.5;
+  color: var(--text-3); white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
 .pr-more { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11.5px;
   padding: 2px 0; text-align: left; }
 .pr-more:hover { color: var(--accent); }
@@ -1350,7 +1358,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.84';
+const APP_VERSION = 'v7.85';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2154,6 +2162,15 @@ const cleanMaker = t => String(t == null ? '' : t).replace(ZWSP_RE, '')
 /* A "Manufacturers" paragraph is a heading for the names listed under it, not a paragraph to
    keep — but only when something is actually listed under it. */
 const isMakerHead = n => /^manufacturers?\b/i.test(n.text) && n.sub.length > 0;
+/* The standards a product has to meet. These are the one thing a vendor must certify against and
+   the first thing a reviewer looks for, and in the book they are buried mid-sentence: "Fabricate
+   in accordance with NFPA 90A, UL 555, UL 555S, and as indicated." Pulled out, they are the
+   shortest useful answer to "what am I asking this vendor for". */
+const STD_RE = /\b(?:NFPA|UL|ASTM|ASHRAE|AMCA|SMACNA|ANSI|NEMA|ASME|AWWA|NSF|IEEE|AABC|AHRI|ARI|CSA|FM|ICC|IAPMO|MSS|TEMA|CTI|ETL|NRCA)\s+\(?[A-Z0-9][A-Z0-9./-]*\)?/g;
+/* What each lettered paragraph is about, taken from its own opening phrase — "Multiple Blade
+   Dampers:", "Operators:", "Electro Thermal Link:". A spec writes its own contents list and then
+   buries it; read back out, it says what the product covers in six words instead of six hundred. */
+const TOPIC_RE = /^([^:.]{2,60}):\s/;
 
 function extractProducts(lines) {
   const out = [];
@@ -2195,6 +2212,16 @@ function extractProducts(lines) {
       }
     }
     p.notes = keep;
+    // what it must meet, and what it covers — the two things worth reading at a glance
+    const all = [p.name].concat(keep.map(n => n.text),
+      keep.reduce((a, n) => a.concat((n.sub || []).map(x => x.text),
+        (n.sub || []).reduce((b, x) => b.concat((x.sub || []).map(y => y.text)), [])), [])).join(' ');
+    const seen = {};
+    p.standards = (all.match(STD_RE) || []).map(x => x.replace(/\s+/g, ' ').trim())
+      .filter(x => { const k = x.toUpperCase(); if (seen[k]) return false; seen[k] = 1; return true; });
+    const tseen = {};
+    p.topics = keep.map(n => { const m = TOPIC_RE.exec(n.text); return m ? cleanTitle(m[1]) : ''; })
+      .filter(x => { if (!x) return false; const k = x.toUpperCase(); if (tseen[k]) return false; tseen[k] = 1; return true; });
   }
   return out.filter(x => x.name);
 }
@@ -12003,7 +12030,9 @@ function secRowHtml(s) {
   const specEmpty = !editing && !mfrVal, vendorEmpty = !editing && !s.vendor;
   // a status change is already spelled out by the dropdown two columns over, so the row carries
   // the last thing somebody typed rather than the last thing that happened
-  const noteLine = pinnedLine('pin-note', newestBy((s.history || []).filter(h => h.text), x => x.ts));
+  // only a line someone chose to write is worth pinning to the row; the ones the app writes for
+  // itself on an import would otherwise bury the one you left for yourself
+  const noteLine = pinnedLine('pin-note', newestBy((s.history || []).filter(h => h.text && !h.auto), x => x.ts));
   return `<tr class="${openKey === s.key ? 'sel ' : ''}${editing ? 'row-edit ' : ''}${st.id === 'na' ? 'row-na' : ''}"${rowOpen}>
       <td class="c-num"><button class="sec-star${s.pinned ? ' on' : ''}" title="${s.pinned ? 'Starred — click to unstar' : 'Star this section to pull it to the top'}"
         onclick="event.stopPropagation();toggleSecPin('${s.key}')">${s.pinned ? '★' : '☆'}</button>${esc(s.number)}</td>
@@ -12664,7 +12693,11 @@ function repaintProducts(anchorId) {
 }
 /* A product with a dozen marks shows the first few and a "+8". Clicking that opens the rest right
    there on the row, without opening the product — you wanted to see FD-7, not read the spec. */
-let prodAllMarks = {}, prodNoteOpen = {};
+let prodAllMarks = {}, prodNoteOpen = {}, prodSpecOpen = {};
+/* The book's own paragraphs. Pasting them into the box you type in made every product look full
+   and left you deleting a page of prose before you could write "Ruskin FSD-60, 24x24". They live
+   here instead: one click away, never in the way. */
+function toggleProdSpec(id) { prodSpecOpen[id] = !prodSpecOpen[id]; repaintProducts(id); }
 function showAllMarks(id) { prodAllMarks[id] = true; repaintProducts(id); }
 /* Most products have nothing particular to say, and the ones that do say it at length. Folded
    until asked for, so the list stays a list. */
@@ -12844,8 +12877,17 @@ function productRow(s, p, b, relMarks, endsBand) {
                     title="Record ${esc(m.tag)} going out">Release</button>`}
               ${m.note ? `<div class="pr-mk-note">${richText(m.note)}</div>` : ''}
             </div>`; }).join('')}</div>` : ''}
+          ${(p.standards || []).length ? `<div class="pr-kv"><span style="flex:1"><i>Must meet</i>${
+            p.standards.map(x => `<span class="pr-std">${esc(x)}</span>`).join('')}</span></div>` : ''}
+          ${(p.topics || []).length ? `<div class="pr-kv"><span style="flex:1"><i>The spec covers</i><span class="pr-cov">${
+            p.topics.map(esc).join(' \u00b7 ')}</span></span></div>` : ''}
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
           <div class="pr-desc${p.desc ? '' : ' is-none'}">${p.desc ? richText(p.desc) : PR_DASH}</div>
+          ${p.spec ? (prodSpecOpen[p.id]
+            ? `<button class="pr-more" onclick="event.stopPropagation();toggleProdSpec('${p.id}')"
+                 >What the book says \u25be</button><div class="pr-spec">${esc(p.spec)}</div>`
+            : `<button class="pr-more" onclick="event.stopPropagation();toggleProdSpec('${p.id}')"
+                 >What the book says \u25b8</button>`) : ''}
           ${p.note ? (prodNoteOpen[p.id]
             ? `<div class="pr-kv"><span style="flex:1"><i>Anything particular</i></span></div>
                <div class="pr-note">${richText(p.note)}</div>`
@@ -13161,7 +13203,7 @@ function keepDrawerPlace() {
   if (!y) return;
   setTimeout(() => { const n = drawerBody(); if (n) n.scrollTop = y; }, 0);
 }
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodGroupShut = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {}; prodGroupShut = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
 function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
@@ -14871,7 +14913,11 @@ function productsFromSpec(list) {
       name: x.name || '', group: '',
       makers: (x.makers || []).slice(),
       make: makerNames(x).join(', '),
-      spec: text, desc: text, leadWeeks: '', note: '', fromSpec: true };
+      standards: (x.standards || []).slice(),
+      topics: (x.topics || []).slice(),
+      // the book's own words, kept whole and folded away — not pasted into a box you have to
+      // clear out before you can write "Ruskin FSD-60, 24x24" in it
+      spec: text, desc: '', leadWeeks: '', note: '', fromSpec: true };
   });
 }
 /* Fold this issue's Part 2 into whatever is already on the section. Matched by article, because
@@ -14888,11 +14934,13 @@ function mergeSpecProducts(sec, parsed) {
   for (const f of fresh) {
     const cur = f.article ? byArt[f.article] : null;
     if (!cur) { out.push(f); added++; continue; }
-    const untouched = !String(cur.desc || '').trim() || String(cur.desc || '') === String(cur.spec || '');
     cur.name = cur.nameEdited ? cur.name : f.name;
     cur.makers = f.makers; cur.make = cur.makeEdited ? cur.make : f.make;
+    cur.standards = f.standards; cur.topics = f.topics;
+    // an earlier version pasted the spec into "what to buy"; if that is still all it holds, clear
+    // it, because it was never yours and the folded copy below says the same thing
+    if (String(cur.desc || '').trim() === String(cur.spec || '').trim()) cur.desc = '';
     cur.spec = f.spec;
-    if (untouched) cur.desc = f.spec;         // never typed in — keep it in step with the book
     cur.fromSpec = true;
     updated++;
   }
@@ -14915,6 +14963,7 @@ function showImportReview(file, pageCount, result) {
     importMode = (result.sections.length && matched / result.sections.length >= 0.5) ? 'revise' : 'add';
   }
   if (importMode === 'revise' && !pendingImport.textLoaded && !pendingImport.textReading) loadRevisionText(ch);
+  if (importMode === 'replace') return showReplaceReview(file, pageCount, result, ch);
   return importMode === 'revise' ? showRevisionReview(file, pageCount, result, ch)
                                  : showAddReview(file, pageCount, result);
 }
@@ -14980,6 +15029,7 @@ const importModePicker = () => {
     <label class="fl">This job already has ${n} section${n === 1 ? '' : 's'}</label>
     <div class="seg-sm" id="impMode">
       <button class="${importMode === 'revise' ? 'on' : ''}" onclick="setImportMode('revise')">A revised issue</button>
+      <button class="${importMode === 'replace' ? 'on' : ''}" onclick="setImportMode('replace')">Just replace it</button>
       <button class="${importMode === 'add' ? 'on' : ''}" onclick="setImportMode('add')">Another book, alongside</button>
     </div></div>`;
 };
@@ -14988,6 +15038,41 @@ const importModePicker = () => {
 const prevHadText = ch => ch.some(c => c.kind === 'same' || c.kind === 'retitled' || c.kind === 'renumbered');
 const revHead = (a, b) => `<div class="review-row review-head is-rev"><span class="rn">${esc(a)}</span>
   <span class="rt">${esc(b)}</span></div>`;
+/* Not every upload is a revision. Sometimes the wrong file went in, or a page was missing, and
+   the right one is going in over the top — there is no story to tell about what changed between
+   a mistake and its correction, and being made to read one is just in the way. This swaps the
+   book and re-points everything at it, and says nothing about differences. */
+function showReplaceReview(file, pageCount, result, ch) {
+  const t = specTally(ch);
+  const outgoing = specsOf(job).filter(sp => !sp.superseded && !isLink(sp));
+  const gone = ch.filter(c => c.kind === 'gone');
+  const keeping = gone.filter(c => sectionWork(c.from).any);
+  importModal(`
+    <div class="modal-head"><h3>Replace the spec book${queueLabel()}</h3></div>
+    <div class="modal-body">
+      ${importModePicker()}
+      <div class="muted">${esc(file.name)} \u00b7 ${pageCount} pages \u00b7 ${result.sections.length} section${
+        result.sections.length === 1 ? '' : 's'} read</div>
+      <div class="muted" style="margin-top:8px">Every section in this file is pointed at it, and its
+        Part 2 is read in. Nothing is written to any log and no differences are reported.</div>
+      ${t.added ? `<div class="muted" style="margin-top:5px">${t.added} section${
+        t.added === 1 ? ' is' : 's are'} not in the register yet and will be added.</div>` : ''}
+      ${gone.length ? `<div class="notice" style="margin-top:10px;margin-bottom:0"><span>${
+        gone.length} section${gone.length === 1 ? '' : 's'} in the register ${
+        gone.length === 1 ? 'is' : 'are'} not in this file. ${
+        gone.length === 1 ? 'It is' : 'They are'} left exactly as ${
+        gone.length === 1 ? 'it is' : 'they are'} \u2014 nothing is removed or marked, because a file
+        put in by mistake should not retire anything.</span></div>` : ''}
+      <div class="muted" style="margin-top:10px">Statuses, uploads, products, releases and logs are
+        never touched. Pick <b>A revised issue</b> above if you do want to see what changed.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="cancelImport()">Cancel${importQueue.length ? ' all' : ''}</button>
+      <button class="btn primary" onclick="confirmImport()">Replace it${
+        importQueue.length ? ' &amp; continue' : ''}</button>
+    </div>`);
+}
+
 /* The whole of what is about to change, before a line of it is written. */
 function showRevisionReview(file, pageCount, result, ch) {
   const t = specTally(ch);
@@ -15163,7 +15248,10 @@ async function confirmImport() {
   const ticked = boxes.filter(c => c.checked);
   const chosen = new Set(ticked.filter(c => c.dataset.mode === 'add').map(c => c.dataset.key));
   const relink = new Set(ticked.filter(c => c.dataset.mode === 'update').map(c => c.dataset.key));
-  const revising = importMode === 'revise';
+  // a replacement re-points everything the same way a revision does; what it does not do is
+  // narrate it — no wording diff, no lines in anybody's log
+  const quiet = importMode === 'replace';
+  const revising = importMode === 'revise' || quiet;
   // newKey -> the key it is moving from, for the ones whose number changed
   const moving = {};
   for (const c of ticked) if (c.dataset.mode === 'move') moving[c.dataset.key] = c.dataset.from;
@@ -15205,7 +15293,7 @@ async function confirmImport() {
        changed. Written straight onto the record — the save at the end carries it. */
     const historyLine = (sec, text) => {
       sec.history = (sec.history || []).concat([Object.assign(
-        { id: uid('log'), ts: Date.now(), text }, meName() ? { by: meName() } : {})]);
+        { id: uid('log'), ts: Date.now(), text, auto: true }, meName() ? { by: meName() } : {})]);
     };
     /* Point a section that is still in the book at this issue of it. Only what came out of the
        PDF is rewritten — the status, the uploads, the products, the releases and the log are the
@@ -15222,7 +15310,7 @@ async function confirmImport() {
       { const got = mergeSpecProducts(cur, s.specProducts); prodAdded += got.added; }
       /* What this issue did to the wording, kept next to the wording itself so it can be read
          back a year from now, with a line in the section's own log saying it happened. */
-      const tx = ((pendingImport || {}).textDiffs || {})[s.key];
+      const tx = quiet ? null : ((pendingImport || {}).textDiffs || {})[s.key];
       if (tx && tx.diff && tx.diff.n) {
         const prior = (((pendingImport || {}).textPrev || {})[s.key]) || [];
         cur.__specChanges = prior.concat([{
@@ -15249,7 +15337,7 @@ async function confirmImport() {
           const wasKey = cur.key;
           cur.key = s.key; cur.number = s.number; cur.division = s.division;
           repoint(cur, s);
-          historyLine(cur, `Renumbered from ${prettyNum(wasKey)} by ${file.name}`);
+          if (!quiet) historyLine(cur, `Renumbered from ${prettyNum(wasKey)} by ${file.name}`);
           markPending(s.key);
           movedDocs.push(wasKey);
           moved++;
@@ -15283,7 +15371,7 @@ async function confirmImport() {
       if (keeping.has(key)) {
         if (!cur.retired) {
           cur.retired = true; cur.retiredAt = Date.now(); cur.retiredBy = meName() || '';
-          historyLine(cur, `Not in ${file.name} — kept for the work on it`);
+          if (!quiet) historyLine(cur, `Not in ${file.name} — kept for the work on it`);
           markPending(key);
           relinked.push(cur);
           retired++;
