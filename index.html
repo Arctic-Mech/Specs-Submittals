@@ -931,6 +931,17 @@ tbody tr.row-edit td { background: var(--accent-sf); cursor: default; }
   color: var(--accent); border-radius: 3px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px;
 }
 
+/* the email thread behind a release, on its own line under it */
+.rel-row { flex-wrap: wrap; }
+.rel-mail { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px;
+  padding-top: 6px; border-top: 1px solid var(--border); }
+.rel-mail-it { display: inline-flex; align-items: center; background: var(--surface-2);
+  border-radius: 4px; overflow: hidden; }
+.rel-mail-it button { border: none; background: none; cursor: pointer; color: var(--text-2);
+  font-size: 11.5px; padding: 2px 7px; }
+.rel-mail-it button:hover { color: var(--accent); }
+.rel-mail-it .x { color: var(--text-3); padding: 2px 6px 2px 2px; font-size: 10px; }
+.rel-mail-it .x:hover { color: var(--red, #e5484d); }
 .rel-row {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border);
   border-radius: 7px; margin-bottom: 7px; background: var(--surface-2);
@@ -1373,7 +1384,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.89';
+const APP_VERSION = 'v7.90';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2706,6 +2717,11 @@ const RETIRED_SUB_DIRS = {
 };
 function statusDirName(id) { return STATUS_DIR[id] || (SUBMITTALS_DIR + '/Filed'); }
 const EMAIL_DIR = 'Emails';
+/* The thread behind a release. You send the release to the vendor, they come back with an
+   acknowledgement and a ship date, and three weeks later somebody asks when it was ordered — the
+   answer is in Outlook and nowhere near the register. Kept in one folder, because a release is
+   too small a thing to deserve a folder of its own. */
+const RELEASE_EMAIL_DIR = EMAIL_DIR + '/Releases';
 const ALL_SUBMITTALS_NAME = 'All Submittals';
 const ALL_SUBMITTALS_DIR = 'Submittals/All Submittals';   // mirror of each section's current submittal
 const ARCHIVE_NAME = 'Archive';
@@ -2925,6 +2941,7 @@ function trackedPaths() {
   (job.specs || []).forEach(add);
   for (const r of rfis) { (r.docs || []).forEach(add); }
   for (const d of drawings) { add(d.doc); (d.markups || []).forEach(add); }
+  for (const s of sectionsOf(job)) for (const r of (s.releases || [])) (r.emails || []).forEach(add);
   for (const c of tracking) { (c.files || []).forEach(add); }
   for (const c of cos) { (c.docs || []).forEach(add); (c.emails || []).forEach(add); }
   for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) { (it.docs || []).forEach(add); (it.emails || []).forEach(add); }
@@ -3259,6 +3276,7 @@ async function viewLoose(i) {
 /* An email (.msg/.eml) dropped in the folder → file it under a Job Tracking
    category (creating one if needed), the same place uploaded emails live. */
 function assignEmailModal(i, item, total) {
+  const rels = allReleases();
   const cats = tracking.slice();
   const noCats = !cats.length;
   const catOptions = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + `<option value="__new">➕ New category…</option>`;
@@ -3275,6 +3293,7 @@ function assignEmailModal(i, item, total) {
         <select class="input" id="asgEmailDest">
           <option value="cat">A Job Tracking category</option>
           <option value="co">A change order</option>
+          <option value="rel">A release</option>
         </select></div>
       <div id="asgEmailCatFields">
         <div class="field"><label class="fl">Category</label>
@@ -3282,6 +3301,15 @@ function assignEmailModal(i, item, total) {
         <div class="field" id="asgNewCatWrap"${noCats ? '' : ' style="display:none"'}>
           <label class="fl">New category name</label>
           <input class="input" id="asgNewCat" placeholder="e.g. Owner correspondence"></div>
+      </div>
+      <div id="asgEmailRelFields" hidden>
+        ${rels.length ? `
+        <div class="field"><label class="fl">Release</label>
+          <select class="input" id="asgEmailRel">${rels.map((x, i) =>
+            `<option value="${i}">${esc(x.label)}</option>`).join('')}</select></div>
+        <div class="muted" style="margin-top:4px">It goes on that release, so what was agreed sits
+          next to what went out.</div>` :
+        `<div class="muted">Nothing has been released yet — record a release on a spec section first.</div>`}
       </div>
       <div id="asgEmailCoFields" hidden>
         ${cos.length ? `
@@ -3301,11 +3329,47 @@ function assignEmailModal(i, item, total) {
   destSel.onchange = () => {
     document.getElementById('asgEmailCatFields').hidden = destSel.value !== 'cat';
     document.getElementById('asgEmailCoFields').hidden = destSel.value !== 'co';
+    document.getElementById('asgEmailRelFields').hidden = destSel.value !== 'rel';
   };
 }
 function assignEmailGo(i) {
   const dest = (document.getElementById('asgEmailDest') || {}).value;
-  return dest === 'co' ? assignEmailToCo(i) : assignEmail(i);
+  if (dest === 'co') return assignEmailToCo(i);
+  if (dest === 'rel') return assignEmailToRelease(i);
+  return assignEmail(i);
+}
+/* A loose email filed straight onto a release. Same shape as the change-order path: copy it into
+   the folder, put it on the record, roll both back together if the write fails, and only then
+   take the loose one away. */
+async function assignEmailToRelease(i) {
+  const item = _assignQueue[i];
+  if (!item) return;
+  const sel = document.getElementById('asgEmailRel');
+  if (!sel) { toast('Nothing has been released yet', true); return; }
+  const hit = allReleases()[parseInt(sel.value, 10)];
+  if (!hit) { toast('Pick a release', true); return; }
+  const { sec, rel } = hit;
+  stickyToast(`Filing ${item.name}…`);
+  try {
+    const blob = await readLooseBlob(item);
+    if (!blob) { toast('Could not read that file — make the folder available offline in ShareFile', true); return; }
+    const already = (item.at === 'files' && item.dir === RELEASE_EMAIL_DIR);
+    let dir = item.dir, file = item.file;
+    if (!already) { const rec = await putFileInDir(blob, RELEASE_EMAIL_DIR, sanitizeAnyName(item.name, 'email')); dir = rec.dir; file = rec.file; }
+    const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file,
+      added: Date.now(), by: meName() || '' };
+    rel.emails = (rel.emails || []).concat([doc]);
+    try { markPending(sec.key); await patchSection(sec.key, { releases: sec.releases || [] }); }
+    catch (e) {
+      rel.emails = (rel.emails || []).filter(x => x.id !== doc.id);
+      if (!already) await deleteStoredDoc({ id: 'tmp', dir, file });
+      throw e;
+    }
+    if (!already) await deleteLoose(item);
+    renderJob(); if (openKey === sec.key) renderDrawer();
+    toast(`Filed “${item.name}” on ${hit.label}`);
+    assignModal(i + 1);
+  } catch (e) { console.error(e); toast('Could not file that email: ' + (e.message || e), true); }
 }
 async function assignEmailToCo(i) {
   const item = _assignQueue[i];
@@ -13831,6 +13895,76 @@ async function removeTag(key, tag) {
   try { await patchSection(key, { tags: s.tags }); } catch (e) { toast(writeError(e), true); }
 }
 
+/* ── emails on a release ──
+   The release says what went out and when it is due. The emails say what was actually agreed. */
+/* Every release in the job, flattened, so a loose email can be filed onto one without first
+   knowing which section it came off. */
+function allReleases() {
+  const out = [];
+  for (const s of sectionsOf(job)) {
+    for (const r of (s.releases || [])) {
+      out.push({ sec: s, rel: r,
+        label: (s.number || '') + ' · ' +
+          (r.item ? (markLabel(productById(s, r.item), r.mark) || r.label) : r.label) +
+          (r.date ? ' · ' + fmtDate(r.date + 'T00:00:00') : '') });
+    }
+  }
+  return out;
+}
+function releaseById(s, relId) { return ((s && s.releases) || []).find(r => r.id === relId) || null; }
+function pickReleaseEmails(key, relId) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
+  inp.onchange = () => addReleaseEmails(key, relId, Array.from(inp.files));
+  inp.click();
+}
+async function addReleaseEmails(key, relId, all) {
+  const s = findSection(key); if (!s || !releaseById(s, relId) || !all.length) return;
+  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store emails', true); return; } }
+  const mail = all.filter(f => /\.(msg|eml)$/i.test(f.name));
+  if (mail.length < all.length) toast('Only .msg / .eml emails were kept', true);
+  if (!mail.length) return;
+  const made = [];
+  for (const f of mail) {
+    try {
+      stickyToast(`Saving ${f.name}…`);
+      const rec = await putFileInDir(f, RELEASE_EMAIL_DIR, sanitizeAnyName(f.name, 'email'));
+      made.push({ id: uid('doc'), name: f.name, size: f.size, dir: rec.dir, file: rec.file,
+        added: Date.now(), by: meName() || '' });
+    } catch (e) { console.error(e); toast(storageError(e), true); }
+  }
+  if (!made.length) return;
+  const r = releaseById(findSection(key), relId);
+  if (!r) { toast('That release is no longer there', true); noteFolderChanged(); return; }
+  r.emails = (r.emails || []).concat(made);
+  await saveReleases(key);
+  noteFolderChanged();
+  toast(`${made.length} email${made.length === 1 ? '' : 's'} on this release`);
+}
+async function removeReleaseEmail(key, relId, docId) {
+  const s = findSection(key); if (!s) return;
+  const r = releaseById(s, relId); if (!r) return;
+  const d = (r.emails || []).find(x => x.id === docId); if (!d) return;
+  if (!confirm('Remove “' + d.name + '” for everyone?')) return;
+  await deleteStoredDoc(d);
+  r.emails = (r.emails || []).filter(x => x.id !== docId);
+  await saveReleases(key);
+  noteFolderChanged();
+}
+async function openReleaseEmail(key, relId, docId) {
+  const s = findSection(key); if (!s) return;
+  const r = releaseById(s, relId); if (!r) return;
+  const d = (r.emails || []).find(x => x.id === docId);
+  if (d) await openStoredDoc(d);
+}
+async function saveReleases(key) {
+  const s = findSection(key); if (!s) return;
+  markPending(key);
+  renderDrawer(); renderTable();
+  try { await patchSection(key, { releases: s.releases || [] }); }
+  catch (e) { toast(writeError(e), true); }
+}
+
 /* ── releases ── */
 function releaseList(s) {
   const list = s.releases || [];
@@ -13846,8 +13980,15 @@ function releaseList(s) {
       <span class="due" style="color:${r.delivered ? cvar('green') : (r.expected ? cvar('blue') : 'var(--text-3)')}">${
         r.delivered ? 'Delivered' :
         (r.expected ? 'Due ' + esc(fmtWindow({ from: r.expected, to: r.expectedTo })) : 'no date')}</span>
+      <button class="btn sm ghost" onclick="pickReleaseEmails('${s.key}','${r.id}')"
+        title="Attach the email thread behind this release">✉</button>
       <button class="btn sm ghost" onclick="releaseModal('${s.key}','${r.id}')" title="Edit">✎</button>
       <button class="btn sm ghost" onclick="removeRelease('${s.key}','${r.id}')" title="Remove">✕</button>
+      ${(r.emails || []).length ? `<div class="rel-mail">${(r.emails || []).map(d =>
+        `<span class="rel-mail-it"><button onclick="openReleaseEmail('${s.key}','${r.id}','${d.id}')"
+            title="${esc(d.name)}${d.by ? ' · ' + esc(d.by) : ''}${d.added ? ' · ' + esc(fmtDate(d.added)) : ''}"
+            >✉ ${esc(d.name.replace(/\.(msg|eml)$/i, ''))}</button><button class="x"
+            title="Remove" onclick="removeReleaseEmail('${s.key}','${r.id}','${d.id}')">✕</button></span>`).join('')}</div>` : ''}
     </div>`).join('');
 }
 
@@ -17171,6 +17312,8 @@ async function refileAll(filesRoot) {
     for (const d of (s[kind] || [])) { if (!isLink(d)) { if (isArchived(d)) d.archived = true; await plan(d, docWantDir(d, kind), () => secs.add(s)); } }
   for (const sp of (job.specs || [])) { if (!isLink(sp)) await plan(sp, specWantDir(sp), () => { specChanged = true; }); }
   for (const dw of drawings) { if (dw.doc && !isLink(dw.doc)) await plan(dw.doc, drawingWantDir(dw), () => dwSet.add(dw)); }
+  for (const s of sectionsOf(job)) for (const r of (s.releases || []))
+    for (const d of (r.emails || [])) { if (!isLink(d)) await plan(d, RELEASE_EMAIL_DIR, () => secs.add(s)); }
   for (const r of rfis) for (const d of (r.docs || [])) { if (!isLink(d)) await plan(d, rfiDocDir(r, d.kind), () => rfiSet.add(r)); }
   for (const c of cos) for (const d of (c.docs || [])) { if (!isLink(d)) await plan(d, coDocDir(c), () => coSet.add(c)); }
   for (const c of cos) for (const d of (c.emails || [])) { if (!isLink(d)) await plan(d, coEmailDir(c), () => coSet.add(c)); }
