@@ -569,6 +569,7 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-std { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
   color: var(--accent); background: var(--accent-sf); border-radius: 4px; padding: 1px 7px;
   margin: 2px 5px 0 0; }
+.pr-sub { font-size: 11.5px; color: var(--text-3); font-style: italic; }
 .pr-cov { display: block; font-size: 12.5px; color: var(--text-2); }
 /* the book's own paragraphs, folded away until asked for */
 .pr-spec { margin-top: 5px; padding: 8px 10px; border-left: 2px solid var(--border-2);
@@ -1358,7 +1359,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.85';
+const APP_VERSION = 'v7.86';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2128,7 +2129,7 @@ function parseSpec(pages, wantedDivs) {
     if (hi > 0) lines.splice(0, hi);
     s.requirements = extractRequirements(lines);
     s.includes = extractIncludes(lines);
-    s.specProducts = extractProducts(lines);      // Part 2, read as the product list it is
+    s.specProducts = expandBrandTables(extractProducts(lines));   // Part 2, as the product list it is
     // Searchable keywords, so "VFD" finds the controls section that only ever
     // says "variable frequency".
     s.autoTags = extractTags(lines, s.title, s.includes);
@@ -2171,6 +2172,74 @@ const STD_RE = /\b(?:NFPA|UL|ASTM|ASHRAE|AMCA|SMACNA|ANSI|NEMA|ASME|AWWA|NSF|IEE
    Dampers:", "Operators:", "Electro Thermal Link:". A spec writes its own contents list and then
    buries it; read back out, it says what the product covers in six words instead of six hundred. */
 const TOPIC_RE = /^([^:.]{2,60}):\s/;
+
+/* ── the acceptable-brands table ──
+   Some sections do not name a manufacturer per product. They put one article at the top — "2.01
+   MANUFACTURERS" — holding a table of who is acceptable for each kind of material:
+
+     A. General: Where only NIBCO figure numbers are listed, ...
+        1. Valves:
+           a. Gate, Globe, Swing Check: 1) Apollo 2) Victaulic 3) Crane 4) Kennedy ...
+           b. Silent Check: 1) Mueller 2) Metraflex 3) Victaulic ...
+        2. Specialty Valves:
+           a. Gas Cock: 1) Wooster 2) Parker 3) Watts ...
+
+   Read as one product, that is a paragraph of nothing. Read as what it is, it is the answer to
+   "who can I buy a ball valve from" for every kind of valve in the section — which is the whole
+   reason anybody opens Part 2. */
+const PAREN_AT = /\d{1,2}\)\s/;
+/* "1) Apollo 2) Victaulic 3) Crane" — one line, numbers closed with a bracket. */
+function parenBrands(text) {
+  const t = String(text == null ? '' : text);
+  if (!PAREN_AT.test(t)) return null;
+  const out = [];
+  const re = /(\d{1,2})\)\s*([\s\S]*?)(?=\s*\d{1,2}\)\s|$)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const v = m[2].replace(/\s+/g, ' ').replace(/[.;,]+\s*$/, '').trim();
+    if (v) out.push(v);
+  }
+  return out.length ? out : null;
+}
+/* "Other Manufacturers: Submit substitution request" is not a brand, it is the sentence that
+   always follows one. Kept out of the list and remembered as the note it is. */
+const isSubstitution = b => /^(other manufacturers?|or equal|approved equal|substitutions?)\b/i.test(String(b || ''));
+/* "Gate, Globe, Swing Check:  1) Apollo …"  →  { type, brands } */
+function brandLine(text) {
+  const t = String(text == null ? '' : text).trim();
+  const brands = parenBrands(t);
+  if (!brands) return null;
+  const at = t.search(PAREN_AT);
+  let head = t.slice(0, at).replace(/\s+/g, ' ').trim().replace(/[:.\-–]+$/, '').trim();
+  return { type: head, brands: brands.filter(b => !isSubstitution(b)),
+    anyOther: brands.some(isSubstitution) };
+}
+/* Every brand line in one 2.xx article, with the heading it sits under. */
+function brandTable(prod) {
+  const rows = [];
+  for (const n of (prod.notes || [])) {
+    const own = brandLine(n.text);
+    if (own && own.type) rows.push({ category: '', type: own.type, brands: own.brands, anyOther: own.anyOther });
+    for (const s2 of (n.sub || [])) {
+      const cat = String(s2.text || '').replace(/\s+/g, ' ').trim().replace(/[:.]+$/, '');
+      const mid = brandLine(s2.text);
+      if (mid && mid.type) { rows.push({ category: '', type: mid.type, brands: mid.brands, anyOther: mid.anyOther }); continue; }
+      for (const s3 of (s2.sub || [])) {
+        const r = brandLine(s3.text);
+        if (r && r.type) rows.push({ category: cat, type: r.type, brands: r.brands, anyOther: r.anyOther });
+      }
+    }
+  }
+  return rows;
+}
+/* "Gate, Globe, Swing Check" under "Valves" is three things you buy, not one. */
+const splitTypes = t => String(t || '').split(/\s*,\s*/).map(x => x.trim()).filter(Boolean);
+const normPhrase = t => String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+/* The heading a row sat under becomes the sub-category, not part of the name. Working it into the
+   name meant guessing whether "Ball" needed the word Valve after it and "Gas Cock" did not, and
+   that guess is unwinnable — "Gas Cock Specialty Valve" is how it goes wrong. Under a heading
+   that already says VALVES, "Ball" is not ambiguous, and it is what the book calls it. */
+function rowNames(row) { return splitTypes(row.type); }
 
 function extractProducts(lines) {
   const out = [];
@@ -2225,6 +2294,42 @@ function extractProducts(lines) {
   }
   return out.filter(x => x.name);
 }
+/* A brand table read as one product is a paragraph of nothing. Read as what it is, it is a
+   product per kind of material, each with the brands that are acceptable for it and grouped the
+   way the book groups them. Where the section already names that product somewhere else in Part
+   2, the brands are put on that one instead of a second copy being made. */
+function expandBrandTables(list) {
+  const out = [], extra = [];
+  const byName = {};
+  for (const p of list) { const k = normPhrase(p.name); if (k && !byName[k]) byName[k] = p; }
+  for (const p of list) {
+    const rows = brandTable(p);
+    out.push(p);
+    if (!rows.length) continue;
+    p.isBrandTable = rows.length > 1 || /^manufacturers?$/i.test(String(p.name || '').trim());
+    for (const row of rows) {
+      const makers = row.brands.map(b => ({ name: b, forWhat: '' }));
+      if (!makers.length) continue;
+      for (const nm of rowNames(row)) {
+        const key = normPhrase(nm);
+        const hit = byName[key] || byName[normPhrase(nm + ' ' + row.category)];
+        if (hit && hit !== p) {                  // the section names it already — put them there
+          hit.makers = (hit.makers || []).concat(makers.filter(
+            m => !(hit.makers || []).some(x => normPhrase(x.name) === normPhrase(m.name))));
+          if (row.anyOther) hit.anyOther = true;
+          continue;
+        }
+        const made = { article: p.article, name: smartTitleCase(cleanTitle(nm)),
+          group: cleanTitle(row.category || ''), makers: makers.slice(),
+          anyOther: !!row.anyOther, notes: [], standards: [], topics: [], fromTable: true };
+        extra.push(made);
+        byName[key] = made;
+      }
+    }
+  }
+  return out.concat(extra);
+}
+
 /* The lettered paragraphs, written back out the way the spec has them, so what you read here and
    what you read on the page are the same words in the same order. */
 function productSpecText(p) {
@@ -14900,11 +15005,12 @@ function makersHtml(p) {
     .filter(m => m && m.name);
   if (!list.length) return p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`;
   const plain = list.filter(m => !m.forWhat), grouped = list.filter(m => m.forWhat);
-  if (!grouped.length) return esc(plain.map(m => m.name).join(', '));
+  const tail = p.anyOther ? ` <span class="pr-sub">or submit a substitution request</span>` : '';
+  if (!grouped.length) return esc(plain.map(m => m.name).join(', ')) + tail;
   const by = {}, order = [];
   for (const m of grouped) { if (!by[m.forWhat]) { by[m.forWhat] = []; order.push(m.forWhat); } by[m.forWhat].push(m.name); }
   return (plain.length ? esc(plain.map(m => m.name).join(', ')) + '<br>' : '') +
-    order.map(k => `<b>${esc(k)}</b> ${esc(by[k].join(', '))}`).join('<br>');
+    order.map(k => `<b>${esc(k)}</b> ${esc(by[k].join(', '))}`).join('<br>') + tail;
 }
 function productsFromSpec(list) {
   return (list || []).map(x => {
@@ -14915,6 +15021,7 @@ function productsFromSpec(list) {
       make: makerNames(x).join(', '),
       standards: (x.standards || []).slice(),
       topics: (x.topics || []).slice(),
+      anyOther: !!x.anyOther,
       // the book's own words, kept whole and folded away — not pasted into a box you have to
       // clear out before you can write "Ruskin FSD-60, 24x24" in it
       spec: text, desc: '', leadWeeks: '', note: '', fromSpec: true };
@@ -14936,7 +15043,7 @@ function mergeSpecProducts(sec, parsed) {
     if (!cur) { out.push(f); added++; continue; }
     cur.name = cur.nameEdited ? cur.name : f.name;
     cur.makers = f.makers; cur.make = cur.makeEdited ? cur.make : f.make;
-    cur.standards = f.standards; cur.topics = f.topics;
+    cur.standards = f.standards; cur.topics = f.topics; cur.anyOther = f.anyOther;
     // an earlier version pasted the spec into "what to buy"; if that is still all it holds, clear
     // it, because it was never yours and the folded copy below says the same thing
     if (String(cur.desc || '').trim() === String(cur.spec || '').trim()) cur.desc = '';
