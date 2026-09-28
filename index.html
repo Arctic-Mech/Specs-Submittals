@@ -1341,7 +1341,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.81';
+const APP_VERSION = 'v7.82';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1626,7 +1626,14 @@ function autoCap(str) {
   if (!s) return s;
   // the rest of the word only — swallowing the full stop would hide the next sentence
   return s.replace(/(^\s*|[.!?]["')\]]?\s+|\n[ \t]*)([a-z])([A-Za-z0-9'’-]*)/g,
-    (m, lead, first, rest) => /[A-Z]/.test(rest) ? m : lead + first.toUpperCase() + rest);
+    (m, lead, first, rest, off, str) => {
+      if (/[A-Z]/.test(rest)) return m;
+      /* "a." and "b." pasted out of a spec are the spec's own list labels, not the starts of
+         sentences. Raising them renames the paragraph the spec is referring to. A lone letter
+         with a full stop or a bracket after it is left exactly as it was typed. */
+      if (!rest) { const next = str.charAt(off + m.length); if (next === '.' || next === ')') return m; }
+      return lead + first.toUpperCase() + rest;
+    });
 }
 const titleKey = s => String(s || '').toUpperCase().replace(/&/g, ' AND ').replace(/[^A-Z0-9]+/g, ' ').trim();
 function titleSim(a, b) {
@@ -4527,11 +4534,21 @@ function trackDetailHtml(c, it) {
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addNote('${c.id}','${it.id}')}"></textarea>
         <button class="btn sm" onclick="addNote('${c.id}','${it.id}')">Add</button>
       </div>`}
-      ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => `
+      ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => noteEdit === n.id ? `
+        <div class="note-item is-edit">
+          <textarea class="input autosize" id="noteEditBox" rows="1"
+            onkeydown="noteEditKey(event,'${c.id}','${n.id}')">${esc(n.text)}</textarea>
+          <div class="hist-foot">
+            <button class="btn sm" onclick="saveNote('${c.id}','${n.id}')">Save</button>
+            <button class="btn sm ghost" onclick="cancelNoteEdit()">Cancel</button>
+          </div>
+        </div>` : `
         <div class="note-item">
           <div class="nt">${esc(n.text).replace(/\n/g, '<br>')}</div>
-          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}${n.by ? ' · ' + esc(n.by) : ''}</small>
+          <div class="nm"><small class="muted">${n.created ? fmtDate(n.created) : ''}${n.by ? ' · ' + esc(n.by) : ''}${
+            n.editedAt ? ' · <i>edited</i>' : ''}</small>
             ${unfiled ? moveTo('note', n.id) : ''}
+            <button class="x" title="Rewrite" onclick="editNote('${n.id}')">✎</button>
             <button class="x" title="Remove" onclick="deleteNote('${c.id}','${n.id}')">✕</button></div>
         </div>`).join('') || `<div class="muted" style="font-size:13px">No notes${unfiled ? '' : ' on this item'} yet.</div>`}
     </div>`;
@@ -4719,6 +4736,34 @@ function addNote(catId, itemId) {
   renderTracking();
   saveTrackCat(c);
   const ne = $('noteInput'); if (ne) ne.focus();
+}
+/* A note is written in a hurry, and a name or a date in it turns out to be wrong. Rewriting it
+   beats deleting it and typing the whole thing again, and the log keeps saying it was edited. */
+let noteEdit = null;
+function editNote(id) {
+  noteEdit = id;
+  renderTracking();
+  const el = $('noteEditBox');
+  if (el && el.focus) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }
+  autosizeAll($('trackPanel') || document);
+}
+function cancelNoteEdit() { noteEdit = null; renderTracking(); }
+async function saveNote(catId, noteId) {
+  const c = catById(catId); if (!c) return;
+  const n = (c.notes || []).find(x => x.id === noteId); if (!n) { noteEdit = null; renderTracking(); return; }
+  const el = $('noteEditBox');
+  const text = (el && el.value != null ? String(el.value) : '').trim();
+  noteEdit = null;
+  if (!text) { renderTracking(); return; }      // emptying it is not a way to delete it
+  if (text !== n.text) { n.text = autoCap(text); n.editedAt = Date.now(); if (meName()) n.editedBy = meName(); }
+  renderTracking();
+  await saveTrackCat(c);
+}
+/* Enter saves, Escape puts it back. The page's own Escape handler would shut the panel as well,
+   so this one stops there. */
+function noteEditKey(ev, catId, id) {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); saveNote(catId, id); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cancelNoteEdit(); }
 }
 function deleteNote(catId, noteId) {
   const c = catById(catId); if (!c) return;
@@ -15239,45 +15284,22 @@ async function importDrawings(file) {
   }
 }
 function cancelDrawingImport() { pendingDrawings = null; closePdf(); }
-let drawingShowAll = false;
-function toggleDrawingShowAll() { drawingShowAll = !drawingShowAll; showDrawingReview(); }
-
 /* The screen where what changed gets written down. The site says which sheets came, went or were
    resheeted; the rest of the truth is yours to type, so every sheet has a box and the ones worth
    looking at are already ticked and shown. */
+/* The screen where what changed gets written down. Reading a drawing and saying what moved on it
+   is not something the site can do — it was tried, and guessing from sheet numbers told you
+   nothing you did not already know while getting in the way of the part that matters. So every
+   sheet is listed with its own box, and what changed is yours to type. */
 function showDrawingReview() {
   const p = pendingDrawings;
   if (!p) return;
-  const prev = sheetsOf(p.prevSet);
-  const ch = prev.length ? specDiff(
-      prev.map(x => ({ key: sheetKey(x.number), number: x.number, title: x.title, ref: x })),
-      p.sheets.map(x => ({ key: sheetKey(x.number), number: x.number, title: x.title, ref: x }))) : [];
-  const t = specTally(ch);
-  const flag = {};                      // sheet id -> why the site thinks it changed
-  for (const c of ch) {
-    if (c.kind === 'added' && c.to.ref) flag[c.to.ref.id] = 'new sheet';
-    if (c.kind === 'renumbered' && c.to.ref) flag[c.to.ref.id] = 'was ' + c.from.number;
-    if (c.kind === 'retitled' && c.to.ref) flag[c.to.ref.id] = 'renamed';
-  }
-  for (const sh of p.sheets) if (flag[sh.id] && !sh.note) sh.changed = true;
-  const dropped = ch.filter(c => c.kind === 'gone');
-  const marked = p.sheets.filter(sh => sh.changed || sh.note).length;
-  const show = p.sheets.filter(sh => drawingShowAll || flag[sh.id] || sh.changed || sh.note);
-
-  const bits = [];
-  if (t.same) bits.push(t.same + ' unchanged');
-  if (t.retitled) bits.push(t.retitled + ' renamed');
-  if (t.added) bits.push(t.added + ' new');
-  if (t.renumbered) bits.push(t.renumbered + ' resheeted');
-  if (t.gone) bits.push(t.gone + ' not in this issue');
-
-  const rows = show.map(sh => `<div class="review-row is-rev">
-      <input type="checkbox" ${sh.changed ? 'checked' : ''} onchange="markSheetChanged('${sh.id}',this.checked)">
-      <span class="rn"><input class="sh-in mono" value="${esc(sh.number)}" placeholder="M1.1"
+  const marked = p.sheets.filter(sh => sh.note).length;
+  const rows = p.sheets.map(sh => `<div class="review-row is-rev">
+      <span class="rn"><input class="sh-in mono" value="${esc(sh.number)}"
         onchange="setSheetField('${sh.id}','number',this.value)"></span>
-      <span class="rt"><input class="sh-in" value="${esc(sh.title)}" placeholder="Sheet name"
+      <span class="rt"><input class="sh-in" value="${esc(sh.title)}"
           onchange="setSheetField('${sh.id}','title',this.value)">
-        ${flag[sh.id] ? `<span class="flag">${esc(flag[sh.id])}</span>` : ''}
         <input class="sh-note" value="${esc(sh.note)}" placeholder="What changed on this sheet?"
           onchange="setSheetField('${sh.id}','note',this.value)"></span></div>`).join('');
 
@@ -15286,26 +15308,17 @@ function showDrawingReview() {
     <div class="modal-body">
       <div class="grid2">
         <div class="field"><label class="fl">What this issue is called</label>
-          <input class="input" id="dwLabel" placeholder="Delta 2" autocomplete="off"
-            value="${esc(p.label || suggestDrawingLabel())}"></div>
+          <input class="input" id="dwLabel" autocomplete="off" value="${esc(suggestDrawingLabel())}"></div>
         <div class="field"><label class="fl">Issued</label>
-          <input class="input" type="date" id="dwIssued" value="${esc(p.issued || today())}"></div>
+          <input class="input" type="date" id="dwIssued" value="${esc(today())}"></div>
       </div>
-      <div class="muted">${esc(p.file.name)} · ${p.pageCount} sheet${p.pageCount === 1 ? '' : 's'} read</div>
-      ${p.prevSet ? `<div class="muted" style="margin-top:5px">Against <b>${esc(drawingLabel(p.prevSet))}</b>:
-        <b>${bits.join(' · ') || 'no sheets added or dropped'}</b></div>
-        <div class="muted" style="margin-top:5px">The site can see sheets arrive, go and get resheeted.
-          It cannot see what moved inside one — that part is yours to write.</div>` :
-        `<div class="muted" style="margin-top:5px">Check the sheet numbers and names below. The next
-          issue starts from this list, so a correction now is a correction for good.</div>`}
-      ${dropped.length ? `<div class="notice" style="margin-top:10px;margin-bottom:0"><span>Not in this issue:
-        ${dropped.map(c => esc(c.from.number || '?')).join(', ')} — kept on the issue they came with.</span></div>` : ''}
-      <div class="review-list">${rows || `<div class="review-row"><span class="rt muted">
-        No sheet came out different. Tick "show every sheet" to write a note on one anyway.</span></div>`}</div>
-      <div class="muted" style="margin-top:8px">
-        <label><input type="checkbox" ${drawingShowAll ? 'checked' : ''} onchange="toggleDrawingShowAll()">
-          Show every sheet (${p.sheets.length})</label>
-        ${marked ? ` · ${marked} marked as changed` : ''}</div>
+      <div class="muted">${esc(p.file.name)} \u00b7 ${p.pageCount} sheet${p.pageCount === 1 ? '' : 's'}</div>
+      <div class="muted" style="margin-top:5px">${p.prevSet
+        ? 'Write what changed against <b>' + esc(drawingLabel(p.prevSet)) + '</b> on the sheets that changed. Leave the rest blank.'
+        : 'Check the sheet numbers and names. The next issue starts from this list, so a correction now is a correction for good.'}</div>
+      <div class="review-list">${rows || `<div class="review-row"><span class="rt muted">No sheets read.</span></div>`}</div>
+      <div class="muted" style="margin-top:8px">${p.sheets.length} sheet${p.sheets.length === 1 ? '' : 's'}${
+        marked ? ` \u00b7 ${marked} with a note` : ''}</div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="cancelDrawingImport()">Cancel</button>
@@ -15319,17 +15332,12 @@ function suggestDrawingLabel() {
   const m = String(cur.label || '').match(/^(.*?)(\d+)\s*$/);
   return m ? m[1] + (parseInt(m[2], 10) + 1) : '';
 }
-function markSheetChanged(id, on) {
-  const p = pendingDrawings; if (!p) return;
-  const sh = p.sheets.find(x => x.id === id); if (!sh) return;
-  sh.changed = !!on;
-}
 function setSheetField(id, field, val) {
   const p = pendingDrawings; if (!p) return;
   const sh = p.sheets.find(x => x.id === id); if (!sh) return;
   const v = String(val == null ? '' : val).trim();
   sh[field] = field === 'title' ? titleCaseWords(v) : v;
-  if (field === 'note' && v) sh.changed = true;
+  if (field === 'note') sh.changed = !!v;     // a sheet counts as changed once you say how
 }
 async function confirmDrawingImport() {
   const p = pendingDrawings;
@@ -15389,12 +15397,12 @@ function renderDrawings() {
   if (!host) return;
   const list = visibleDrawings();
   host.innerHTML = `
-    <div class="bar">
+    ${drawings.length ? `<div class="bar">
       <input class="input search" id="drawingSearch" placeholder="Search a sheet number, a name, or what changed…"
         value="${esc(drawingQuery)}" autocomplete="off">
-    </div>
+    </div>` : ''}
     ${!drawings.length ? `<div class="empty">No drawings yet. <b>Add a drawing set</b> to start —
-      the sheets are read off it, and each issue after this one says what changed on which sheet.</div>`
+      the sheets are read off it, and you say what changed on which sheet.</div>`
     : !list.length ? `<div class="empty">Nothing matches “${esc(drawingQuery)}”.</div>`
     : `<div class="dw-list">${list.map(d => {
         const n = sheetsOf(d).filter(sh => sh.changed).length;
@@ -15467,6 +15475,7 @@ function renderDrawingDrawer() {
           <h3>${esc(drawingLabel(d))}</h3></div>
         <div class="spacer" style="flex:1"></div>
         ${d.doc ? `<button class="icon-btn" title="Open the drawings" onclick="openDrawingAt('${d.id}',0)">📄</button>` : ''}
+        <button class="icon-btn" title="Remove this issue" onclick="removeDrawingSet('${d.id}')">🗑</button>
         <button class="icon-btn" onclick="closeDrawingDrawer()">✕</button>
       </div>
       <div class="drawer-body">
@@ -15494,6 +15503,31 @@ function renderDrawingDrawer() {
       </div>
     </div>`;
   autosizeAll($('drawerHost'));
+}
+/* Taking an issue back off. The PDF goes with it — leaving it behind would only have it offered
+   back as a loose file to assign, which is not what "delete" means to anyone. */
+async function removeDrawingSet(id) {
+  const d = drawingById(id); if (!d) return;
+  const n = sheetsOf(d).filter(x => x.note).length;
+  if (!confirm('Remove ' + drawingLabel(d) + ' and its PDF?' +
+    (n ? '\n\n' + n + ' sheet note' + (n === 1 ? '' : 's') + ' written on it will go too.' : ''))) return;
+  const was = drawings.slice();
+  drawings = drawings.filter(x => x.id !== id);
+  // if the one in force just went, the newest of what is left takes over
+  const next = drawings.find(x => !x.superseded) || drawings[0];
+  if (next && next.superseded) {
+    delete next.superseded; delete next.supersededAt; delete next.supersededBy; delete next.supersededByWho;
+  }
+  if (openDrawing === id) closeDrawingDrawer();
+  drawings.sort(drawingOrder);
+  renderJob();
+  try {
+    await FB.deleteDoc(drawingRef(job.id, id));
+    if (next && was.find(x => x.id === next.id && x.superseded)) await saveDrawing(next);
+  } catch (e) { drawings = was; renderJob(); toast(writeError(e), true); return; }
+  if (d.doc) { try { await deleteStoredDoc(d.doc); } catch (e) {} }
+  noteFolderChanged();
+  toast(drawingLabel(d) + ' removed');
 }
 async function patchDrawing(id, field, val) {
   const d = drawingById(id); if (!d) return;
@@ -16597,7 +16631,7 @@ async function refileAll(filesRoot) {
   for (const cat of tracking) for (const d of (cat.files || [])) { if (!isLink(d)) await plan(d, EMAIL_DIR + '/' + sanitizeAnyName(cat.name, 'Uncategorised'), () => catSet.add(cat)); }
 
   if (!moves.length) return 0;   // nothing actually movable (e.g. an orphaned record whose file is gone) → no toast, no churn
-  stickyToast('Organising the ShareFile folder…');   // only announce once there's real work to commit
+  stickyToast('Organizing the ShareFile folder…');   // only announce once there's real work to commit
 
   for (const m of moves) { m.doc.dir = m.newDir; m.doc.file = m.newFile; delete m.doc.fileId; }
   try {
@@ -16910,7 +16944,7 @@ async function maybeAutoOrganize() {
   try {
     const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
     let n = 0;
-    if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organising…" sticky only if it has real work
+    if (needsOrganize()) n = await refileAll(filesRoot);   // refileAll shows the "Organizing…" sticky only if it has real work
     let stray = await cleanupEmptyOldDirs(filesRoot);     // also catches leftovers even when records are fine
     stray += await cleanupRetiredSubDirs(filesRoot);      // folders whose status now files somewhere else
     await ensureSubmittalCategoryFolders(filesRoot);       // keep all the submittal category folders visible, even empty ones
