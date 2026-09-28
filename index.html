@@ -569,6 +569,14 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-std { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
   color: var(--accent); background: var(--accent-sf); border-radius: 4px; padding: 1px 7px;
   margin: 2px 5px 0 0; }
+/* the spec's list of who it will accept, and the one we picked off it */
+.mk-pick { border: 1px solid var(--border-2); background: none; border-radius: 999px; cursor: pointer;
+  color: var(--text-2); font-size: 11.5px; padding: 1px 9px; margin: 2px 5px 0 0; }
+.mk-pick:hover { color: var(--accent); border-color: var(--accent); }
+.mk-pick.is-on { color: var(--green); border-color: var(--green); background: var(--green-sf); font-weight: 700; }
+.mk-for { margin-top: 4px; }
+.mk-for b { font-size: 10.5px; color: var(--text-3); margin-right: 6px; text-transform: uppercase;
+  letter-spacing: .04em; }
 .pr-sub { font-size: 11.5px; color: var(--text-3); font-style: italic; }
 .pr-cov { display: block; font-size: 12.5px; color: var(--text-2); }
 /* the book's own paragraphs, folded away until asked for */
@@ -1359,7 +1367,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.86';
+const APP_VERSION = 'v7.87';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2129,7 +2137,7 @@ function parseSpec(pages, wantedDivs) {
     if (hi > 0) lines.splice(0, hi);
     s.requirements = extractRequirements(lines);
     s.includes = extractIncludes(lines);
-    s.specProducts = expandBrandTables(extractProducts(lines));   // Part 2, as the product list it is
+    s.specProducts = spreadManufacturers(extractProducts(lines));  // Part 2, as the product list it is
     // Searchable keywords, so "VFD" finds the controls section that only ever
     // says "variable frequency".
     s.autoTags = extractTags(lines, s.title, s.includes);
@@ -2204,20 +2212,49 @@ function parenBrands(text) {
 /* "Other Manufacturers: Submit substitution request" is not a brand, it is the sentence that
    always follows one. Kept out of the list and remembered as the note it is. */
 const isSubstitution = b => /^(other manufacturers?|or equal|approved equal|substitutions?)\b/i.test(String(b || ''));
+/* An article called MANUFACTURERS is sometimes just the list: "A. Carnes. B. Titus. C. Trane."
+   and those apply to everything the section covers. But the same article can also hold ordinary
+   sentences — "Use only one manufacturer." — and reading that as a brand would put it in every
+   vendor list in the job. A name is a proper noun: every word begins with a capital, bar the
+   small words that join them. A sentence is not. */
+const JOINERS = { and: 1, of: 1, the: 1, a: 1, de: 1, für: 1, or: 1, '&': 1 };
+function looksLikeBrand(t) {
+  const raw = String(t == null ? '' : t).replace(/\s*\.\s*$/, '').trim();
+  if (!raw || raw.length > 60 || /[:;]/.test(raw)) return false;
+  const words = raw.split(/\s+/);
+  if (!words.length || words.length > 7) return false;
+  return words.every(w => {
+    const bare = w.replace(/[^A-Za-z0-9&'’.\-]/g, '');
+    if (!bare) return true;
+    if (JOINERS[bare.toLowerCase()]) return true;
+    return /^[A-Z0-9]/.test(bare);
+  });
+}
 /* "Gate, Globe, Swing Check:  1) Apollo …"  →  { type, brands } */
 function brandLine(text) {
   const t = String(text == null ? '' : text).trim();
-  const brands = parenBrands(t);
-  if (!brands) return null;
+  const raw = parenBrands(t);
+  if (!raw) return null;
+  const brands = raw.filter(b => !isSubstitution(b));
+  if (!brands.length) return null;
+  /* A bracketed run is not always a list of brands. A spec uses the same notation for anything it
+     wants to enumerate — "1) Secure with adhesive 2) Coat edges exposed to airstream 3) Cover
+     liner with non-porous foil" — and read as manufacturers that fills the register with vendors
+     called "Secure with adhesive". The entries have to read like names first. */
+  if (brands.filter(looksLikeBrand).length < brands.length * 0.6) return null;
   const at = t.search(PAREN_AT);
-  let head = t.slice(0, at).replace(/\s+/g, ' ').trim().replace(/[:.\-–]+$/, '').trim();
-  return { type: head, brands: brands.filter(b => !isSubstitution(b)),
-    anyOther: brands.some(isSubstitution) };
+  const head = t.slice(0, at).replace(/\s+/g, ' ').trim().replace(/[:.\-\u2013]+$/, '').trim();
+  return { type: head, brands, anyOther: raw.some(isSubstitution) };
 }
 /* Every brand line in one 2.xx article, with the heading it sits under. */
+const MAKER_WORD_RE = /\b(manufacturers?|acceptable|approved|suppliers?)\b/i;
 function brandTable(prod) {
   const rows = [];
+  // ...and only where the book says it is talking about manufacturers. 23 36 00's 2.02 is
+  // "SINGLE-DUCT, VARIABLE-VOLUME UNITS" and every bracketed run inside it is an instruction.
+  const articleIsMakers = MAKER_WORD_RE.test(String(prod.name || ''));
   for (const n of (prod.notes || [])) {
+    if (!articleIsMakers && !MAKER_WORD_RE.test(String(n.text || ''))) continue;
     const own = brandLine(n.text);
     if (own && own.type) rows.push({ category: '', type: own.type, brands: own.brands, anyOther: own.anyOther });
     for (const s2 of (n.sub || [])) {
@@ -2269,6 +2306,18 @@ function extractProducts(lines) {
     else if (item) item.text += ' ' + line;
   }
   for (const p of out) {
+    /* The whole article is the list. 23 36 00's 2.01 is twelve names and nothing else, and they
+       are the acceptable manufacturers for every product the section describes. */
+    if (/^manufacturers?\b/i.test(String(p.name || '').trim())) {
+      const flat = p.notes.filter(n => !(n.sub || []).length);
+      const names = flat.filter(n => !isSubstitution(n.text) && looksLikeBrand(n.text));
+      // two names is a list; the article having said MANUFACTURERS is the guard that matters
+      if (names.length >= 2 && names.length >= flat.length - 1) {
+        p.sectionMakers = names.map(n => cleanMaker(n.text));
+        p.anyOther = flat.some(n => isSubstitution(n.text));
+        p.notes = p.notes.filter(n => names.indexOf(n) < 0);
+      }
+    }
     const keep = [];
     for (const n of p.notes) {
       if (!isMakerHead(n)) { keep.push(n); continue; }
@@ -2294,40 +2343,59 @@ function extractProducts(lines) {
   }
   return out.filter(x => x.name);
 }
-/* A brand table read as one product is a paragraph of nothing. Read as what it is, it is a
-   product per kind of material, each with the brands that are acceptable for it and grouped the
-   way the book groups them. Where the section already names that product somewhere else in Part
-   2, the brands are put on that one instead of a second copy being made. */
-function expandBrandTables(list) {
-  const out = [], extra = [];
+/* ── 2.01 is not a product, it is the answer for the rest of them ──
+   A section puts its acceptable manufacturers in one article at the top, in one of two shapes.
+   Flat — "2.01 MANUFACTURERS: A. Carnes. B. Titus. C. Trane." — and they go on everything the
+   section covers. Or broken out by material type, and each goes on the product it names. Either
+   way, read as a product of its own it is an article called Manufacturers with no manufacturer on
+   it, and 2.02 through 2.12 sit there blank while the answer is one row above them. */
+function spreadManufacturers(list) {
+  const extra = [];
   const byName = {};
   for (const p of list) { const k = normPhrase(p.name); if (k && !byName[k]) byName[k] = p; }
-  for (const p of list) {
-    const rows = brandTable(p);
-    out.push(p);
-    if (!rows.length) continue;
-    p.isBrandTable = rows.length > 1 || /^manufacturers?$/i.test(String(p.name || '').trim());
+  const addTo = (p, makers, anyOther) => {
+    const have = p.makers || [];
+    p.makers = have.concat(makers.filter(m => !have.some(x => normPhrase(x.name) === normPhrase(m.name))));
+    if (anyOther) p.anyOther = true;
+  };
+
+  for (const src of list.slice()) {
+    // ── broken out by type ──
+    const rows = brandTable(src);
+    if (rows.length) src.isBrandTable = rows.length > 1 || /^manufacturers?\b/i.test(String(src.name || '').trim());
     for (const row of rows) {
       const makers = row.brands.map(b => ({ name: b, forWhat: '' }));
       if (!makers.length) continue;
       for (const nm of rowNames(row)) {
         const key = normPhrase(nm);
-        const hit = byName[key] || byName[normPhrase(nm + ' ' + row.category)];
-        if (hit && hit !== p) {                  // the section names it already — put them there
-          hit.makers = (hit.makers || []).concat(makers.filter(
-            m => !(hit.makers || []).some(x => normPhrase(x.name) === normPhrase(m.name))));
-          if (row.anyOther) hit.anyOther = true;
-          continue;
-        }
-        const made = { article: p.article, name: smartTitleCase(cleanTitle(nm)),
+        // the section names it already — "e. Ball" in the table, "2.05 BALL VALVES" below
+        const hit = byName[key] || byName[normPhrase(nm + ' ' + row.category)]
+          || byName[normPhrase(nm + ' valves')] || byName[normPhrase(nm + ' valve')];
+        if (hit && hit !== src) { addTo(hit, makers, row.anyOther); continue; }
+        const made = { article: src.article, name: smartTitleCase(cleanTitle(nm)),
           group: cleanTitle(row.category || ''), makers: makers.slice(),
           anyOther: !!row.anyOther, notes: [], standards: [], topics: [], fromTable: true };
-        extra.push(made);
-        byName[key] = made;
+        extra.push(made); byName[key] = made;
       }
     }
+    // ── one list for the whole section ──
+    if ((src.sectionMakers || []).length) {
+      const makers = src.sectionMakers.map(b => ({ name: b, forWhat: '' }));
+      let given = 0;
+      for (const p of list) {
+        if (p === src || p.isBrandTable) continue;
+        if ((p.makers || []).length) continue;        // the product named its own — leave it
+        addTo(p, makers, src.anyOther); given++;
+      }
+      // nothing to give them to: keep the list where it is rather than lose it
+      if (!given) addTo(src, makers, src.anyOther);
+      else src.gaveToSection = true;
+    }
   }
-  return out.concat(extra);
+  /* An article that was nothing but the list has done its job and is not a thing you buy. One
+     that also said something else stays, holding what it said. */
+  const keep = list.filter(p => !(p.gaveToSection && !(p.notes || []).length && !(p.makers || []).length));
+  return keep.concat(extra);
 }
 
 /* The lettered paragraphs, written back out the way the spec has them, so what you read here and
@@ -12966,7 +13034,7 @@ function productRow(s, p, b, relMarks, endsBand) {
         </div>
         ${open ? `<div class="pr-body">
           <div class="pr-kv">
-            <span style="flex:1"><i>Manufacturer</i>${makersHtml(p)}</span>
+            <span style="flex:1"><i>${(p.makers || []).length ? 'The spec will accept' : 'Manufacturer'}</i>${makersHtml(s, p)}</span>
             <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
           </div>
           ${marks.length > 1 || marks.some(markHasDetail) ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
@@ -14997,28 +15065,44 @@ async function rawSpecData(key) {
    The book's own words are kept apart from yours. `spec` is what the page says and is refreshed
    by every issue; `desc` starts as a copy of it and is yours from then on. A later issue only
    rewrites `desc` if you never touched it, so nothing you typed is ever overwritten. */
-/* Who may supply it. A spec usually just lists names; sometimes it lists them under what they are
-   for ("Floor Drains: Zurn, J.R. Smith"), and where it does, that grouping is worth keeping —
-   it is the difference between one vendor call and three. */
-function makersHtml(p) {
+/* Who the spec will accept, and who we are actually submitting on — two different things that
+   were being shown as one. The book's list is a list; the choice off it is a decision, and it is
+   the decision the vendor call is about. Click a name to make it ours; click it again to undo.
+   Where the book groups the names by what they are for, that grouping is kept. */
+function makersHtml(s, p) {
   const list = (p.makers || []).map(m => (typeof m === 'string' ? { name: m, forWhat: '' } : m))
     .filter(m => m && m.name);
-  if (!list.length) return p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`;
+  const chosen = String(p.make || '').trim();
+  const chip = n => `<button class="mk-pick${normPhrase(n) === normPhrase(chosen) ? ' is-on' : ''}"
+    title="${normPhrase(n) === normPhrase(chosen) ? 'Submitting on this one — click to undo' : 'Submit on ' + esc(n)}"
+    onclick="event.stopPropagation();pickMaker('${s.key}','${p.id}','${jsStr(n)}')">${esc(n)}</button>`;
+  if (!list.length) return chosen ? chip(chosen) : `<span class="pr-none">${PR_DASH}</span>`;
+  const tail = p.anyOther ? `<span class="pr-sub">or submit a substitution request</span>` : '';
   const plain = list.filter(m => !m.forWhat), grouped = list.filter(m => m.forWhat);
-  const tail = p.anyOther ? ` <span class="pr-sub">or submit a substitution request</span>` : '';
-  if (!grouped.length) return esc(plain.map(m => m.name).join(', ')) + tail;
-  const by = {}, order = [];
-  for (const m of grouped) { if (!by[m.forWhat]) { by[m.forWhat] = []; order.push(m.forWhat); } by[m.forWhat].push(m.name); }
-  return (plain.length ? esc(plain.map(m => m.name).join(', ')) + '<br>' : '') +
-    order.map(k => `<b>${esc(k)}</b> ${esc(by[k].join(', '))}`).join('<br>') + tail;
+  let html = plain.map(m => chip(m.name)).join('');
+  if (grouped.length) {
+    const by = {}, order = [];
+    for (const m of grouped) { if (!by[m.forWhat]) { by[m.forWhat] = []; order.push(m.forWhat); } by[m.forWhat].push(m.name); }
+    html += order.map(k => `<div class="mk-for"><b>${esc(k)}</b>${by[k].map(chip).join('')}</div>`).join('');
+  }
+  // submitting on someone the book did not list is a substitution, and worth saying so
+  if (chosen && !list.some(m => normPhrase(m.name) === normPhrase(chosen))) html += chip(chosen);
+  return html + tail;
 }
+async function pickMaker(key, prodId, name) {
+  const sec = findSection(key); if (!sec) return;
+  const p = productById(sec, prodId); if (!p) return;
+  p.make = normPhrase(p.make) === normPhrase(name) ? '' : String(name);
+  await saveProducts(key, sec, prodId);
+}
+
 function productsFromSpec(list) {
   return (list || []).map(x => {
     const text = productSpecText(x);
     return { id: uid('prd'), article: x.article || '', tag: '', marks: [],
       name: x.name || '', group: '',
       makers: (x.makers || []).slice(),
-      make: makerNames(x).join(', '),
+      make: '',                          // who we are submitting on — yours to pick, not the book's
       standards: (x.standards || []).slice(),
       topics: (x.topics || []).slice(),
       anyOther: !!x.anyOther,
