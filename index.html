@@ -562,6 +562,8 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-mark.is-done { color: var(--green); background: var(--green-sf); }
 .pr-name { font-size: 13.5px; font-weight: 600; flex: 0 1 auto; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+.spec-choice.is-old { opacity: .6; }
+.spec-choice.is-old .choice-btn b { font-weight: 600; }
 .pr-art { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
 /* a fold-away for the one thing most products have nothing to say about */
 .pr-more { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11.5px;
@@ -1189,7 +1191,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div class="spacer"></div>
   <div id="jobActions" class="job-actions" hidden>
     <span id="folderSaveStatus" class="save-status" hidden onclick="saveNow()"></span>
-    <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="Spec files — view, import or remove">📄 <span class="lbl">Spec</span></button>
+    <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="The spec book — open it, upload a new issue, or remove one">📄 <span class="lbl">Spec book</span></button>
     <button class="btn ghost" onclick="openExportMenu()" title="Export the submittal register (PDF or CSV)">⤓ <span class="lbl">Export</span></button>
   </div>
   <button class="me-chip" id="meChip" onclick="askMeName()" title="Who you are on this device — your name goes on what you change"></button>
@@ -1348,7 +1350,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.83';
+const APP_VERSION = 'v7.84';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3961,6 +3963,9 @@ function renderJob() {
   updateFolderBar();
   renderJobTabs();
   applyTabVisibility();
+  /* Set before the early returns below, or it keeps whatever it last had on every other tab. It
+     is shown with no spec in the job too — that is exactly when you want to put one in. */
+  { const bs = $('btnSpec'); if (bs) bs.style.display = jobTab === 'submittals' ? '' : 'none'; }
   if (jobTab === 'rfis') { renderRfis(); return; }
   if (jobTab === 'changeorders') { renderCos(); if (jobFolder) reconcileCoFiles().catch(() => {}); return; }
   if (jobTab === 'drawings') { renderDrawings(); return; }
@@ -3970,8 +3975,6 @@ function renderJob() {
   if (jobTab === 'estimates') { renderEstimates(); if (jobFolder) reconcileEstimateFiles().catch(() => {}); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
   if (jobTab === 'billing') { renderBilling(); return; }
-
-  $('btnSpec').style.display = specs.length ? '' : 'none';
 
   /* division segmented control — a tab per division actually in this job */
   const divs = jobDivisions();
@@ -14457,19 +14460,25 @@ function openSpecMenu() {
 function chooseSpecModal(specs) {
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
-      <div class="modal-head"><h3>Spec files</h3>
+      <div class="modal-head"><h3>The spec book</h3>
         <button class="icon-btn" onclick="closePdf()">✕</button></div>
-      <div class="modal-body">${specs.map(sp => {
+      <div class="modal-body">${specs.slice().sort((a, b) => (a.superseded ? 1 : 0) - (b.superseded ? 1 : 0)
+          || (b.added || 0) - (a.added || 0)).map(sp => {
         const n = sectionsFromSpec(sp.id).length;
-        return `<div class="spec-choice">
+        return `<div class="spec-choice${sp.superseded ? ' is-old' : ''}">
           <button class="choice-btn" style="flex:1;margin:0" onclick="closePdf();openSpecViewer('${sp.id}')">
             <b>${esc(sp.name)}</b>
-            <span>${sp.pages ? sp.pages + ' pages · ' : ''}${n} section${n === 1 ? '' : 's'} in the register</span>
+            <span>${sp.superseded ? 'superseded' : 'in force'}${sp.pages ? ' · ' + sp.pages + ' pages' : ''} · ${
+              n} section${n === 1 ? '' : 's'} in the register${
+              sp.supersededAt ? ' · replaced ' + esc(fmtDate(sp.supersededAt)) : ''}</span>
           </button>
           <button class="btn sm ghost" title="Remove this spec file" onclick="closePdf();removeSpecPrompt('${sp.id}')">✕</button>
         </div>`;
-      }).join('')}</div>
-      <div class="modal-foot"><button class="btn" onclick="closePdf();promptImportSpec()">+ Import another spec</button></div>
+      }).join('')}
+        <div class="muted" style="margin-top:12px">Uploading a revised issue reads what changed —
+          which sections came, went or were renumbered, and what the wording inside them now says —
+          and asks before it replaces anything.</div></div>
+      <div class="modal-foot"><button class="btn primary" onclick="closePdf();promptImportSpec()">Upload a spec PDF</button></div>
     </div></div>`;
 }
 
