@@ -562,6 +562,13 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-mark.is-done { color: var(--green); background: var(--green-sf); }
 .pr-name { font-size: 13.5px; font-weight: 600; flex: 0 1 auto; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+.pr-art { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+/* a fold-away for the one thing most products have nothing to say about */
+.pr-more { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11.5px;
+  padding: 2px 0; text-align: left; }
+.pr-more:hover { color: var(--accent); }
+.pr-tag.is-more { cursor: pointer; }
+.pr-tag.is-more:hover { color: var(--accent); background: var(--accent-sf); }
 .pr-tag.is-more { color: var(--text-3); background: var(--surface-3); }
 .pr-tag.is-first { color: var(--amber); background: var(--amber-sf); }
 /* An opened product lists its marks a line each, because a mark now has room to say where it goes
@@ -1341,7 +1348,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.82';
+const APP_VERSION = 'v7.83';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2098,13 +2105,20 @@ function parseSpec(pages, wantedDivs) {
         lines.push(t);
       }
     }
+    /* Skip whatever precedes this section's own heading. "END OF SECTION 23 33 00" contains the
+       words the heading pattern looks for, so a book whose sections carry no printed heading — the
+       number lives only in the page footer — matched on the very last line and threw the entire
+       body away. Every section of such a book parsed to nothing: no submittal requirements, no
+       Section Includes, no tags and no products. The closing line is never the opening one. */
     const hi = lines.findIndex(l => {
+      if (END_RE.test(l)) return false;
       const m = HEAD_RE.exec(l);
       return m && normNum(m[1]) === s.key;
     });
     if (hi > 0) lines.splice(0, hi);
     s.requirements = extractRequirements(lines);
     s.includes = extractIncludes(lines);
+    s.specProducts = extractProducts(lines);      // Part 2, read as the product list it is
     // Searchable keywords, so "VFD" finds the controls section that only ever
     // says "variable frequency".
     s.autoTags = extractTags(lines, s.title, s.includes);
@@ -2119,6 +2133,83 @@ function parseSpec(pages, wantedDivs) {
     }
   };
 }
+
+/* ── PART 2 PRODUCTS: the things a section is actually about ──
+   A spec section's Part 2 is a list of the things you buy under it, one numbered article each —
+   "2.01 AIR TURNING DEVICES/EXTRACTORS", "2.02 BACKDRAFT DAMPERS - METAL". Under each, "A.
+   Manufacturers:" names who may supply it, and the lettered paragraphs after that say what to
+   buy. That is the product list, written out by the architect, and it was being retyped by hand.
+
+   Everything here is read off the page as it is written: the letters and numbers the spec uses
+   are kept, because "see 2.03 F.1" has to still mean something when you read it back. */
+const PROD_ART_RE = /^(2\.\d{1,2})\s+(.+)$/;
+const LETTER_RE   = /^([A-Z])\.\s+(.*)$/;
+const NUMBER_RE   = /^(\d{1,2})\.\s+(.*)$/;
+const ALPHA_RE    = /^([a-z])\.\s+(.*)$/;
+const ZWSP_RE     = /[​-‏﻿]/g;
+const cleanMaker = t => String(t == null ? '' : t).replace(ZWSP_RE, '')
+  .replace(/\s+/g, ' ').replace(/\s*\.\s*$/, '').trim();
+/* A "Manufacturers" paragraph is a heading for the names listed under it, not a paragraph to
+   keep — but only when something is actually listed under it. */
+const isMakerHead = n => /^manufacturers?\b/i.test(n.text) && n.sub.length > 0;
+
+function extractProducts(lines) {
+  const out = [];
+  let part = 0, prod = null, item = null, sub = null;
+  for (const raw of lines) {
+    const line = String(raw == null ? '' : raw).replace(ZWSP_RE, '').trim();
+    if (!line) continue;
+    const pm = line.match(/^PART\s+(\d)/i);
+    if (pm) { part = parseInt(pm[1], 10); prod = null; item = null; sub = null; continue; }
+    if (END_RE.test(line)) break;
+    const am = PROD_ART_RE.exec(line);
+    if (am && part !== 1 && part !== 3) {
+      prod = { article: am[1], name: smartTitleCase(cleanTitle(am[2])), makers: [], notes: [] };
+      out.push(prod); item = null; sub = null; continue;
+    }
+    if (ART_RE.test(line)) { prod = null; item = null; sub = null; continue; }   // Part 3 begins
+    if (!prod) continue;
+    const lm = line.match(LETTER_RE);
+    if (lm) { item = { label: lm[1], text: lm[2].trim(), sub: [] }; prod.notes.push(item); sub = null; continue; }
+    const nm = line.match(NUMBER_RE);
+    if (nm && item) { sub = { label: nm[1], text: nm[2].trim(), sub: [] }; item.sub.push(sub); continue; }
+    const om = line.match(ALPHA_RE);
+    if (om && sub) { sub.sub.push({ label: om[1], text: om[2].trim() }); continue; }
+    // anything else is the rest of the paragraph it follows, wrapped by the page width
+    if (sub && sub.sub.length) sub.sub[sub.sub.length - 1].text += ' ' + line;
+    else if (sub) sub.text += ' ' + line;
+    else if (item) item.text += ' ' + line;
+  }
+  for (const p of out) {
+    const keep = [];
+    for (const n of p.notes) {
+      if (!isMakerHead(n)) { keep.push(n); continue; }
+      for (const x of n.sub) {
+        const m = cleanMaker(x.text);
+        if (!m) continue;
+        // "1. Floor Drains:" with names under it is a sub-category of maker, not a maker
+        if (x.sub && x.sub.length) for (const y of x.sub) { const yy = cleanMaker(y.text); if (yy) p.makers.push({ name: yy, forWhat: m.replace(/:$/, '') }); }
+        else p.makers.push({ name: m, forWhat: '' });
+      }
+    }
+    p.notes = keep;
+  }
+  return out.filter(x => x.name);
+}
+/* The lettered paragraphs, written back out the way the spec has them, so what you read here and
+   what you read on the page are the same words in the same order. */
+function productSpecText(p) {
+  const L = [];
+  for (const n of (p.notes || [])) {
+    L.push(n.label + '. ' + n.text);
+    for (const s2 of (n.sub || [])) {
+      L.push('    ' + s2.label + '. ' + s2.text);
+      for (const s3 of (s2.sub || [])) L.push('        ' + s3.label + '. ' + s3.text);
+    }
+  }
+  return L.join('\n');
+}
+const makerNames = p => (p.makers || []).map(m => (typeof m === 'string' ? m : m.name)).filter(Boolean);
 
 /* ═══════════════════════════════════════════════════════════════════════════
    2. STORAGE — Firestore for the register, Cloud Storage for the PDFs
@@ -2759,7 +2850,7 @@ function assignModal(i) {
           <div class="field"><label class="fl">New section number</label>
             <input class="input" id="asgNewSecNum" placeholder="23 05 93" autocomplete="off"></div>
           <div class="field"><label class="fl">Section title</label>
-            <input class="input" id="asgNewSecTitle" placeholder="Testing, Adjusting and Balancing" autocomplete="off"></div>
+            <input class="input" id="asgNewSecTitle" autocomplete="off"></div>
         </div>
         <div class="grid2">
           <div class="field"><label class="fl">What is it</label>
@@ -12443,8 +12534,7 @@ function editMarksHtml() {
     ><b onclick="pickEditMark('${m.id}')" title="${esc([m.loc, m.note].filter(Boolean).join(' \u00b7 ') ||
       'Where it goes, a note, or star it as wanted first')}">${m.pinned ? '\u2605 ' : ''}${esc(m.tag)}</b
     ><button type="button" title="Remove ${esc(m.tag)}" onclick="removeEditMark('${m.id}')">\u2715</button></span>`).join('') +
-    `<input class="mk-in" id="pdMarkIn" autocomplete="off" spellcheck="false"
-      placeholder="${list.length ? '' : 'AD-1'}" onkeydown="markInKey(event)">`;
+    `<input class="mk-in" id="pdMarkIn" autocomplete="off" spellcheck="false" onkeydown="markInKey(event)">`;
 }
 /* One mark's particulars, written straight into the working copy as they are typed so that Cancel
    still puts everything back and Save has nothing left to collect. */
@@ -12462,11 +12552,11 @@ function markDetailHtml() {
       <div class="field" style="margin-bottom:0"><label class="fl">Mark</label>
         <input class="input" value="${esc(m.tag)}" onchange="setEditMark('${m.id}','tag',this.value)"></div>
       <div class="field" style="margin-bottom:0"><label class="fl">Where it goes</label>
-        <input class="input" value="${esc(m.loc || '')}" placeholder="Kitchen 112"
+        <input class="input" value="${esc(m.loc || '')}"
           oninput="setEditMark('${m.id}','loc',this.value)"></div>
     </div>
     <div class="field" style="margin:9px 0 0"><label class="fl">Anything particular about this one</label>
-      <input class="input" value="${esc(m.note || '')}" placeholder="Needs the deep body \u2014 slab is thin here"
+      <input class="input" value="${esc(m.note || '')}"
         oninput="setEditMark('${m.id}','note',this.value)"></div>
   </div>`;
 }
@@ -12562,12 +12652,20 @@ function repaintProducts(anchorId) {
   if (!s || !host || typeof host.querySelector !== 'function') { renderDrawer(); return; }
   const before = anchorId ? prodRowTop(anchorId) : null;
   host.innerHTML = productRows(s);
+  autosizeAll(host);                       // the form's boxes grow with what is in them
   const count = $('prodCount'); if (count) count.innerHTML = prodCountHtml(s);
   if (before == null) return;
   const after = prodRowTop(anchorId);
   const body = drawerBody();
   if (after != null && body && typeof body.scrollTop === 'number') body.scrollTop += after - before;
 }
+/* A product with a dozen marks shows the first few and a "+8". Clicking that opens the rest right
+   there on the row, without opening the product — you wanted to see FD-7, not read the spec. */
+let prodAllMarks = {}, prodNoteOpen = {};
+function showAllMarks(id) { prodAllMarks[id] = true; repaintProducts(id); }
+/* Most products have nothing particular to say, and the ones that do say it at length. Folded
+   until asked for, so the list stays a list. */
+function toggleProdNote(id) { prodNoteOpen[id] = !prodNoteOpen[id]; repaintProducts(id); }
 function toggleProduct(id) {
   prodOpen = prodOpen[id] ? {} : { [id]: true };
   repaintProducts(id);
@@ -12652,8 +12750,7 @@ function productRow(s, p, b, relMarks, endsBand) {
       <div class="prod-row is-edit${p.pinned ? ' is-first' : ''}" data-prod="${p.id}">
         <div class="grid2">
           <div class="field"><label class="fl">Sub-category <span class="fl-note">optional</span></label>
-            <input class="input" id="pdGroup" list="pdGroupList" autocomplete="off"
-              placeholder="Drains" value="${esc(p.group || '')}">
+            <input class="input" id="pdGroup" list="pdGroupList" autocomplete="off" value="${esc(p.group || '')}">
             <datalist id="pdGroupList">${groups.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
             <div class="muted" style="margin-top:4px;font-size:11.5px">Files it with the others under that name.</div></div>
           <div class="field"><label class="fl">What it is</label>
@@ -12692,6 +12789,7 @@ function productRow(s, p, b, relMarks, endsBand) {
     const out = productOutState(s, p);
     const marks = marksInOrder(p);
     const open = !!prodOpen[p.id];
+    const allMarks = !!prodAllMarks[p.id] || open;
     const gaps = productGaps(p);
     const gapNote = gaps.length ? 'Still to fill in: ' + gaps.map(g => g.label).join(', ') : '';
     // A line under the last starred one, so where "first" stops is not something to work out.
@@ -12704,14 +12802,16 @@ function productRow(s, p, b, relMarks, endsBand) {
           <button class="pr-star${p.pinned ? ' on' : ''}" onclick="event.stopPropagation();toggleProdPin('${s.key}','${p.id}')"
             title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
           <span class="pr-caret">${open ? '▾' : '▸'}</span>
-          ${marks.length ? marks.slice(0, PR_MARKS_ON_ROW).map(m =>
-                `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}${m.pinned ? ' is-first' : ''}"${
-                  markHasDetail(m) ? ` title="${esc([m.loc, m.note].filter(Boolean).join(' · '))}"` : ''
-                }>${m.pinned ? '★ ' : ''}${esc(m.tag)}</span>`).join('') +
-              (marks.length > PR_MARKS_ON_ROW
-                ? `<span class="pr-tag is-more" title="${esc(marks.map(m => m.tag).join(', '))}">+${marks.length - PR_MARKS_ON_ROW}</span>` : '')
-            : `<span class="pr-none">${PR_DASH}</span>`}
+          ${p.article ? `<span class="pr-art">${esc(p.article)}</span>` : ''}
           <span class="pr-name${p.name ? '' : ' is-none'}">${p.name ? esc(p.name) : ((p.desc || '').slice(0, 44) || PR_DASH)}</span>
+          ${marks.length ? (allMarks ? marks : marks.slice(0, PR_MARKS_ON_ROW)).map(m =>
+                `<span class="pr-tag${relMarks[m.id] ? ' is-out' : ''}${m.pinned ? ' is-first' : ''}"${
+                  markHasDetail(m) ? ` title="${esc([m.loc, m.note].filter(Boolean).join(' \u00b7 '))}"` : ''
+                }>${m.pinned ? '\u2605\u2009' : ''}${esc(m.tag)}</span>`).join('') +
+              (!allMarks && marks.length > PR_MARKS_ON_ROW
+                ? `<span class="pr-tag is-more" title="Show all ${marks.length}"
+                    onclick="event.stopPropagation();showAllMarks('${p.id}')">+${marks.length - PR_MARKS_ON_ROW}</span>` : '')
+            : ''}
           ${out ? `<span class="pr-out${out.all ? '' : ' is-part'}">${
             out.all ? (out.delivered ? '✓ delivered' : 'released')
                     : out.n + ' of ' + out.of + ' out'}</span>` : ''}
@@ -12725,7 +12825,7 @@ function productRow(s, p, b, relMarks, endsBand) {
         </div>
         ${open ? `<div class="pr-body">
           <div class="pr-kv">
-            <span><i>Manufacturer</i>${p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`}</span>
+            <span style="flex:1"><i>Manufacturer</i>${makersHtml(p)}</span>
             <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
           </div>
           ${marks.length > 1 || marks.some(markHasDetail) ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
@@ -12743,7 +12843,10 @@ function productRow(s, p, b, relMarks, endsBand) {
             </div>`; }).join('')}</div>` : ''}
           <div class="pr-kv"><span style="flex:1"><i>What to buy</i></span></div>
           <div class="pr-desc${p.desc ? '' : ' is-none'}">${p.desc ? richText(p.desc) : PR_DASH}</div>
-          ${p.note ? `<div class="pr-note">${richText(p.note)}</div>` : ''}
+          ${p.note ? (prodNoteOpen[p.id]
+            ? `<div class="pr-kv"><span style="flex:1"><i>Anything particular</i></span></div>
+               <div class="pr-note">${richText(p.note)}</div>`
+            : `<button class="pr-more" onclick="event.stopPropagation();toggleProdNote('${p.id}')">Anything particular \u25b8</button>`) : ''}
         </div>` : ''}
       </div>`;
 }
@@ -13055,7 +13158,7 @@ function keepDrawerPlace() {
   if (!y) return;
   setTimeout(() => { const n = drawerBody(); if (n) n.scrollTop = y; }, 0);
 }
-function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; prodGroupShut = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
+function openSection(key) { openKey = key; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodGroupShut = {}; _drawerFresh = true; renderDrawer(); renderTable(); navSync(); }
 function closeDrawer() { openKey = null; histEdit = null; prodEdit = null; prodEditMark = null; prodOpen = {}; $('drawerHost').innerHTML = ''; navSync(); }
 function toggleStatusGrid(btn) {
   const g = btn.closest('.sec').querySelector('.status-grid');
@@ -13114,6 +13217,9 @@ function renderDrawer() {
         <div class="num">Division ${esc(s.division)} · ${esc(s.number)}</div>
         <h2>${esc(s.title || '(untitled)')}</h2>
       </div>
+      ${s.startPage && specFile ? `<button class="btn sm" onclick="openSpecViewer('${specFile.id}',${s.startPage})"
+        title="${esc(specFile.name)} \u00b7 page ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '\u2013' + s.endPage : ''}"
+        >Spec \u00b7 p. ${s.startPage}</button>` : ''}
       <button class="icon-btn" onclick="editSection('${s.key}')" title="Edit number / title">✎</button>
       <button class="icon-btn" onclick="closeDrawer()" title="Close">✕</button>
     </div>
@@ -13212,18 +13318,7 @@ function renderDrawer() {
         </div>
       </div>
 
-      <div class="sec">
-        <h4>What the spec asks for
-          ${s.startPage && specFile ? `<button class="btn sm" onclick="openSpecViewer('${specFile.id}',${s.startPage})">Open spec · p. ${s.startPage}</button>` : ''}
-        </h4>
-        <div id="reqBlock"><div class="muted">Loading the spec text…</div></div>
-        <div class="muted" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
-          ${specFile && manySpecs ? esc(specFile.name) + ' · ' : ''}${
-            s.startPage ? `pages ${s.startPage}${s.endPage && s.endPage !== s.startPage ? '–' + s.endPage : ''}`
-                        : (specsOf(job).length ? 'no page reference — import the spec that covers this section' : 'no page reference')}
-          ${s.titleSource ? ` · title from ${esc(s.titleSource)}` : ''}
-        </div>
-      </div>
+      <div class="sec" id="reqBlock"></div>
 
       <div style="text-align:right">
         <button class="btn danger sm" onclick="deleteSection('${s.key}')">Delete section</button>
@@ -14738,6 +14833,64 @@ async function rawSpecData(key) {
   };
 }
 
+/* ── Part 2, turned into the product list ──
+   What was being retyped by hand is written out in the book already: 2.01 is a thing you buy,
+   the names under "Manufacturers" are who may supply it, and the lettered paragraphs are what to
+   buy. So the import fills it in, and the marks — FD-1, FD-2 — are the one part only you know.
+
+   The book's own words are kept apart from yours. `spec` is what the page says and is refreshed
+   by every issue; `desc` starts as a copy of it and is yours from then on. A later issue only
+   rewrites `desc` if you never touched it, so nothing you typed is ever overwritten. */
+/* Who may supply it. A spec usually just lists names; sometimes it lists them under what they are
+   for ("Floor Drains: Zurn, J.R. Smith"), and where it does, that grouping is worth keeping —
+   it is the difference between one vendor call and three. */
+function makersHtml(p) {
+  const list = (p.makers || []).map(m => (typeof m === 'string' ? { name: m, forWhat: '' } : m))
+    .filter(m => m && m.name);
+  if (!list.length) return p.make ? esc(p.make) : `<span class="pr-none">${PR_DASH}</span>`;
+  const plain = list.filter(m => !m.forWhat), grouped = list.filter(m => m.forWhat);
+  if (!grouped.length) return esc(plain.map(m => m.name).join(', '));
+  const by = {}, order = [];
+  for (const m of grouped) { if (!by[m.forWhat]) { by[m.forWhat] = []; order.push(m.forWhat); } by[m.forWhat].push(m.name); }
+  return (plain.length ? esc(plain.map(m => m.name).join(', ')) + '<br>' : '') +
+    order.map(k => `<b>${esc(k)}</b> ${esc(by[k].join(', '))}`).join('<br>');
+}
+function productsFromSpec(list) {
+  return (list || []).map(x => {
+    const text = productSpecText(x);
+    return { id: uid('prd'), article: x.article || '', tag: '', marks: [],
+      name: x.name || '', group: '',
+      makers: (x.makers || []).slice(),
+      make: makerNames(x).join(', '),
+      spec: text, desc: text, leadWeeks: '', note: '', fromSpec: true };
+  });
+}
+/* Fold this issue's Part 2 into whatever is already on the section. Matched by article, because
+   that is the one thing a spec keeps still. Marks, lead times, stars, groups and anything typed
+   are left exactly as they are. */
+function mergeSpecProducts(sec, parsed) {
+  const have = sectionProducts(sec);
+  const fresh = productsFromSpec(parsed);
+  if (!fresh.length) return { added: 0, updated: 0 };
+  const byArt = {};
+  for (const p of have) if (p.article) byArt[p.article] = p;
+  let added = 0, updated = 0;
+  const out = have.slice();
+  for (const f of fresh) {
+    const cur = f.article ? byArt[f.article] : null;
+    if (!cur) { out.push(f); added++; continue; }
+    const untouched = !String(cur.desc || '').trim() || String(cur.desc || '') === String(cur.spec || '');
+    cur.name = cur.nameEdited ? cur.name : f.name;
+    cur.makers = f.makers; cur.make = cur.makeEdited ? cur.make : f.make;
+    cur.spec = f.spec;
+    if (untouched) cur.desc = f.spec;         // never typed in — keep it in step with the book
+    cur.fromSpec = true;
+    updated++;
+  }
+  sec.products = out;
+  return { added, updated };
+}
+
 function showImportReview(file, pageCount, result) {
   /* Re-shown for the same file — flipping the mode, opening a section's wording, or the wording
      finishing loading — this must be the same pending import, not a fresh one. Replacing it threw
@@ -15038,7 +15191,7 @@ async function confirmImport() {
     const existing = new Set(sectionsOf(job).map(s => s.key));
     const txBit = x => ({ article: x.article || '', group: x.group || '', text: x.text || '' });
     const relinked = [], movedDocs = [];      // section documents left behind by a move or a drop
-    let added = 0, updated = 0, moved = 0, retired = 0, dropped = 0, reworded = 0;
+    let added = 0, updated = 0, moved = 0, retired = 0, dropped = 0, reworded = 0, prodAdded = 0;
     /* A line in the section's own log, so a year from now the register says why the number
        changed. Written straight onto the record — the save at the end carries it. */
     const historyLine = (sec, text) => {
@@ -15057,6 +15210,7 @@ async function confirmImport() {
       cur.autoTags = (s.autoTags || []).slice();
       if (!cur.titleEdited) { cur.title = s.title; cur.rawTitle = s.rawTitle; cur.titleSource = s.titleSource; }
       delete cur.retired; delete cur.retiredAt; delete cur.retiredBy;   // it is back in the book
+      { const got = mergeSpecProducts(cur, s.specProducts); prodAdded += got.added; }
       /* What this issue did to the wording, kept next to the wording itself so it can be read
          back a year from now, with a line in the section's own log saying it happened. */
       const tx = ((pendingImport || {}).textDiffs || {})[s.key];
@@ -15099,12 +15253,15 @@ async function confirmImport() {
       if (!revising && !chosen.has(s.key)) continue;   // adding alongside: only what you ticked
       if (revising && !chosen.has(s.key)) continue;
       if (existing.has(s.key)) continue;
-      job.sections.push(newSectionRecord({
+      const rec = newSectionRecord({
         key: s.key, number: s.number, division: s.division, title: s.title, rawTitle: s.rawTitle,
         titleSource: s.titleSource, specId, startPage: s.startPage, endPage: s.endPage,
         inBody: s.inBody, requirements: s.requirements || [], includes: s.includes || [],
         tags: (s.tags || []).slice(), autoTags: (s.autoTags || []).slice()
-      }));
+      });
+      const got = mergeSpecProducts(rec, s.specProducts);
+      prodAdded += got.added;
+      job.sections.push(rec);
       added++;
     }
     /* Sections this issue no longer lists. Nothing is thrown away that anyone worked on: one
@@ -15152,6 +15309,7 @@ async function confirmImport() {
     if (added) bits.push(`${added} section${added === 1 ? '' : 's'} added`);
     if (updated) bits.push(`${updated} re-pointed at this file`);
     if (moved) bits.push(`${moved} renumbered, work carried across`);
+    if (prodAdded) bits.push(`${prodAdded} product${prodAdded === 1 ? '' : 's'} read off Part 2`);
     if (reworded) bits.push(`${reworded} with changed wording`);
     if (retired) bits.push(`${retired} marked not in this book`);
     if (dropped) bits.push(`${dropped} removed`);
