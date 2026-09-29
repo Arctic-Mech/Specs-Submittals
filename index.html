@@ -356,7 +356,18 @@ header {
 }
 .track-cat:hover { border-color: var(--border-2); background: var(--surface-2); }
 .track-cat.on { background: var(--accent-sf); border-color: var(--accent); }
-.track-cat .tc-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The name wraps rather than being cut off. "Steam And Condensate Heating" ending in an ellipsis
+   is a category you have to click to identify, which is the list not doing its job. */
+.track-cat .tc-name { font-weight: 600; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+.track-cat { position: relative; padding-left: 20px; }
+.track-cat.add { padding-left: 12px; }
+/* the handle: there without being in the way until you go looking for it */
+.track-cat .tc-grip { position: absolute; left: 5px; top: 10px; font-size: 10px; line-height: 1;
+  color: var(--text-3); opacity: 0; letter-spacing: -1px; cursor: grab; }
+.track-cat:hover .tc-grip, .track-cat.on .tc-grip { opacity: .55; }
+.track-cat.is-dragging { opacity: .4; }
+.track-cat.drop-above { box-shadow: inset 0 2px 0 var(--accent); }
+.track-cat.drop-below { box-shadow: inset 0 -2px 0 var(--accent); }
 .track-cat .tc-sub { font-size: 11px; color: var(--text-3); }
 .track-cat.on .tc-sub { color: var(--accent); }
 label.tick-row { display: flex; align-items: center; gap: 8px; margin-top: 13px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
@@ -1414,7 +1425,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.95';
+const APP_VERSION = 'v7.96';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3461,8 +3472,8 @@ async function assignEmail(i) {
   if (catId === '__new') {
     const nm = (document.getElementById('asgNewCat').value || '').trim();
     if (!nm) { toast('Enter a category name', true); return; }
-    const nc = { id: uid('cat'), name: nm, order: tracking.length, files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
-    tracking.push(nc); catId = nc.id; catName = nm;
+    const nc = { id: uid('cat'), name: nm, order: topCatOrder(), files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
+    tracking.unshift(nc); catId = nc.id; catName = nm;
     await saveTrackCat(nc);
   } else {
     const c = catById(catId);
@@ -4723,16 +4734,78 @@ async function saveTrackCat(c) {
   try { await FB.setDoc(trackingRef(job.id, c.id), clean(c)); }
   catch (e) { toast(writeError(e), true); }
 }
+/* A category you have just made is the one you are about to use, so it goes to the top rather
+   than to the bottom of fourteen others where you have to go looking for it. */
+function topCatOrder() {
+  let lo = 0;
+  for (const c of tracking) { const n = Number(c.order); if (!isNaN(n) && n < lo) lo = n; }
+  return lo - 1;
+}
 function newTrackCategory() {
   if (!job) return;
   const name = prompt('Category name (e.g. Change Orders, Scheduling, Owner correspondence):');
   if (!name || !name.trim()) return;
-  const c = { id: uid('cat'), name: titleCaseWords(name.trim()), order: tracking.length,
+  const c = { id: uid('cat'), name: titleCaseWords(name.trim()), order: topCatOrder(),
     files: [], notes: [], checklist: [], created: Date.now(), updated: Date.now() };
-  tracking.push(c);
+  tracking.unshift(c);
   trackCat = c.id;
   renderTracking();
   saveTrackCat(c);
+}
+
+/* ── dragging a category where you want it ──
+   The order it went in is not the order you work in, and it changes as the job does. */
+let _catDrag = null;
+function clearCatDrop() {
+  try {
+    const host = $('trackCats');
+    if (host) host.querySelectorAll('.track-cat').forEach(el =>
+      el.classList.remove('drop-above', 'drop-below', 'is-dragging'));
+  } catch (e) {}
+}
+const dropBelow = (e, el) => {
+  const r = el.getBoundingClientRect();
+  return (e.clientY - r.top) > r.height / 2;
+};
+function catDragStart(e, id) {
+  _catDrag = id;
+  try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch (x) {}
+  if (e.currentTarget) e.currentTarget.classList.add('is-dragging');
+}
+function catDragOver(e, id) {
+  if (!_catDrag || _catDrag === id) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (x) {}
+  const el = e.currentTarget, below = dropBelow(e, el);
+  el.classList.toggle('drop-below', below);
+  el.classList.toggle('drop-above', !below);
+}
+function catDragLeave(e) {
+  if (e.currentTarget) e.currentTarget.classList.remove('drop-above', 'drop-below');
+}
+function catDragEnd() { _catDrag = null; clearCatDrop(); }
+function catDrop(e, id) {
+  e.preventDefault();
+  const from = _catDrag, below = e.currentTarget ? dropBelow(e, e.currentTarget) : false;
+  _catDrag = null; clearCatDrop();
+  if (from && from !== id) moveTrackCat(from, id, below);
+}
+/* Renumber the lot from where they end up, so the orders stay 0,1,2 however many times they have
+   been shuffled, and only the ones that actually moved are written. */
+async function moveTrackCat(fromId, ontoId, below) {
+  const list = tracking.slice();
+  const fi = list.findIndex(x => x.id === fromId);
+  if (fi < 0) return;
+  const moved = list.splice(fi, 1)[0];
+  let ti = list.findIndex(x => x.id === ontoId);
+  if (ti < 0) ti = list.length;
+  else ti = below ? ti + 1 : ti;
+  list.splice(ti, 0, moved);
+  const changed = [];
+  list.forEach((c, i) => { if (Number(c.order) !== i) { c.order = i; changed.push(c); } });
+  tracking = list;
+  renderTracking();
+  for (const c of changed) await saveTrackCat(c);
 }
 function selectTrackCat(id) { trackCat = id; trackItem = null; renderTracking(); }
 function selectTrackItem(id) { trackItem = id; renderTracking(); }
@@ -4834,7 +4907,12 @@ function renderTracking() {
     if (nf) bits.push(nf + ' file' + (nf === 1 ? '' : 's'));
     if (na) bits.push(na + ' to do');
     else if (done) bits.push('all done');
-    return `<button class="track-cat ${trackCat === c.id ? 'on' : ''}${done ? ' alldone' : ''}" onclick="selectTrackCat('${c.id}')">
+    return `<button class="track-cat ${trackCat === c.id ? 'on' : ''}${done ? ' alldone' : ''}"
+       draggable="true" title="Drag to move it up or down the list"
+       ondragstart="catDragStart(event,'${c.id}')" ondragover="catDragOver(event,'${c.id}')"
+       ondragleave="catDragLeave(event)" ondrop="catDrop(event,'${c.id}')" ondragend="catDragEnd()"
+       onclick="selectTrackCat('${c.id}')">
+       <span class="tc-grip">⋮⋮</span>
        <span class="tc-name">${esc(c.name)}</span>
        <span class="tc-sub">${bits.join(' · ') || 'empty'}</span>
      </button>`;
