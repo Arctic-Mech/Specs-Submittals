@@ -575,6 +575,8 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-take { border: 1px solid var(--accent); background: none; border-radius: 999px; cursor: pointer;
   color: var(--accent); font-size: 10.5px; font-weight: 700; padding: 1px 9px; margin-left: 6px; }
 .pr-take:hover { background: var(--accent-sf); }
+.pr-take.is-lite { border-color: var(--border-2); color: var(--text-3); font-weight: 400; }
+.pr-take.is-lite:hover { color: var(--accent); border-color: var(--accent); background: none; }
 /* the same suggestions, on the form where the marks get typed */
 .mk-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
 .mk-hint-lbl { font-size: 11px; color: var(--text-3); margin-right: 4px; }
@@ -1398,7 +1400,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.91';
+const APP_VERSION = 'v7.92';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13034,6 +13036,153 @@ function toggleProdSpec(id) {
   }
   repaintProducts(id);
 }
+/* ── one article, taken apart into the things it lists ──
+   "2.05 DRAINAGE PRODUCTS" is not a product. It is nineteen of them, one per lettered paragraph,
+   each with its own mark, its own model and — the reason this matters — its own lead time:
+
+     A. RD-1 Roof Drain (Large Area): J.R. Smith 1010 Series, 16-inch low profile dome, …
+     B. OD-1 Overflow Roof Drain (Large Area Overflow): J.R. Smith 1080 Series, …
+
+   Reading that by hand is nineteen rows of typing off a page that already says all of it. */
+const SPLIT_MARK_RE = /^([A-Z]{1,5}(?:[-–]\d{1,3})?[A-Z]?)\s+([A-Z(].*)$/;
+const normSp = t => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+/* The spec is typed by people: "J.R. Smith1330 Series" happens. Put the space back before
+   anything tries to read a name off the front of it. */
+const deTypo = t => normSp(t).replace(/([A-Za-z])(\d)/g, '$1 $2');
+
+/* Who makes these. Guessing a manufacturer out of one sentence is a coin toss, but a manufacturer
+   is the thing that repeats: seventeen of nineteen paragraphs here open with "J.R. Smith". So the
+   openings are counted, and a phrase that leads two or more of them is taken as the maker. */
+const BRAND_JOINERS = { and: 1, of: 1, the: 1, '&': 1 };
+function looksLikeName(w) {
+  const bare = String(w).replace(/[^A-Za-z0-9&'’.\-]/g, '');
+  return !!bare && (BRAND_JOINERS[bare.toLowerCase()] || /^[A-Z]/.test(bare));
+}
+const MODELISH = /^(?:\d|Model\b|Series\b|Type\b|No\.|#|[A-Z]{2,}-?\d)/;
+function leadingBrands(bodies) {
+  const count = {}, proven = {};
+  for (const b of bodies) {
+    const words = deTypo(b).split(' ');
+    for (let n = 1; n <= 4 && n <= words.length; n++) {
+      const take = words.slice(0, n);
+      if (!take.every(looksLikeName)) break;
+      if (/^\d/.test(take[take.length - 1])) break;          // "1010" starts the model, not the name
+      const phrase = take.join(' ').replace(/[,;:]$/, '');
+      count[phrase] = (count[phrase] || 0) + 1;
+      /* A name is followed by the thing it makes: "J.R. Smith 1010 Series", "Precision Plumbing
+         Products Model SC". Without this, a verb the spec opens half its sentences with —
+         "Provide", "Furnish", "Components" — leads enough paragraphs to look like a supplier. */
+      if (MODELISH.test(words.slice(n).join(' '))) proven[phrase] = 1;
+    }
+  }
+  return Object.keys(count).filter(k => count[k] >= 2 && proven[k])
+    .sort((a, b) => b.length - a.length || count[b] - count[a]);
+}
+function stripBrand(body, brands) {
+  const t = deTypo(body);
+  for (const b of brands) {
+    if (t.toLowerCase().indexOf(b.toLowerCase()) === 0) {
+      return { make: b, rest: normSp(t.slice(b.length)).replace(/^[,;:\-–]\s*/, '') };
+    }
+  }
+  return { make: '', rest: t };
+}
+/* Everything under one lettered paragraph, written back the way the book has it. */
+function subText(note) {
+  const L = [];
+  for (const s2 of (note.sub || [])) {
+    L.push(s2.label + '. ' + normSp(s2.text));
+    for (const s3 of (s2.sub || [])) L.push('    ' + s3.label + '. ' + normSp(s3.text));
+  }
+  return L.join('\n');
+}
+/* Is this article a list of things, or one thing described at length? */
+function splittableNotes(p) {
+  return ((p && p.notes) || []).filter(n => {
+    const t = normSp(n.text);
+    if (!t) return false;
+    const cut = t.indexOf(': ');
+    const head = cut > 0 ? t.slice(0, cut) : t.replace(/:$/, '');
+    return head.length >= 3 && head.length <= 70 && /[A-Za-z]/.test(head);
+  });
+}
+/* The record keeps the book's paragraphs as text, not as the tree they were parsed from —
+   the tree would be the same words stored twice. Read it back when something needs the shape. */
+function notesFromSpecText(text) {
+  const out = [];
+  let note = null, sub = null;
+  for (const raw of String(text == null ? '' : text).split('\n')) {
+    if (!raw.trim()) continue;
+    const a = /^([A-Z])\.\s+(.*)$/.exec(raw);
+    if (a) { note = { label: a[1], text: a[2].trim(), sub: [] }; out.push(note); sub = null; continue; }
+    const n = /^\s+(\d{1,2})\.\s+(.*)$/.exec(raw);
+    if (n && note) { sub = { label: n[1], text: n[2].trim(), sub: [] }; note.sub.push(sub); continue; }
+    const o = /^\s+([a-z])\.\s+(.*)$/.exec(raw);
+    if (o && sub) { sub.sub.push({ label: o[1], text: o[2].trim() }); continue; }
+    if (sub) sub.text += ' ' + raw.trim();
+    else if (note) note.text += ' ' + raw.trim();
+  }
+  return out;
+}
+const specNotesOf = p => ((p && p.notes && p.notes.length) ? p.notes
+  : notesFromSpecText(p && p.spec));
+function splitSpecItems(p) {
+  const notes = splittableNotes({ notes: specNotesOf(p) });
+  if (notes.length < 2) return [];
+  const bodies = [];
+  for (const n of notes) {
+    const t = normSp(n.text), cut = t.indexOf(': ');
+    if (cut > 0) bodies.push(t.slice(cut + 2));
+    for (const s2 of (n.sub || [])) bodies.push(normSp(s2.text));
+  }
+  const brands = leadingBrands(bodies);
+  return notes.map(n => {
+    const t = normSp(n.text), cut = t.indexOf(': ');
+    const head = cut > 0 ? t.slice(0, cut) : t.replace(/:$/, '');
+    const body = cut > 0 ? t.slice(cut + 2) : '';
+    const m = SPLIT_MARK_RE.exec(head);
+    const tag = m ? m[1].replace(/–/g, '-') : '';
+    const name = m ? m[2].trim() : head.trim();
+    const { make, rest } = stripBrand(body, brands);
+    const extra = subText(n);
+    return { label: n.label, tag, name, make,
+      desc: [rest, extra].filter(Boolean).join('\n'),
+      spec: n.label + '. ' + t + (extra ? '\n' + extra : '') };
+  });
+}
+
+/* The button. Nineteen paragraphs become nineteen items, filed under the article's own name so
+   they read as the group the book meant them to be, each with its mark, what to buy and the
+   paragraph it came from. Nothing is guessed that cannot be corrected in one click afterwards. */
+async function splitIntoItems(key, id) {
+  const sec = findSection(key); if (!sec) return;
+  const p = productById(sec, id); if (!p) return;
+  const items = splitSpecItems(p);
+  if (items.length < 2) { toast('This one does not list separate items', true); return; }
+  const tags = items.filter(x => x.tag).length;
+  const makes = items.filter(x => x.make).length;
+  if (!confirm('Split ' + (p.article ? p.article + ' ' : '') + (p.name || 'this') +
+      ' into its ' + items.length + ' items?\n\n' +
+      tags + ' come with a mark' + (makes ? ', ' + makes + ' with a manufacturer' : '') + '.\n' +
+      'They are filed under "' + (p.name || 'this') + '" and each one is yours to correct.\n\n' +
+      'This one row is replaced by them.')) return;
+  const group = String(p.name || '').trim();
+  const made = items.map(x => ({
+    id: uid('prd'), article: p.article || '', group,
+    name: x.name || '', marks: x.tag ? [{ id: uid('mk'), tag: x.tag }] : [],
+    tag: x.tag || '', make: x.make || '',
+    makers: (p.makers || []).slice(), anyOther: !!p.anyOther,
+    standards: [], topics: [], markHints: [],
+    spec: x.spec || '', desc: x.desc || '', note: '', leadWeeks: '',
+    fromSpec: true, fromSplit: true }));
+  const at = sectionProducts(sec).indexOf(p);
+  sec.products = sectionProducts(sec).slice(0, at).concat(made,
+    sectionProducts(sec).slice(at + 1));
+  prodEdit = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {};
+  await saveProducts(key, sec, null);
+  toast(items.length + ' items, ' + tags + ' with marks — all yours to edit');
+}
+
 /* One click for the whole schedule the book already wrote out. */
 async function takeHints(key, id) {
   const sec = findSection(key); if (!sec) return;
@@ -13220,11 +13369,17 @@ function productRow(s, p, b, relMarks, endsBand) {
           ${(function () {
             const have = new Set(marks.map(m => String(m.tag || '').toUpperCase()));
             const left = (p.markHints || []).filter(h => !have.has(String(h.tag || '').toUpperCase()));
-            return left.length ? `<div class="pr-kv"><span style="flex:1"><i>Marks the spec names</i>${
+            const n = p.fromSplit ? 0 : splitSpecItems(p).length;
+            if (!left.length && n < 2) return '';
+            return `<div class="pr-kv"><span style="flex:1"><i>${n > 1
+              ? 'The book lists ' + n + ' separate items here' : 'Marks the spec names'}</i>${
               left.slice(0, 12).map(h => `<span class="pr-tag is-hint" title="${esc(h.name)}">${esc(h.tag)}</span>`).join('')
               }${left.length > 12 ? `<span class="pr-tag is-more">+${left.length - 12}</span>` : ''}
-              <button class="pr-take" onclick="event.stopPropagation();takeHints('${s.key}','${p.id}')"
-                >Add ${left.length === 1 ? 'it' : 'all ' + left.length}</button></span></div>` : '';
+              ${n > 1 ? `<button class="pr-take" onclick="event.stopPropagation();splitIntoItems('${s.key}','${p.id}')"
+                  >Split into ${n}</button>` : ''}
+              ${left.length ? `<button class="pr-take is-lite" onclick="event.stopPropagation();takeHints('${s.key}','${p.id}')"
+                  >${n > 1 ? 'or just add the marks' : 'Add ' + (left.length === 1 ? 'it' : 'all ' + left.length)}</button>` : ''}
+              </span></div>`;
           })()}
           ${marks.length > 1 || marks.some(markHasDetail) ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
           <div class="pr-mklist">${marks.map(m => { const r = relMarks[m.id];
