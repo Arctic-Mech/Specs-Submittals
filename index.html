@@ -570,6 +570,20 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .assist-row input { margin: 0; cursor: pointer; }
 .assist-row:hover { color: var(--text-2); }
 .assist-off { color: var(--amber); font-weight: 600; }
+/* marks the book named but nobody has taken yet */
+.pr-tag.is-hint { color: var(--text-3); background: var(--surface-3); border: 1px dashed var(--border-2); }
+.pr-take { border: 1px solid var(--accent); background: none; border-radius: 999px; cursor: pointer;
+  color: var(--accent); font-size: 10.5px; font-weight: 700; padding: 1px 9px; margin-left: 6px; }
+.pr-take:hover { background: var(--accent-sf); }
+/* the same suggestions, on the form where the marks get typed */
+.mk-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
+.mk-hint-lbl { font-size: 11px; color: var(--text-3); margin-right: 4px; }
+.mk-sug { border: 1px dashed var(--border-2); background: none; border-radius: 4px; cursor: pointer;
+  color: var(--text-2); font-family: var(--mono); font-size: 11px; padding: 1px 7px; }
+.mk-sug:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+.mk-sug.is-in { opacity: .35; border-style: solid; cursor: default; }
+.mk-sug-all { border: none; background: none; color: var(--accent); cursor: pointer;
+  font-size: 11px; font-weight: 700; padding: 1px 4px; }
 .pr-art { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
 /* a fold-away for the one thing most products have nothing to say about */
 .pr-std { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
@@ -1384,7 +1398,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.90';
+const APP_VERSION = 'v7.91';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2197,6 +2211,29 @@ const STD_RE = /\b(?:NFPA|UL|ASTM|ASHRAE|AMCA|SMACNA|ANSI|NEMA|ASME|AWWA|NSF|IEE
    Dampers:", "Operators:", "Electro Thermal Link:". A spec writes its own contents list and then
    buries it; read back out, it says what the product covers in six words instead of six hundred. */
 const TOPIC_RE = /^([^:.]{2,60}):\s/;
+/* ── the marks, where the book already wrote them ──
+   A drainage section does not describe one product. It describes eighteen, and it puts the mark
+   at the front of each paragraph: "A. RD-1 Roof Drain (Large Area): J.R. Smith 1010 Series…".
+   That is the schedule, written out, and it was being retyped a tag at a time.
+
+   These are offered, never imposed. A tag is a short run of capitals with an optional number, and
+   plenty of things look like that without being marks — so they are suggestions you click, and a
+   wrong one costs one glance instead of an argument with the register. */
+const MARK_HINT_RE = /^([A-Z]{1,5}(?:[-\u2013]\d{1,3})?[A-Z]?)\s+([A-Z(].*)$/;
+function markHintsFrom(topics) {
+  const out = [], seen = {};
+  for (const t of (topics || [])) {
+    const m = MARK_HINT_RE.exec(String(t == null ? '' : t).trim());
+    if (!m) continue;
+    const tag = m[1].replace(/\u2013/g, '-');
+    // a lone letter is a paragraph label, not a mark; anything else needs a digit or real length
+    if (tag.length < 2) continue;
+    if (seen[tag]) continue;
+    seen[tag] = 1;
+    out.push({ tag, name: m[2].trim() });
+  }
+  return out;
+}
 
 /* ── the acceptable-brands table ──
    Some sections do not name a manufacturer per product. They put one article at the top — "2.01
@@ -2357,6 +2394,7 @@ function extractProducts(lines) {
     const tseen = {};
     p.topics = keep.map(n => { const m = TOPIC_RE.exec(n.text); return m ? cleanTitle(m[1]) : ''; })
       .filter(x => { if (!x) return false; const k = x.toUpperCase(); if (tseen[k]) return false; tseen[k] = 1; return true; });
+    p.markHints = markHintsFrom(p.topics);
   }
   return out.filter(x => x.name);
 }
@@ -12841,10 +12879,46 @@ function markDetailHtml() {
         oninput="setEditMark('${m.id}','note',this.value)"></div>
   </div>`;
 }
+/* What the book named, offered rather than imposed. Already-added ones are shown spent, so the
+   row reads as a checklist of the schedule rather than a pile of buttons. */
+function hintRowHtml(p) {
+  const hints = (p && p.markHints) || [];
+  if (!hints.length) return '';
+  const have = new Set((prodEditMarks || []).map(m => String(m.tag || '').toUpperCase()));
+  const left = hints.filter(h => !have.has(h.tag.toUpperCase()));
+  return `<div class="mk-hint">
+    <span class="mk-hint-lbl">The spec names ${hints.length}${left.length ? '' : ' — all added'}</span>
+    ${hints.map(h => `<button type="button" class="mk-sug${have.has(h.tag.toUpperCase()) ? ' is-in' : ''}"
+      title="${esc(h.name)}" onclick="addHintMark('${jsStr(h.tag)}')">${esc(h.tag)}</button>`).join('')}
+    ${left.length > 1 ? `<button type="button" class="mk-sug-all" onclick="addAllHints('${p.id}')"
+      >Add the ${left.length} left</button>` : ''}</div>`;
+}
+function addHintMark(tag) {
+  const t = String(tag || '').trim().toUpperCase();
+  if (!t) return;
+  prodEditMarks = prodEditMarks || [];
+  if (!prodEditMarks.some(m => String(m.tag || '').toUpperCase() === t)) prodEditMarks.push({ id: uid('mk'), tag: t });
+  renderEditMarks(false);
+}
+function addAllHints(prodId) {
+  const sec = findSection(openKey);
+  const p = sec && productById(sec, prodId);
+  if (!p) return;
+  prodEditMarks = prodEditMarks || [];
+  for (const h of (p.markHints || [])) {
+    const t = String(h.tag || '').toUpperCase();
+    if (!prodEditMarks.some(m => String(m.tag || '').toUpperCase() === t)) prodEditMarks.push({ id: uid('mk'), tag: t });
+  }
+  renderEditMarks(false);
+}
 function renderEditMarks(focus) {
   const host = $('pdMarks');
   if (!host) return;
   host.innerHTML = editMarksHtml();
+  const hints = $('pdHints');
+  if (hints) { const sec = findSection(openKey);
+    const pr = sec && prodEdit ? productById(sec, prodEdit) : null;
+    hints.innerHTML = pr ? hintRowHtml(pr) : ''; }
   const det = $('pdMarkDet'); if (det) det.innerHTML = markDetailHtml();
   const tag = $('pdMarkTally');
   if (tag) tag.innerHTML = (prodEditMarks || []).length ? String((prodEditMarks || []).length) : '';
@@ -12946,7 +13020,32 @@ let prodAllMarks = {}, prodNoteOpen = {}, prodSpecOpen = {};
 /* The book's own paragraphs. Pasting them into the box you type in made every product look full
    and left you deleting a page of prose before you could write "Ruskin FSD-60, 24x24". They live
    here instead: one click away, never in the way. */
-function toggleProdSpec(id) { prodSpecOpen[id] = !prodSpecOpen[id]; repaintProducts(id); }
+function toggleProdSpec(id) {
+  prodSpecOpen[id] = !prodSpecOpen[id];
+  /* While the form is up, the boxes hold what you have typed and not yet saved — they are read
+     back off the page at save time. Repainting the list to open a fold would throw all of it
+     away, so in edit mode only the fold itself is redrawn. */
+  if (prodEdit === id) {
+    const sec = findSection(openKey), p = sec && productById(sec, id);
+    const box = $('pdSpecBox'), btn = $('pdSpecBtn');
+    if (box && p) box.innerHTML = prodSpecOpen[id] ? `<div class="pr-spec">${esc(p.spec || '')}</div>` : '';
+    if (btn) btn.textContent = 'What the book says ' + (prodSpecOpen[id] ? '\u25be' : '\u25b8');
+    return;
+  }
+  repaintProducts(id);
+}
+/* One click for the whole schedule the book already wrote out. */
+async function takeHints(key, id) {
+  const sec = findSection(key); if (!sec) return;
+  const p = productById(sec, id); if (!p) return;
+  const have = new Set(productMarks(p).map(m => String(m.tag || '').toUpperCase()));
+  const add = (p.markHints || []).filter(h => !have.has(String(h.tag || '').toUpperCase()));
+  if (!add.length) return;
+  p.marks = productMarks(p).concat(add.map(h => ({ id: uid('mk'), tag: h.tag })));
+  p.tag = (p.marks[0] || {}).tag || '';
+  await saveProducts(key, sec, id);
+  toast(add.length + ' mark' + (add.length === 1 ? '' : 's') + ' taken from the spec');
+}
 function showAllMarks(id) { prodAllMarks[id] = true; repaintProducts(id); }
 /* Most products have nothing particular to say, and the ones that do say it at length. Folded
    until asked for, so the list stays a list. */
@@ -13044,6 +13143,7 @@ function productRow(s, p, b, relMarks, endsBand) {
         <div class="field"><label class="fl">Marks <span class="fl-tag" id="pdMarkTally">${
             (prodEditMarks || []).length || ''}</span></label>
           <div class="mk-wrap" id="pdMarks" onclick="if(event.target===this){var i=document.getElementById('pdMarkIn');if(i)i.focus()}">${editMarksHtml()}</div>
+          <div id="pdHints">${hintRowHtml(p)}</div>
           <div class="muted" style="margin-top:4px;font-size:11.5px">One at a time — Enter after each.
             Click one to say where it goes, add a note, or star it as wanted first.</div>
           <div id="pdMarkDet">${markDetailHtml()}</div></div>
@@ -13060,9 +13160,13 @@ function productRow(s, p, b, relMarks, endsBand) {
             <input class="input" id="pdMake" value="${esc(p.make || '')}"></div>
           <div class="field"><label class="fl">Lead time (weeks)</label>
             <input class="input" id="pdLead" value="${esc(p.leadWeeks === 0 ? '0' : (p.leadWeeks || ''))}"></div>
-          <div class="field"><label class="fl">Anything else</label>
-            <input class="input" id="pdNote" value="${esc(p.note || '')}"></div>
+          <div class="field" style="grid-column:1/-1"><label class="fl">Anything particular</label>
+            <textarea class="input autosize" rows="1" id="pdNote">${esc(p.note || '')}</textarea></div>
         </div>
+        ${p.spec ? `<div class="field" style="margin-bottom:0">
+          <button type="button" class="pr-more" id="pdSpecBtn" onclick="toggleProdSpec('${p.id}')"
+            >What the book says ${prodSpecOpen[p.id] ? '\u25be' : '\u25b8'}</button>
+          <div id="pdSpecBox">${prodSpecOpen[p.id] ? `<div class="pr-spec">${esc(p.spec)}</div>` : ''}</div></div>` : ''}
         <div class="hist-foot">
           <button class="btn sm" onclick="saveProduct('${s.key}','${p.id}')">Save</button>
           <button class="btn sm ghost" onclick="cancelProductEdit()">Cancel</button>
@@ -13113,6 +13217,15 @@ function productRow(s, p, b, relMarks, endsBand) {
             <span style="flex:1"><i>${(p.makers || []).length ? 'The spec will accept' : 'Manufacturer'}</i>${makersHtml(s, p)}</span>
             <span><i>Lead time</i>${p.leadWeeks ? esc(leadLabel(p.leadWeeks)) : `<span class="pr-none">${PR_DASH}</span>`}</span>
           </div>
+          ${(function () {
+            const have = new Set(marks.map(m => String(m.tag || '').toUpperCase()));
+            const left = (p.markHints || []).filter(h => !have.has(String(h.tag || '').toUpperCase()));
+            return left.length ? `<div class="pr-kv"><span style="flex:1"><i>Marks the spec names</i>${
+              left.slice(0, 12).map(h => `<span class="pr-tag is-hint" title="${esc(h.name)}">${esc(h.tag)}</span>`).join('')
+              }${left.length > 12 ? `<span class="pr-tag is-more">+${left.length - 12}</span>` : ''}
+              <button class="pr-take" onclick="event.stopPropagation();takeHints('${s.key}','${p.id}')"
+                >Add ${left.length === 1 ? 'it' : 'all ' + left.length}</button></span></div>` : '';
+          })()}
           ${marks.length > 1 || marks.some(markHasDetail) ? `<div class="pr-kv"><span style="flex:1"><i>Marks</i></span></div>
           <div class="pr-mklist">${marks.map(m => { const r = relMarks[m.id];
             return `<div class="pr-mk${r ? (r.delivered ? ' is-done' : ' is-out') : ''}${m.pinned ? ' is-first' : ''}">
@@ -15339,6 +15452,7 @@ function productsFromSpec(list) {
       make: '',                          // who we are submitting on — yours to pick, not the book's
       standards: (x.standards || []).slice(),
       topics: (x.topics || []).slice(),
+      markHints: (x.markHints || []).slice(),
       anyOther: !!x.anyOther,
       // the book's own words, kept whole and folded away — not pasted into a box you have to
       // clear out before you can write "Ruskin FSD-60, 24x24" in it
@@ -15363,6 +15477,7 @@ function mergeSpecProducts(sec, parsed) {
     cur.name = cur.nameEdited ? cur.name : f.name;
     cur.makers = f.makers; cur.make = cur.makeEdited ? cur.make : f.make;
     cur.standards = f.standards; cur.topics = f.topics; cur.anyOther = f.anyOther;
+    cur.markHints = f.markHints;
     // an earlier version pasted the spec into "what to buy"; if that is still all it holds, clear
     // it, because it was never yours and the folded copy below says the same thing
     if (String(cur.desc || '').trim() === String(cur.spec || '').trim()) cur.desc = '';
