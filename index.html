@@ -432,6 +432,9 @@ label.tick-row { display: flex; align-items: center; gap: 8px; margin-top: 13px;
 textarea.autosize { overflow: hidden; resize: none; }
 textarea.autosize[rows="1"] { min-height: 0; }
 .add-row { align-items: flex-start; }
+.nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
+  border-radius: 999px; padding: 2px 6px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.nt-sort:hover { color: var(--text); border-color: var(--border-2); }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -635,6 +638,12 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pr-undo { font-size: 12px !important; color: var(--text-3) !important; border: 1px solid var(--border) !important;
   border-radius: 999px !important; padding: 0 5px !important; line-height: 16px !important; }
 .pr-undo:hover { color: var(--accent) !important; border-color: var(--accent) !important; background: var(--accent-sf) !important; }
+.pr-undo.is-redo { color: var(--accent) !important; border-color: var(--accent) !important; }
+/* the group's undo carries its count, so it does not read as the row's undo repeated */
+.pr-undo.is-all { font-size: 11px !important; letter-spacing: .02em; }
+/* a line left as the book wrote it, so it does not read as one the app simply failed on */
+.prod-row.is-raw { border-left: 2px solid var(--border-2); }
+.prod-row.is-raw .pr-name { font-weight: 500; color: var(--text-2); }
 .pr-go { font-size: 13px !important; }
 .pr-go:hover { color: var(--accent) !important; }
 /* a sub-category's name over its marks, so a list of forty ticks is still readable */
@@ -1405,7 +1414,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.93';
+const APP_VERSION = 'v7.94';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3584,6 +3593,19 @@ let drawingQuery = '';
 let unsubDrawings = null;
 let rfiQuery = '', rfiStatusFilter = null;
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
+/* Which way the notes run. Newest at the top is what you want nine times in ten — the last thing
+   that happened is the thing you are looking for — but a log you are reading from the start wants
+   the other way, so it is yours to set and it stays set on this device. */
+const NOTE_ORDER_KEY = 'dingus_note_order';
+let noteOrder = 'new';
+try { if (localStorage.getItem(NOTE_ORDER_KEY) === 'old') noteOrder = 'old'; } catch (e) {}
+function setNoteOrder(v) {
+  noteOrder = v === 'old' ? 'old' : 'new';
+  try { localStorage.setItem(NOTE_ORDER_KEY, noteOrder); } catch (e) {}
+  renderTracking();
+}
+const notesInOrder = list => (list || []).slice().sort((x, y) => noteOrder === 'old'
+  ? (x.created || 0) - (y.created || 0) : (y.created || 0) - (x.created || 0));
 let trackCat = null;         // selected category id
 let trackItem = null;        // selected action item within it ('__unfiled' for what isn't on one)
 let cos = [];                // change-order records for the open job
@@ -3709,6 +3731,7 @@ function watchSections(jobId) {
         }
       }
       migrateSpecData(jobId, job.sections);
+      autoSplitJob(jobId, job.sections);
       // a submittal opened from the home page: the section it names has only now arrived
       if (_pendingSection && job.sections.some(x => x.key === _pendingSection)) {
         openKey = _pendingSection; _pendingSection = null; navSync();
@@ -4389,6 +4412,7 @@ function setJobTab(t) {
   jobTab = t;
   closeActionModal(); closeDrawer(); closeRfiDrawer(); closeCoDrawer(); closeLedgerDrawer(); closeContractDrawer(); closeDrawingDrawer(); closeEstimateEditor();
   renderJob();
+  autosizeAll(document);       // the tab that was hidden a moment ago can be measured now
   window.scrollTo(0, 0);
 }
 function tabAction() {
@@ -4943,13 +4967,17 @@ function trackDetailHtml(c, it) {
     </div>
 
     <div class="track-sec">
-      <h4>Notes</h4>
+      <h4>Notes <span class="spacer"></span>${notes.length > 1 ? `<select class="nt-sort"
+        title="Which way the notes run" onchange="setNoteOrder(this.value)">
+        <option value="new"${noteOrder === 'new' ? ' selected' : ''}>Newest first</option>
+        <option value="old"${noteOrder === 'old' ? ' selected' : ''}>Oldest first</option>
+      </select>` : ''}</h4>
       ${unfiled ? '' : `<div class="add-row">
         <textarea class="input autosize" rows="1" id="noteInput" placeholder="Add a note…  (Enter to add, Shift+Enter for a new line)"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addNote('${c.id}','${it.id}')}"></textarea>
         <button class="btn sm" onclick="addNote('${c.id}','${it.id}')">Add</button>
       </div>`}
-      ${notes.slice().sort((x, y) => (y.created || 0) - (x.created || 0)).map(n => noteEdit === n.id ? `
+      ${notesInOrder(notes).map(n => noteEdit === n.id ? `
         <div class="note-item is-edit">
           <textarea class="input autosize" id="noteEditBox" rows="1"
             onkeydown="noteEditKey(event,'${c.id}','${n.id}')">${esc(n.text)}</textarea>
@@ -12840,6 +12868,7 @@ const PR_DASH = '\u2013';
    the buttons off the end. A few, then a count of the rest; all of them are listed when it opens. */
 const PR_MARKS_ON_ROW = 4;
 function productGaps(p) {
+  if (lineIsRaw(p)) return [];        // nothing is missing off it; it is the paragraph, whole
   return PROD_FIELDS.filter(f => f.k === 'marks'
     ? !productMarks(p).length
     : !String((p && p[f.k]) || '').trim());
@@ -13156,9 +13185,125 @@ function splitSpecItems(p) {
   });
 }
 
-/* The button. Nineteen paragraphs become nineteen items, filed under the article's own name so
-   they read as the group the book meant them to be, each with its mark, what to buy and the
-   paragraph it came from. Nothing is guessed that cannot be corrected in one click afterwards. */
+/* The family a mark belongs to: RD-7 belongs with RD-1, not with FD-1. */
+const markFamily = t => String(t || '').toUpperCase().split(/[-\u2013]/)[0];
+/* "RD-1", "RD 1" and "RD\u20131" are the same mark. Comparing them as typed mints a second one. */
+const markKey = t => String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+/* Carry the marks someone typed onto the item they are about. The whole mark object moves, not
+   just its tag — the id is what a release points at, and the location and note are work. A mark
+   the book does not name goes on the first item rather than being dropped: someone put it there
+   on purpose, and a mark in the wrong place is a drag away from the right one. */
+function carryMarks(parent, made) {
+  const left = productMarks(parent).slice();
+  const take = pick => { const i = left.findIndex(pick); return i < 0 ? null : left.splice(i, 1)[0]; };
+  for (const k of made) {
+    const t = markKey(k.tag);
+    if (t) { const m = take(x => markKey(x.tag) === t); if (m) k.marks = [m]; }
+  }
+  for (const k of made) {
+    const fam = markFamily(k.tag); if (!fam) continue;
+    let m; while ((m = take(x => markFamily(x.tag) === fam))) k.marks = k.marks.concat([m]);
+  }
+  // anything the book named but nobody has typed yet still gets its mark
+  for (const k of made) if (k.tag && !k.marks.length) k.marks = [{ id: uid('mk'), tag: k.tag }];
+  for (const k of made) k.tag = (k.marks[0] || {}).tag || k.tag || '';
+  return left;
+}
+/* One article's worth of items, however the article got here — read out of a book, asked for by
+   the button, or caught up on afterwards. Everything on the article that is work rather than
+   wording comes with them. */
+function splitChildrenOf(src, items, whole) {
+  // a sub-category you filed it under is your filing and outranks the article's own name
+  const splitId = uid('spl');
+  const group = (typeof normGroup === 'function' ? normGroup(src.group) : String(src.group || '')) ||
+    String(src.name || '').trim();
+  const made = items.map((x, i) => ({
+    id: uid('prd'), article: src.article || '', group,
+    splitId, splitLabel: x.label, splitSrc: i === 0 ? (whole || '') : '',
+    name: x.name || '', marks: [], tag: x.tag || '', make: x.make || '',
+    makers: (src.makers || []).slice(), anyOther: !!src.anyOther,
+    standards: [], topics: [], markHints: [],
+    spec: x.spec || '', desc: x.desc || '', note: '',
+    // a lead time and a star are about the article, so they are about all of it
+    leadWeeks: String(src.leadWeeks || ''), pinned: !!src.pinned,
+    fromSpec: true, fromSplit: true }));
+  const left = carryMarks(src, made);
+  /* A mark the book names nowhere still belongs to somebody. It gets a line of its own rather
+     than being filed under whichever item happens to share its first two letters — that would
+     quietly assert that RD-7 is the model number written in RD-1's description. */
+  for (const m of left) made.push({ id: uid('prd'), article: src.article || '', group,
+    splitId, splitLabel: 'zz' + markKey(m.tag), name: '', marks: [m], tag: m.tag || '',
+    make: '', makers: [], anyOther: false, standards: [], topics: [], markHints: [],
+    spec: '', desc: '', note: '', leadWeeks: String(src.leadWeeks || ''), pinned: !!m.pinned,
+    fromSpec: false, fromSplit: true, byHand: true });
+  /* What you typed on the article goes on the first item rather than onto all nineteen or into
+     the bin. The toast says where it went. */
+  const note = String(src.note || '').trim();
+  if (note && made.length) made[0].note = note;
+  const desc = String(src.desc || '').trim();
+  if (desc && made.length) made[0].desc = [made[0].desc, desc].filter(Boolean).join('\n');
+  return { made, homeless: left.length,
+    noteOn: (note || desc) && made.length ? (made[0].name || made[0].tag || 'the first one') : '' };
+}
+
+/* ── catching up what is already on the books ──
+   The split happens as a book is read, but a job filed before the app could do it has its
+   articles stored whole, and nothing on screen would ever take them apart. That left the offer
+   as the only way through, which is the offer being the work. This runs the same read over what
+   is already there. */
+function autoSplitSection(sec) {
+  if (!assistOn(sec)) return 0;
+  const held = sec.noSplit || {};
+  /* A release made against the whole product names it by id. The marks survive a split — they are
+     carried across whole, id and all — but that one cannot be, so a product that has already gone
+     out the door on its own name is left exactly as it is. */
+  const onPaper = {};
+  for (const r of (sec.releases || [])) if (r && r.item && !r.mark) onPaper[r.item] = 1;
+  const out = []; let n = 0, moved = 0;
+  for (const p of sectionProducts(sec)) {
+    const items = (p.splitId || p.noSplitLine || !p.fromSpec || onPaper[p.id] ||
+      (p.article && held[p.article])) ? [] : splitSpecItems(p);
+    if (items.length < 2) { out.push(p); continue; }
+    const made = splitChildrenOf(p, items, p.spec || '').made;
+    // the release log follows its mark onto the row that now holds it
+    for (const r of (sec.releases || [])) {
+      if (!r || !r.mark || r.item !== p.id) continue;
+      const home = made.find(k => productMarks(k).some(m => m.id === r.mark));
+      if (home) { r.item = home.id; moved++; }
+    }
+    out.push.apply(out, made);
+    n++;
+  }
+  if (n) { sec.products = out; sec.__relMoved = moved; }
+  return n;
+}
+const splitCaughtUp = new Set();
+async function autoSplitJob(jobId, sections) {
+  if (splitCaughtUp.has(jobId)) return;
+  splitCaughtUp.add(jobId);
+  const hit = [];
+  for (const s of sections) { const n = autoSplitSection(s); if (n) hit.push({ s: s, n: n }); }
+  if (!hit.length) return;
+  try {
+    for (const h of hit) {
+      const f = { products: h.s.products || [] };
+      if (h.s.__relMoved) { f.releases = h.s.releases || []; delete h.s.__relMoved; }
+      await patchSection(h.s.key, f);
+    }
+  } catch (e) {
+    splitCaughtUp.delete(jobId);                       // it can try again next time round
+    console.warn('articles left whole:', e);
+    return;
+  }
+  if (view === 'job') { renderTable(); if (openKey) renderDrawer(); }
+  const arts = hit.reduce((a, h) => a + h.n, 0);
+  toast(arts + (arts === 1 ? ' article that listed several things has been' : ' articles that listed several things have been') +
+    ' taken apart\u2009\u00b7\u2009undo is on each one');
+}
+
+/* The button, for an article held whole. Nineteen paragraphs become nineteen items, filed under
+   the article's own name so they read as the group the book meant them to be, each with its mark,
+   what to buy and the paragraph it came from. */
 async function splitIntoItems(key, id) {
   const sec = findSection(key); if (!sec) return;
   const p = productById(sec, id); if (!p) return;
@@ -13171,16 +13316,7 @@ async function splitIntoItems(key, id) {
       tags + ' come with a mark' + (makes ? ', ' + makes + ' with a manufacturer' : '') + '.\n' +
       'They are filed under "' + (p.name || 'this') + '" and each one is yours to correct.\n\n' +
       'This one row is replaced by them.')) return;
-  const group = String(p.name || '').trim(), splitId = uid('spl');
-  const made = items.map(x => ({
-    id: uid('prd'), article: p.article || '', group,
-    splitId, splitLabel: x.label, splitSrc: x === items[0] ? (p.spec || '') : '',
-    name: x.name || '', marks: x.tag ? [{ id: uid('mk'), tag: x.tag }] : [],
-    tag: x.tag || '', make: x.make || '',
-    makers: (p.makers || []).slice(), anyOther: !!p.anyOther,
-    standards: [], topics: [], markHints: [],
-    spec: x.spec || '', desc: x.desc || '', note: '', leadWeeks: '',
-    fromSpec: true, fromSplit: true }));
+  const made = splitChildrenOf(p, items, p.spec || '').made;
   /* Splitting it by hand takes back an undo. Without this the section still says "leave 2.05
      whole", and the next issue of the book would read it whole and file it alongside the pieces. */
   if (p.article && sec.noSplit && sec.noSplit[p.article]) {
@@ -13193,6 +13329,49 @@ async function splitIntoItems(key, id) {
   prodEdit = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {};
   await saveProducts(key, sec, null);
   toast(items.length + ' items, ' + tags + ' with marks — all yours to edit');
+}
+
+/* ── one line at a time ──
+   The read gets a whole article right or nearly right; where it goes wrong it goes wrong on one
+   paragraph — a manufacturer named only once and so not recognised, a model number that reads like
+   a mark. Undoing the whole article to fix one line is a bad trade, so each line goes back on its
+   own and comes back on its own. */
+function rawLineOf(p) {
+  const lines = String(p.spec || '').split('\n');
+  const head = String(lines[0] || '').replace(/^\s*[A-Za-z0-9]{1,3}\.\s+/, '');   // drop the paragraph label
+  const under = lines.slice(1).map(l => normSp(l)).filter(Boolean).join('\n');
+  const cut = head.indexOf(': ');
+  return { name: cut > 0 ? head.slice(0, cut) : head,
+           desc: [cut > 0 ? head.slice(cut + 2) : '', under].filter(Boolean).join('\n') };
+}
+const lineIsRaw = p => !!(p && p.rawLine);
+async function toggleLine(key, id) {
+  const sec = findSection(key); if (!sec) return;
+  const p = productById(sec, id); if (!p) return;
+  if (lineIsRaw(p)) {
+    /* Back to what was read — not a second guess at it. The read itself was kept, so this puts back
+       exactly what was there, marks and their ids included. */
+    const r = p.read || {};
+    p.name = r.name || ''; p.desc = r.desc || ''; p.make = r.make || '';
+    p.marks = (r.marks || []).slice(); p.tag = r.tag || '';
+    delete p.read; delete p.rawLine;
+    await saveProducts(key, sec, id);
+    toast('Read back out of the line');
+    return;
+  }
+  const rel = releasedMarks(sec);
+  const gone = productMarks(p).filter(m => rel[m.id]);
+  if (gone.length) {
+    toast(gone.map(m => m.tag).join(', ') + ' has already been released — take the release back first', true);
+    return;
+  }
+  const raw = rawLineOf(p);
+  p.read = { tag: p.tag || '', name: p.name || '', make: p.make || '', desc: p.desc || '',
+             marks: productMarks(p).slice() };
+  p.name = raw.name; p.desc = raw.desc; p.make = ''; p.marks = []; p.tag = '';
+  p.rawLine = true;
+  await saveProducts(key, sec, id);
+  toast('Left as the book wrote it');
 }
 
 /* ── putting a split back ──
@@ -13214,15 +13393,18 @@ async function undoSplit(key, id) {
   const kids = splitGroup(sec, p).slice().sort(byLabel);
   if (!kids.length) return;
   const name = String(p.group || p.name || 'this').trim();
-  /* A mark that has been released is a piece of paper that went out the door with that tag on
-     it. Rolling the product back up would leave the release pointing at nothing. */
   const rel = releasedMarks(sec);
-  const out = kids.filter(k => productMarks(k).some(m => rel[m.id]));
-  if (out.length) {
+  /* A release names the mark it went out under, and the mark comes back whole — so a released
+     mark is no reason to refuse. The old shape, from before releases named marks, names the
+     product instead, and that id cannot survive the rebuild. */
+  const stranded = (sec.releases || []).filter(r => r && !r.mark && r.item &&
+    kids.some(k => k.id === r.item));
+  if (stranded.length) {
     alert('Cannot put ' + name + ' back together\n\n' +
-      out.length + ' of these ' + (out.length === 1 ? 'has' : 'have') + ' already been released: ' +
-      out.map(k => productMarks(k).map(m => m.tag).join(', ')).filter(Boolean).join(', ') + '.\n' +
-      'Take the release back first, or leave these as they are.');
+      stranded.length + ' release' + (stranded.length === 1 ? ' was' : 's were') +
+      ' made against ' + (stranded.length === 1 ? 'one of these rows' : 'these rows') +
+      ' by name rather than by mark, from before releases named marks.\n' +
+      'Take ' + (stranded.length === 1 ? 'it' : 'them') + ' back first, or leave these as they are.');
     return;
   }
   const worked = kids.filter(splitChildWork);
@@ -13233,21 +13415,38 @@ async function undoSplit(key, id) {
         (worked.length === 1 ? 'it' : 'them') + ' — lead times, notes, marks you added — and that goes.' : '.'))) return;
   const src = (kids.find(k => String(k.splitSrc || '').trim()) || {}).splitSrc ||
     kids.map(k => k.spec).filter(Boolean).join('\n');
-  const back = { id: uid('prd'), article: p.article || '', name: name, group: '',
-    tag: '', marks: [], make: '',
+  const back = { id: uid('prd'), article: p.article || '', name: name,
+    group: (kids[0] || {}).group === name ? '' : ((kids[0] || {}).group || ''),
+    tag: '', make: '',
     makers: ((kids.find(k => (k.makers || []).length) || {}).makers || []).slice(),
     anyOther: kids.some(k => k.anyOther),
     standards: [], topics: [],
-    // the marks are offered back rather than kept, so a second read can be taken or left
-    markHints: kids.map(k => ({ tag: k.tag || '', name: k.name || '' })).filter(h => h.tag),
+    /* A mark you gave a location, a note or a star to, or that has already gone out on paper, is
+       yours — it comes back whole, with the id a release points at. The ones this read invented
+       and nobody has touched are offered back instead, so undoing a bad read does not leave
+       nineteen wrong marks to delete by hand. */
+    marks: kids.reduce((a, k) => a.concat(productMarks(k).filter(m =>
+      String(m.loc || '').trim() || String(m.note || '').trim() || m.pinned || rel[m.id])), []),
+    markHints: kids.reduce((a, k) => a.concat(productMarks(k).filter(m =>
+      !(String(m.loc || '').trim() || String(m.note || '').trim() || m.pinned || rel[m.id]))
+      .map(m => ({ tag: m.tag || '', name: k.name || '' }))), []).filter(h => h.tag),
     spec: src, desc: '', note: '', leadWeeks: '', fromSpec: true };
+  back.tag = (back.marks[0] || {}).tag || '';
   /* Remembered on the section, not on the row: the next issue of the book is read from scratch,
      and without this it would split the article straight back apart. */
   sec.noSplit = Object.assign({}, sec.noSplit || {});
   if (back.article) sec.noSplit[back.article] = true;
+  /* Point the release log at the row that now holds its mark, so "released" still shows against
+     the right thing rather than going quiet. */
+  let moved = 0;
+  for (const r of (sec.releases || [])) {
+    if (r && r.mark && kids.some(k => productMarks(k).some(m => m.id === r.mark)) &&
+        back.marks.some(m => m.id === r.mark)) { r.item = back.id; moved++; }
+  }
   const at = sectionProducts(sec).indexOf(kids[0]);
   const keep = sectionProducts(sec).filter(x => x.splitId !== p.splitId);
-  await patchSection(key, { noSplit: sec.noSplit }).catch(() => {});
+  await patchSection(key, moved ? { noSplit: sec.noSplit, releases: sec.releases }
+                                : { noSplit: sec.noSplit }).catch(() => {});
   const before = sectionProducts(sec).slice(0, at).filter(x => x.splitId !== p.splitId).length;
   sec.products = keep.slice(0, before).concat([back], keep.slice(before));
   prodEdit = null; prodOpen = {}; prodAllMarks = {}; prodNoteOpen = {}; prodSpecOpen = {};
@@ -13335,6 +13534,10 @@ function productRows(s) {
           ${b.items.some(p => productMarks(p).some(m => !relMarks[m.id])) ? `<button class="x pr-go"
             title="Release everything under ${esc(b.name)} that has not gone out"
             onclick="event.stopPropagation();releaseGroup('${s.key}','${jsStr(b.name)}')">↗</button>` : ''}
+          ${b.items.length > 1 && b.items[0].splitId && b.items.every(x => x.splitId === b.items[0].splitId)
+            ? `<button class="x pr-undo is-all" onclick="event.stopPropagation();undoSplit('${s.key}','${b.items[0].id}')"
+                title="Put all ${b.items.length} back into the one article they were read out of"
+                >↶${b.items.length}</button>` : ''}
           <button class="x" title="Add another under ${esc(b.name)}"
             onclick="event.stopPropagation();addBlankProduct('${s.key}','${jsStr(b.name)}')">+</button>
           <button class="x" title="Rename ${esc(b.name)}"
@@ -13407,7 +13610,8 @@ function productRow(s, p, b, relMarks, endsBand) {
     // the whole starred band, which the list has already been walked for.
     const lastFirst = !!p.pinned && (b.name ? !!(list[i + 1] && !list[i + 1].pinned) : !!endsBand);
     return `
-      <div class="prod-row${open ? ' is-open' : ''}${p.pinned ? ' is-first' : ''}${lastFirst ? ' ends-first' : ''}" data-prod="${p.id}">
+      <div class="prod-row${open ? ' is-open' : ''}${p.pinned ? ' is-first' : ''}${
+        lineIsRaw(p) ? ' is-raw' : ''}${lastFirst ? ' ends-first' : ''}" data-prod="${p.id}">
         <div class="pr-head" onclick="toggleProduct('${p.id}')">
           <button class="pr-star${p.pinned ? ' on' : ''}" onclick="event.stopPropagation();toggleProdPin('${s.key}','${p.id}')"
             title="${p.pinned ? 'Wanted first — click to take it off the top' : 'Star it as wanted first'}">${p.pinned ? '★' : '☆'}</button>
@@ -13430,9 +13634,11 @@ function productRow(s, p, b, relMarks, endsBand) {
           ${marks.some(m => !relMarks[m.id]) ? `<button class="x pr-go" title="Release ${
             esc(marks.filter(m => !relMarks[m.id]).map(m => m.tag).join(', '))}"
             onclick="event.stopPropagation();releaseProduct('${s.key}','${p.id}')">↗</button>` : ''}
-          ${p.splitId ? `<button class="x pr-undo" onclick="event.stopPropagation();undoSplit('${s.key}','${p.id}')"
-            title="Undo the split — put ${esc(String(p.group || p.article || 'these').trim())} back together as one${
-              splitGroup(s, p).length > 1 ? ' (' + splitGroup(s, p).length + ' items)' : ''}">↶</button>` : ''}
+          ${p.splitId ? `<button class="x pr-undo${lineIsRaw(p) ? ' is-redo' : ''}"
+            onclick="event.stopPropagation();toggleLine('${s.key}','${p.id}')"
+            title="${lineIsRaw(p) ? 'Read this line again — take the mark and the manufacturer back out of it'
+                                  : 'Leave this line as the book wrote it — this one only, not the rest'}"
+            >${lineIsRaw(p) ? '↷' : '↶'}</button>` : ''}
           <button class="x" title="Edit" onclick="event.stopPropagation();editProduct('${s.key}','${p.id}')">✎</button>
           <button class="x" title="Remove" onclick="event.stopPropagation();removeProduct('${s.key}','${p.id}')">✕</button>
         </div>
@@ -13566,11 +13772,17 @@ async function saveProduct(key, id) {
   const g = normGroup(v('pdGroup'));
   p.group = sectionGroups(s).find(x => groupKey(x) === groupKey(g)) || autoCap(g);
   if (p.group) delete prodGroupShut[groupKey(p.group)];
+  /* Stamped the moment you change them, because the import reads these back: without the stamp
+     the next issue of the book overwrites the name and the manufacturer you chose with whatever
+     the parse made of them. They were read but never written until now. */
+  const wasName = String(p.name || ''), wasMake = String(p.make || '');
   p.name = titleCaseWords(v('pdName'));
+  if (p.name !== wasName) p.nameEdited = true;
   p.desc = autoCap(v('pdDesc'));
   // left exactly as typed: title-casing it would turn "J.R. Smith" into "J.r. Smith". The
   // capitaliser every field shares already raises a first letter without lowering any.
   p.make = v('pdMake');
+  if (p.make !== wasMake) p.makeEdited = true;
   p.leadWeeks = v('pdLead');
   p.note = autoCap(v('pdNote'));
   prodEditMarks = null; prodEditMark = null;
@@ -13803,17 +14015,37 @@ function toggleStatusGrid(btn) {
   btn.textContent = g.hidden ? 'Change ▾' : 'Hide ▴';
 }
 /* Textareas marked .autosize grow to fit their content instead of scrolling. */
+/* Boxes that could not be measured when they were drawn. A tab that is not the one showing has no
+   layout, so scrollHeight reads nothing — and giving up there is how a note you cannot read ends
+   up one line tall for good, because nothing ever measures it again. */
+const _needSize = new Set();
 function autosize(el) {
   if (!el) return;
   const was = el.style.height;
   el.style.height = 'auto';
   const h = el.scrollHeight;
-  // A box that isn't laid out yet — inside a closed <details>, or a panel not on screen — reports
-  // nothing. Leave it as it was rather than collapsing it to nothing.
-  if (!h) { el.style.height = was; return; }
+  if (!h) { el.style.height = was; _needSize.add(el); return; }
+  _needSize.delete(el);
   el.style.height = (h + 2) + 'px';
 }
-function autosizeAll(host) { try { (host || document).querySelectorAll('textarea.autosize').forEach(autosize); } catch (x) {} }
+/* The ones that were hidden last time round. Whatever is on screen now gets its height, whatever
+   is still hidden stays on the list, and anything no longer on the page is dropped. */
+function autosizePending() {
+  if (!_needSize.size) return;
+  for (const el of Array.from(_needSize)) {
+    if (!el || el.isConnected === false) { _needSize.delete(el); continue; }
+    const was = el.style.height;
+    el.style.height = 'auto';
+    const h = el.scrollHeight;
+    if (!h) { el.style.height = was; continue; }
+    _needSize.delete(el);
+    el.style.height = (h + 2) + 'px';
+  }
+}
+function autosizeAll(host) {
+  autosizePending();
+  try { (host || document).querySelectorAll('textarea.autosize').forEach(autosize); } catch (x) {}
+}
 
 function renderDrawer() {
   const s = findSection(openKey);
@@ -15682,22 +15914,11 @@ function productsFromSpec(list, noSplit) {
        carries the mark of where it came from, so the whole split goes back in one click if the
        book was laid out in a way this read wrongly. */
     if (items.length >= 2) {
-      const splitId = uid('spl'), group = x.name || '', whole = productSpecText(x);
-      for (const it of items) {
-        out.push({ id: uid('prd'), article: x.article || '', group,
-          splitId, splitLabel: it.label,
-          /* The article's own wording, kept once on the first item. Undo puts back exactly what
-             was read, not a reassembly of the pieces — a paragraph this read did not treat as an
-             item of its own would be lost in the reassembly, and it is the paragraph most worth
-             keeping when the read was wrong. */
-          splitSrc: it === items[0] ? whole : '',
-          name: it.name || '', marks: it.tag ? [{ id: uid('mk'), tag: it.tag }] : [],
-          tag: it.tag || '', make: it.make || '',
-          makers: (x.makers || []).slice(), anyOther: !!x.anyOther,
-          standards: [], topics: [], markHints: [],
-          spec: it.spec || '', desc: it.desc || '', leadWeeks: '', note: '',
-          fromSpec: true, fromSplit: true });
-      }
+      /* The article's own wording is kept once, on the first item. Undo puts back exactly what
+         was read, not a reassembly of the pieces — a paragraph this read did not treat as an item
+         of its own would be lost in the reassembly, and it is the paragraph most worth keeping
+         when the read was wrong. */
+      out.push.apply(out, splitChildrenOf(x, items, productSpecText(x)).made);
       continue;
     }
     const text = productSpecText(x);
@@ -15721,6 +15942,7 @@ function productsFromSpec(list, noSplit) {
    are left exactly as they are. */
 function mergeSpecProducts(sec, parsed) {
   if (!assistOn(sec)) return { added: 0, updated: 0 };   // this one is filled in by hand
+  autoSplitSection(sec);          // or a stored whole article is matched by nothing and duplicated
   const have = sectionProducts(sec);
   const fresh = productsFromSpec(parsed, sec.noSplit);
   if (!fresh.length) return { added: 0, updated: 0 };
