@@ -1414,7 +1414,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.94';
+const APP_VERSION = 'v7.95';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13251,6 +13251,11 @@ function splitChildrenOf(src, items, whole) {
    articles stored whole, and nothing on screen would ever take them apart. That left the offer
    as the only way through, which is the offer being the work. This runs the same read over what
    is already there. */
+/* Reading the paragraph tree back out of stored text is not cheap, and this runs on every snapshot
+   now. An article worth taking apart has at least two lettered paragraphs in it, and counting those
+   is one pass over the string. */
+const letterParas = t => (String(t == null ? '' : t).match(/^[A-Z]\.\s+\S/gm) || []).length;
+const worthSplitting = p => (p && p.notes && p.notes.length >= 2) || letterParas(p && p.spec) >= 2;
 function autoSplitSection(sec) {
   if (!assistOn(sec)) return 0;
   const held = sec.noSplit || {};
@@ -13262,7 +13267,7 @@ function autoSplitSection(sec) {
   const out = []; let n = 0, moved = 0;
   for (const p of sectionProducts(sec)) {
     const items = (p.splitId || p.noSplitLine || !p.fromSpec || onPaper[p.id] ||
-      (p.article && held[p.article])) ? [] : splitSpecItems(p);
+      (p.article && held[p.article]) || !worthSplitting(p)) ? [] : splitSpecItems(p);
     if (items.length < 2) { out.push(p); continue; }
     const made = splitChildrenOf(p, items, p.spec || '').made;
     // the release log follows its mark onto the row that now holds it
@@ -13277,13 +13282,21 @@ function autoSplitSection(sec) {
   if (n) { sec.products = out; sec.__relMoved = moved; }
   return n;
 }
-const splitCaughtUp = new Set();
+/* How many sections this job has been over. Firestore's first snapshot on a cold load is routinely
+   empty — the sections arrive on the one after it — so a guard that only says "already ran" gets
+   spent on nothing and never looks again. Counting what has been seen means a later snapshot with
+   more in it is looked at too, and the pass costs nothing once everything carries a split. */
+const splitSeen = new Map();
+let splitBusy = false;
 async function autoSplitJob(jobId, sections) {
-  if (splitCaughtUp.has(jobId)) return;
-  splitCaughtUp.add(jobId);
+  const list = sections || [];
+  if (!list.length || splitBusy) return;            // nothing has arrived yet, or a pass is writing
+  if (splitSeen.has(jobId) && splitSeen.get(jobId) >= list.length) return;
+  splitSeen.set(jobId, list.length);
   const hit = [];
-  for (const s of sections) { const n = autoSplitSection(s); if (n) hit.push({ s: s, n: n }); }
+  for (const s of list) { const n = autoSplitSection(s); if (n) hit.push({ s: s, n: n }); }
   if (!hit.length) return;
+  splitBusy = true;
   try {
     for (const h of hit) {
       const f = { products: h.s.products || [] };
@@ -13291,10 +13304,10 @@ async function autoSplitJob(jobId, sections) {
       await patchSection(h.s.key, f);
     }
   } catch (e) {
-    splitCaughtUp.delete(jobId);                       // it can try again next time round
+    splitSeen.delete(jobId);                           // it can try again next time round
     console.warn('articles left whole:', e);
     return;
-  }
+  } finally { splitBusy = false; }
   if (view === 'job') { renderTable(); if (openKey) renderDrawer(); }
   const arts = hit.reduce((a, h) => a + h.n, 0);
   toast(arts + (arts === 1 ? ' article that listed several things has been' : ' articles that listed several things have been') +
