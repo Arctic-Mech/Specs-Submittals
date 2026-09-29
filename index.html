@@ -443,9 +443,14 @@ label.tick-row { display: flex; align-items: center; gap: 8px; margin-top: 13px;
 textarea.autosize { overflow: hidden; resize: none; }
 textarea.autosize[rows="1"] { min-height: 0; }
 .add-row { align-items: flex-start; }
+/* which section a filing lands on, kept in view rather than buried in a dropdown option */
+.asg-on { font-size: 12.5px; color: var(--text-2); background: var(--surface-2);
+  border-radius: 7px; padding: 7px 10px; margin-top: 8px; }
 .nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
   border-radius: 999px; padding: 2px 6px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 .nt-sort:hover { color: var(--text); border-color: var(--border-2); }
+/* a release in the log reads as the different kind of thing it is */
+.note-item.is-rel { border-left-color: var(--blue); }
 .note-item { border-left: 3px solid var(--border-2); padding: 6px 0 6px 11px; margin-bottom: 10px; }
 .note-item .nt { font-size: 13.5px; white-space: pre-wrap; }
 .note-item .nm { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 8px; }
@@ -1425,7 +1430,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.96';
+const APP_VERSION = 'v7.97';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3345,6 +3350,8 @@ function assignEmailModal(i, item, total) {
   const cats = tracking.slice();
   const noCats = !cats.length;
   const catOptions = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + `<option value="__new">➕ New category…</option>`;
+  const secOptions = sectionsOf(job).map(x =>
+    `<option value="${esc(x.key)}">${esc(x.number || '')}${x.title ? ' ' + esc(x.title) : ''}</option>`).join('');
   const coOptions = cos.map(c => `<option value="${c.id}">${esc(c.number ? 'CO ' + c.number : 'Change order')}${c.description ? ' · ' + esc(c.description) : ''}</option>`).join('');
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
     <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3>
@@ -3368,13 +3375,23 @@ function assignEmailModal(i, item, total) {
           <input class="input" id="asgNewCat" placeholder="e.g. Owner correspondence"></div>
       </div>
       <div id="asgEmailRelFields" hidden>
-        ${rels.length ? `
         <div class="field"><label class="fl">Release</label>
           <select class="input" id="asgEmailRel">${rels.map((x, i) =>
-            `<option value="${i}">${esc(x.label)}</option>`).join('')}</select></div>
+            `<option value="${i}">${esc(x.label)}</option>`).join('')}<option value="__new">➕ Start a new release…</option></select></div>
+        <div id="asgRelNew"${rels.length ? ' hidden' : ''}>
+          <div class="field"><label class="fl">Spec section</label>
+            <select class="input" id="asgRelSec">${secOptions}</select></div>
+          <div class="grid2">
+            <div class="field"><label class="fl">What went out</label>
+              <input class="input" id="asgRelLabel" placeholder="e.g. Roof drains"></div>
+            <div class="field"><label class="fl">Date released</label>
+              <input class="input" type="date" id="asgRelDate" value="${today()}"></div>
+          </div>
+        </div>
+        <!-- which section this lands on, said plainly and kept on screen whatever the picker is doing -->
+        <div class="asg-on" id="asgRelOn"></div>
         <div class="muted" style="margin-top:4px">It goes on that release, so what was agreed sits
-          next to what went out.</div>` :
-        `<div class="muted">Nothing has been released yet — record a release on a spec section first.</div>`}
+          next to what went out.</div>
       </div>
       <div id="asgEmailCoFields" hidden>
         ${cos.length ? `
@@ -3396,6 +3413,28 @@ function assignEmailModal(i, item, total) {
     document.getElementById('asgEmailCoFields').hidden = destSel.value !== 'co';
     document.getElementById('asgEmailRelFields').hidden = destSel.value !== 'rel';
   };
+  /* The section it is going on stays on screen whichever way you got here — picking an existing
+     release or starting one — so you are never filing against a line you have to decode. */
+  const relSel = document.getElementById('asgEmailRel');
+  const relNew = document.getElementById('asgRelNew');
+  const relSec = document.getElementById('asgRelSec');
+  const relOn = document.getElementById('asgRelOn');
+  const sayWhere = () => {
+    if (!relOn) return;
+    const fresh = !relSel || relSel.value === '__new';
+    let sec = null;
+    if (fresh) sec = sectionsOf(job).find(x => x.key === (relSec && relSec.value));
+    else sec = (rels[parseInt(relSel.value, 10)] || {}).sec;
+    relOn.innerHTML = sec
+      ? `Filing onto <b>${esc(sec.number || '')}${sec.title ? ' ' + esc(sec.title) : ''}</b>`
+      : 'There are no spec sections on this job yet — file it under a Job Tracking category instead.';
+  };
+  if (relSel) relSel.onchange = () => {
+    if (relNew) relNew.hidden = relSel.value !== '__new';
+    sayWhere();
+  };
+  if (relSec) relSec.onchange = sayWhere;
+  sayWhere();
 }
 function assignEmailGo(i) {
   const dest = (document.getElementById('asgEmailDest') || {}).value;
@@ -3410,10 +3449,21 @@ async function assignEmailToRelease(i) {
   const item = _assignQueue[i];
   if (!item) return;
   const sel = document.getElementById('asgEmailRel');
-  if (!sel) { toast('Nothing has been released yet', true); return; }
-  const hit = allReleases()[parseInt(sel.value, 10)];
-  if (!hit) { toast('Pick a release', true); return; }
-  const { sec, rel } = hit;
+  if (!sel) { toast('Pick a release', true); return; }
+  const fresh = sel.value === '__new';
+  let sec, rel, label;
+  if (fresh) {
+    const secSel = document.getElementById('asgRelSec');
+    sec = findSection(secSel && secSel.value);
+    if (!sec) { toast('Pick the spec section it went out on', true); return; }
+    rel = buildRelease(sec, (document.getElementById('asgRelLabel') || {}).value,
+                            (document.getElementById('asgRelDate') || {}).value);
+    label = releaseLabelFor(sec, rel);
+  } else {
+    const hit = allReleases()[parseInt(sel.value, 10)];
+    if (!hit) { toast('Pick a release', true); return; }
+    sec = hit.sec; rel = hit.rel; label = hit.label;
+  }
   stickyToast(`Filing ${item.name}…`);
   try {
     const blob = await readLooseBlob(item);
@@ -3424,15 +3474,25 @@ async function assignEmailToRelease(i) {
     const doc = { id: uid('doc'), name: item.name, size: blob.size, dir, file,
       added: Date.now(), by: meName() || '' };
     rel.emails = (rel.emails || []).concat([doc]);
-    try { markPending(sec.key); await patchSection(sec.key, { releases: sec.releases || [] }); }
+    /* A release started here is committed with the email that prompted it, in one write. If it
+       fails there is no half of it left behind — no release you did not mean to make. */
+    const wasRels = sec.releases || [], wasState = sec.releaseState, wasAt = sec.releaseChangedAt;
+    sec.releases = fresh ? wasRels.concat([rel]) : wasRels;
+    const fields = { releases: sec.releases };
+    if (fresh) {
+      sec.releaseState = stateWithRelease(sec); sec.releaseChangedAt = Date.now();
+      fields.releaseState = sec.releaseState; fields.releaseChangedAt = sec.releaseChangedAt;
+    }
+    try { markPending(sec.key); await patchSection(sec.key, fields); }
     catch (e) {
       rel.emails = (rel.emails || []).filter(x => x.id !== doc.id);
+      sec.releases = wasRels; sec.releaseState = wasState; sec.releaseChangedAt = wasAt;
       if (!already) await deleteStoredDoc({ id: 'tmp', dir, file });
       throw e;
     }
     if (!already) await deleteLoose(item);
     renderJob(); if (openKey === sec.key) renderDrawer();
-    toast(`Filed “${item.name}” on ${hit.label}`);
+    toast(`Filed “${item.name}” on ${label}`);
     assignModal(i + 1);
   } catch (e) { console.error(e); toast('Could not file that email: ' + (e.message || e), true); }
 }
@@ -13906,11 +13966,48 @@ async function removeProduct(key, id) {
 const fmtStamp = ts => ts ? fmtDate(ts) + ' · ' +
   new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
 let histEdit = null;                 // the log entry open for rewriting, if any
+/* ── the log, with the releases in it ──
+   Placing an order is a thing that happened to this section on a day, which is what the log is
+   for — having it only in a list of its own meant reading two places to find out what went on.
+   It is not copied in, though. A release is a live record: it gets edited, ticked delivered and
+   deleted, and a line written into the history at the time would be wrong by the afternoon and
+   orphaned by the morning. It is merged in as the log is drawn, off the one record. */
+const relStamp = r => {
+  const d = String((r && r.date) || '').trim();
+  const t = d ? Date.parse(d + 'T00:00:00') : NaN;
+  const at = Number(r && r.at);
+  if (isNaN(t)) return at || 0;
+  /* Recorded on the day it says it went out: sort it at the moment it was recorded, so it sits
+     among that day's notes in the order things actually happened. Back-dated, it sits on the day
+     it names — which is the day you care about, not the day you got round to typing it. */
+  return (!isNaN(at) && at >= t && at < t + 864e5) ? at : t;
+};
+function logRows(s) {
+  const rows = (s.history || []).map(h => ({ ts: h.ts || 0, h: h }));
+  for (const r of (s.releases || [])) rows.push({ ts: relStamp(r), rel: r });
+  return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
 function historyLog(s) {
-  const rows = (s.history || []).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const rows = logRows(s);
   if (!rows.length) return `<div class="muted" style="font-size:13px">Nothing logged yet.
-    Status changes turn up here on their own — add anything else worth remembering.</div>`;
-  return rows.map(h => {
+    Status changes and releases turn up here on their own — add anything else worth remembering.</div>`;
+  return rows.map(row => {
+    if (row.rel) {
+      const r = row.rel;
+      const due = r.delivered ? '' :
+        (r.expected ? ' · due ' + fmtDate(r.expected + 'T00:00:00') +
+          (r.expectedTo && r.expectedTo !== r.expected ? '–' + fmtDate(r.expectedTo + 'T00:00:00') : '') : '');
+      return `
+      <div class="note-item is-rel">
+        <div class="nt"><b>Released</b> · ${esc(r.label || 'this section')}${
+          r.delivered ? ' · <b class="delivered-tag">delivered</b>' : ''}${
+          r.note ? '\n' + esc(r.note) : ''}</div>
+        <div class="nm"><small class="muted">${r.date ? fmtDate(r.date + 'T00:00:00') : 'no date'}${esc(due)}${
+          (r.emails || []).length ? ' · ' + (r.emails || []).length + ' email' + ((r.emails || []).length === 1 ? '' : 's') : ''
+        }</small></div>
+      </div>`;
+    }
+    const h = row.h;
     const edited = h.editedAt
       ? ` · <span title="Rewritten ${fmtStamp(h.editedAt)}${h.editedBy ? ' by ' + esc(h.editedBy) : ''}">edited</span>` : '';
     const meta = `<small class="muted">${fmtStamp(h.ts)}${h.by ? ' · ' + esc(h.by) : ''}${edited}</small>`;
@@ -14565,19 +14662,59 @@ async function removeTag(key, tag) {
    The release says what went out and when it is due. The emails say what was actually agreed. */
 /* Every release in the job, flattened, so a loose email can be filed onto one without first
    knowing which section it came off. */
+/* The section's name, not just its number. Filing an email against "22 13 19" means counting
+   sections in your head; against "22 13 19 Waste Specialties" it does not. One formatter, so
+   every place that names a release names it the same way. */
+function releaseLabelFor(s, r) {
+  return (s.number || '') + (s.title ? ' ' + s.title : '') + ' · ' +
+    (r.item ? (markLabel(productById(s, r.item), r.mark) || r.label) : r.label) +
+    (r.date ? ' · ' + fmtDate(r.date + 'T00:00:00') : '');
+}
 function allReleases() {
   const out = [];
   for (const s of sectionsOf(job)) {
     for (const r of (s.releases || [])) {
-      out.push({ sec: s, rel: r,
-        label: (s.number || '') + ' · ' +
-          (r.item ? (markLabel(productById(s, r.item), r.mark) || r.label) : r.label) +
-          (r.date ? ' · ' + fmtDate(r.date + 'T00:00:00') : '') });
+      out.push({ sec: s, rel: r, label: releaseLabelFor(s, r) });
     }
   }
   return out;
 }
 function releaseById(s, relId) { return ((s && s.releases) || []).find(r => r.id === relId) || null; }
+/* Record that something went out, without the whole release form. Filing an email is the moment
+   you find out an order was placed, so this is the moment to be able to say so.
+   Building one and committing one are separate, so the email it arrived with can be attached and
+   the two written together — a release you never meant to make is worse than no release. */
+function buildRelease(sec, label, date) {
+  const when = date || today();
+  const weeks = (sec && sec.leadWeeks) || '';
+  const e = expectedRange(when, weeks);
+  return { id: uid('rel'), label: autoCap(String(label || '').trim()) || ((sec && sec.title) || 'Released'),
+    date: when, weeks: weeks, expected: e.from, expectedTo: e.to, note: '', at: Date.now() };
+}
+/* "Something went out" is not "all of it went out", and a section marked not required is not
+   suddenly part-released because an email turned up. */
+function stateWithRelease(sec) {
+  const st = sec && sec.releaseState;
+  return (st === 'released' || st === 'na') ? st : 'partial';
+}
+async function quickRelease(key, label, date) {
+  const sec = findSection(key); if (!sec) return null;
+  const rel = buildRelease(sec, label, date);
+  const was = sec.releases || [];
+  sec.releases = was.concat([rel]);
+  sec.releaseState = stateWithRelease(sec);
+  sec.releaseChangedAt = Date.now();
+  markPending(key);
+  try {
+    await patchSection(key, { releases: sec.releases, releaseState: sec.releaseState,
+      releaseChangedAt: sec.releaseChangedAt });
+  } catch (e2) {
+    sec.releases = was;                         // put it back the way it was
+    toast(writeError(e2), true);
+    return null;
+  }
+  return { sec: sec, rel: rel, label: releaseLabelFor(sec, rel) };
+}
 function pickReleaseEmails(key, relId) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
@@ -14857,12 +14994,12 @@ async function saveRelease(key, relId) {
       const w = (pr && pr.leadWeeks) || weeks;
       const e = expectedManual ? { from: expected, to: expectedTo } : expectedRange(date, w);
       s.releases.push({ id: uid('rel'), item: pick.item, mark: pick.mark,
-        label: markLabel(pr, pick.mark) || label,
+        label: markLabel(pr, pick.mark) || label, at: Date.now(),
         date, weeks: w, expected: e.from, expectedTo: e.to, note, expectedManual });
     }
     s.releaseState = releaseStateFromProducts(s);
   } else {
-    s.releases.push({ id: uid('rel'), label, date, weeks, expected, expectedTo, note, expectedManual });
+    s.releases.push({ id: uid('rel'), label, date, weeks, expected, expectedTo, note, expectedManual, at: Date.now() });
     s.releaseState = scope === 'partial' ? 'partial' : 'released';
   }
   if (weeks && !s.leadWeeks) s.leadWeeks = weeks;
