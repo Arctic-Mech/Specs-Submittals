@@ -1430,7 +1430,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.97';
+const APP_VERSION = 'v7.98';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1508,6 +1508,8 @@ const CO_STATUSES = [
 ];
 const CS = Object.fromEntries(CO_STATUSES.map(s => [s.id, s]));
 const CO_DOC_DIR = 'Change Orders';
+const CO_LOG_XLSX = 'Change Order Log.xlsx';   // the register of every CO, kept current in the CO folder
+const CO_LOG_PDF  = 'Change Order Log.pdf';    // the same log on Arctic letterhead, ready to send
 const CO_EMAIL_DIR = 'Change Orders/Emails';   // legacy shared CO-email bucket (now per-CO: coEmailDir)
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -2999,6 +3001,14 @@ async function noteFolderChanged() {
   updateFolderBar();
 }
 
+/* The files the app writes for you. They sit in the folder on purpose and are rebuilt on every
+   save, so they must never be offered back as loose files someone dropped in — which is what
+   would happen to a spreadsheet left anywhere under the documents folder. */
+const GENERATED_FILE_RE = new RegExp('^(?:' + [
+  'Change Order Log\\.(?:xlsx|pdf)', 'Submittal Register\\.(?:xlsx|pdf|csv)',
+  'register\\.(?:json|csv)', 'job\\.json'
+].join('|') + ')$', 'i');
+
 /* Which on-disk PDF paths the register already knows about. */
 function trackedPaths() {
   const set = new Set();
@@ -3035,7 +3045,7 @@ async function scanUnassignedFiles() {
     const isXlsx = /\.xls[xm]$/i.test(name);   // .xlsx and macro-enabled .xlsm
     if (!isPdf && !isEmail && !isXlsx) return;
     if (tracked.has(path) || ignored.has(path)) return;
-    if (/^register\.(json|csv)$/i.test(name) || /^job\.json$/i.test(name)) return;
+    if (GENERATED_FILE_RE.test(name)) return;   // the app wrote it; it is not yours to file
     found.push(Object.assign({ path, name, type: isPdf ? 'pdf' : isEmail ? 'email' : 'xlsx' }, loc));
   };
   try {                                   // loose files at the job-folder root
@@ -17229,6 +17239,48 @@ async function buildSubmittalLogXlsx(secs) {
     return zip.generateAsync({ type: 'uint8array' });
   }
 }
+/* ── the change order log, as a spreadsheet ──
+   The same log the PDF draws — same rows, same Main Contract line, same grand total — in the shape
+   you can sort, filter and add a column to. Built off coLogRows() so the two cannot disagree. */
+const CO_LOG_HEADS = ['ASM #', 'MOD', 'RFI, CCD, ASI', 'Description',
+                      'Pending Cost', 'Date', 'Approved Cost', 'Paid', 'Paid Date'];
+const CO_LOG_WIDTHS = [8, 8, 16, 52, 15, 12, 15, 7, 12];
+async function buildCoLogXlsx() {
+  const XL = await loadSheetJS();
+  const m = coLogMeta();
+  const rows = [
+    ['Arctic Sheet Metal — Change Order Log'],
+    ['Job Name:', m.jobName, '', '', '', '', 'DATE:', m.date],
+    [],
+    CO_LOG_HEADS.slice(),
+    ['', '', '', 'Main Contract', '', '', m.contract || '', '', '']
+  ];
+  m.rows.forEach((r, i) => rows.push([
+    i + 1, r.mod || '', r.note || '', r.desc || '',
+    r.pending || '', r.approvedDate || '', r.approved || '',
+    r.paid ? 'Yes' : '', r.paidDate || ''
+  ]));
+  const grandP = m.rows.reduce((a, r) => a + (r.pending || 0), 0);
+  const grandA = (m.contract || 0) + m.rows.reduce((a, r) => a + (r.approved || 0), 0);
+  rows.push([]);
+  rows.push(['', '', '', 'Total Pending', grandP, '', '', '', '']);
+  rows.push(['', '', '', 'Total Approved (incl. contract)', '', '', grandA, '', '']);
+  rows.push(['', '', '', 'Grand Total (Pending & Approved)', '', '', grandP + grandA, '', '']);
+  const ws = XL.utils.aoa_to_sheet(rows);
+  ws['!cols'] = CO_LOG_WIDTHS.map(w => ({ wch: w }));
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: CO_LOG_HEADS.length - 1 } }];
+  // money reads as money, so the columns add up in Excel instead of being retyped
+  for (let r = 4; r < rows.length; r++) {
+    for (const c of [4, 6]) {
+      const cell = ws[XL.utils.encode_cell({ r: r, c: c })];
+      if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = '"$"#,##0.00'; }
+    }
+  }
+  const wb = XL.utils.book_new();
+  XL.utils.book_append_sheet(wb, ws, 'Change Order Log');
+  return XL.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+
 async function exportSubmittalXlsx() {
   if (!job) return;
   const secs = visibleSections();
@@ -17499,25 +17551,40 @@ function drawCoLog(doc, m) {
     txt('Page ' + (p + 1) + ' of  ' + pages, pageW / 2, pageH - 24, { align: 'center' });
   }
 }
+/* The log's rows, in change-order order. One reading of the records, used by the PDF you download,
+   the copy kept in the folder and the spreadsheet beside it — three shapes of one log, which is
+   the only way they agree with each other. */
+function coLogRows() {
+  const list = cos.slice().sort((a, b) =>
+    String(a.number || '').localeCompare(String(b.number || ''), undefined, { numeric: true }));
+  return list.map(c => {
+    const amt = coLogNum(c.amount), st = c.status || 'pending', approved = st === 'approved';
+    const desc = /^\s*change order/i.test(c.description || '') ? (c.description || '')
+      : ('Change order #' + (c.number || '') + ' ' + (c.description || '')).trim();
+    return {
+      number: String(c.number || ''),
+      mod: (c.mod || '').trim(),
+      note: (c.rfiCcdAsi || '').replace(/\s+/g, ' '), desc,
+      pending: (!approved && st !== 'rejected') ? amt : 0,
+      approved: approved ? amt : 0,
+      approvedDate: approved ? coLogDate(c.dateApproved) : '',
+      paid: !!c.paid, paidDate: c.paidDate ? coLogDate(c.paidDate) : ''
+    };
+  });
+}
+const coLogMeta = () => ({ jobName: job.name || '', date: coLogDate(today()),
+  contract: coLogNum(job.contractAmount), rows: coLogRows() });
+function buildCoLogDoc() {
+  return ensureJsPDF().then(jspdf => {
+    const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+    drawCoLog(doc, coLogMeta());
+    return doc;
+  });
+}
 function exportCoLog() {
   if (!job) return;
   stickyToast('Building the Change Order Log…');
-  ensureJsPDF().then(jspdf => {
-    const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
-    const list = cos.slice().sort((a, b) => String(a.number || '').localeCompare(String(b.number || ''), undefined, { numeric: true }));
-    const rows = list.map(c => {
-      const amt = coLogNum(c.amount), st = c.status || 'pending', approved = st === 'approved';
-      const desc = /^\s*change order/i.test(c.description || '') ? (c.description || '') : ('Change order #' + (c.number || '') + ' ' + (c.description || '')).trim();
-      return {
-        mod: (c.mod || '').trim(),
-        note: (c.rfiCcdAsi || '').replace(/\s+/g, ' '), desc,
-        pending: (!approved && st !== 'rejected') ? amt : 0,
-        approved: approved ? amt : 0,
-        approvedDate: approved ? coLogDate(c.dateApproved) : '',
-        paid: !!c.paid, paidDate: c.paidDate ? coLogDate(c.paidDate) : ''
-      };
-    });
-    drawCoLog(doc, { jobName: job.name || '', date: coLogDate(today()), contract: coLogNum(job.contractAmount), rows });
+  buildCoLogDoc().then(doc => {
     doc.save(jobFileBase() + '_Change_Order_Log.pdf');
     toast('Change Order Log downloaded');
   }).catch(e => { console.error(e); toast('Could not build the log: ' + (e.message || e), true); });
@@ -17828,6 +17895,7 @@ function folderReadmeText() {
     '        ' + DOCS_DIR + '/Submittals/All Submittals/<section>/   its current PDF + an "Archive" folder of past ones, all named by status',
     '        ' + DOCS_DIR + '/Submittals/Archive/         superseded / replaced PDFs (old revisions)',
     '        ' + DOCS_DIR + '/RFIs/<RFI# - subject>/       one folder per RFI, each with a "Question" and "Answered" subfolder',
+    '        ' + DOCS_DIR + '/Change Orders/  "' + CO_LOG_XLSX + '" and "' + CO_LOG_PDF + '" — every change order on one page, rewritten on every save',
     '        ' + DOCS_DIR + '/Change Orders/<CO# - desc>/  one folder per change order — its PDFs + an "Emails" subfolder',
     '        ' + DOCS_DIR + '/Emails/<category>/          saved emails & attachments',
     '',
@@ -18485,7 +18553,10 @@ let folderSaveAt = 0, folderSaveState = 'idle';   // 'idle' | 'saving' | 'saved'
 let _lastSavedSig = null, _folderSaveTimer = null, _saveTicker = null;
 /* A cheap in-memory signature of everything the folder copy captures. */
 function registerSig() {
-  try { return JSON.stringify([job && job.name, job && job.number, job && job.specs, sectionsOf(job), rfis, cos, tracking, drawings]); }
+  /* The contract amount is the Main Contract line of the change order log. Leaving it out meant
+     editing it scheduled a save that then decided nothing had changed, and the log stayed stale. */
+  try { return JSON.stringify([job && job.name, job && job.number, job && job.contractAmount,
+    job && job.specs, sectionsOf(job), rfis, cos, tracking, drawings]); }
   catch (e) { return 'sig' + Date.now(); }
 }
 function relTime(ts) {
@@ -18530,6 +18601,32 @@ function saveNow() { clearTimeout(_folderSaveTimer); saveToFolder(false); }   //
 
    Neither is the backup — that is the JSON sitting beside them — so failing to build one is
    worth a line in the console and nothing more. It must never cost the save. */
+/* The change order log, in the two shapes anyone opens: the spreadsheet to work in and the PDF to
+   send. It lives in the Change Orders folder rather than with the bookkeeping, because that is
+   where someone looking for change orders will go.
+
+   Like the register exports, this is not the backup — failing to build it is worth a line in the
+   console and nothing more. It must never cost the save. */
+async function writeCoLogExports(filesRoot) {
+  const list = cos || [];
+  let coRoot;
+  try { coRoot = await walkDirCreate(filesRoot, CO_DOC_DIR); }
+  catch (e) { console.error('change order folder', e); return; }
+  if (!list.length) {
+    // nothing to log any more: take the stale one away rather than leave last month's lying about
+    for (const n of [CO_LOG_XLSX, CO_LOG_PDF]) { try { await coRoot.removeEntry(n); } catch (e) {} }
+    return;
+  }
+  try {
+    const bytes = await buildCoLogXlsx();
+    await writeFolderFile(CO_LOG_XLSX, bytes,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', coRoot);
+  } catch (e) { console.error('change order log xlsx', e); }
+  try {
+    const doc = await buildCoLogDoc();       // the same one the download gives you
+    await writeFolderFile(CO_LOG_PDF, doc.output('arraybuffer'), 'application/pdf', coRoot);
+  } catch (e) { console.error('change order log pdf', e); }
+}
 async function writeRegisterExports(ld) {
   const secs = sectionsOf(job).slice().sort(sectionOrder);
   if (!secs.length) return;
@@ -18571,6 +18668,7 @@ async function saveToFolder(auto) {
     const snap = await buildRegisterSnapshot();
     await writeFolderFile(REGISTER_JSON, JSON.stringify(snap, null, 2), 'application/json', ld);
     await writeRegisterExports(ld);
+    await writeCoLogExports(filesRoot);       // the change order log, beside the change orders
     await ensureFolderDocs(jobFolder);
 
     folderSaveAt = Date.now(); folderSaveState = 'saved'; _lastSavedSig = registerSig();
