@@ -696,6 +696,31 @@ const testCode = `
         return !bad && good === '2026-12-18' && !planItemById(currentPlan(), 'm').date;
       })()); }
 
+  /* The page is columns. Every row puts the same eight things out in the same order, so nothing on
+     one line can shove the dates on another line sideways, and a line with work under it reads as
+     a heading rather than as one more line in the list. */
+  { schedules[0].items = [
+      { id:'m',  name:'Turn on', date:'2026-12-18', days:0, parent:null, order:10 },
+      { id:'ic', name:'Install components', days:0, parent:null, order:20 },
+      { id:'i1', name:'Install ductwork', who:'Arctic', days:1, parent:'ic', order:10 },
+      { id:'w',  name:'Set the pumps', who:'Arctic', days:2, parent:null, order:30 },
+      { id:'o',  name:'Order the pumps', kind:'order', days:28, parent:'w', order:10 } ];
+    var rh = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    var hh = planOutlineHtml(currentPlan(), rh.rows.filter(keepRow), {});
+    var rowOf = function (n) { return hh.split('out-row').find(function (c) { return c.indexOf(n) > 0; }); };
+    ck('columns: every row puts the same eight things out in the same order',
+      hh.split('class=' + Q + 'out-row').slice(1).every(function (c) {
+        var cell = c.slice(0, c.indexOf('</div>') > 0 ? c.length : c.length);
+        return ['out-step','out-tick','out-name','out-who','out-days','out-when','out-meta','out-act']
+          .reduce(function (at, k) { var i = cell.indexOf(k); return (at !== -1 && i > at) ? i : -1; }, 0) > 0;
+      }));
+    ck('columns: a line with work under it is banded as the heading it is',
+      rowOf('Install components').indexOf('is-head') > 0);
+    ck('columns: a line that only has something on order under it is not a heading',
+      rowOf('Set the pumps').indexOf('is-head') < 0 &&
+      rowOf('Install ductwork').indexOf('is-head') < 0 &&
+      rowOf('Turn on').indexOf('is-head') < 0); }
+
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
       { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },

@@ -474,17 +474,29 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .sch-hols .hol .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 10px; }
 /* the outline */
 .out-list { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
-  overflow: hidden; }
-.out-row { display: flex; align-items: center; gap: 7px; padding: 3px 10px 3px 0;
-  padding-left: calc(10px + var(--d) * 22px); border-bottom: 1px solid var(--border);
+  overflow: hidden; --nx: 72px; }
+/* Columns, not a row of parts shoved about by whatever happens to be in them. Laid out as a flex
+   row, a line carrying three tags pulled its own dates sixty pixels left of the line above it, and
+   the step numbers staggered with the indent, so nothing down the page lined up with anything. Only
+   the name steps in now; everything else holds its column. */
+.out-row { display: grid; align-items: center; gap: 7px;
+  grid-template-columns: 30px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
+  padding: 3px 10px; border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent; position: relative; }
 .out-row:last-of-type { border-bottom: none; }
 .out-row:hover { background: var(--surface-2); }
 /* the indent is the whole grammar of the thing, so it is drawn rather than left to be counted */
 .out-row[style*="--d:1"]::before, .out-row[style*="--d:2"]::before, .out-row[style*="--d:3"]::before,
 .out-row[style*="--d:4"]::before, .out-row[style*="--d:5"]::before, .out-row[style*="--d:6"]::before {
-  content: ''; position: absolute; left: calc(10px + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
+  content: ''; position: absolute; left: calc(var(--nx) + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
   border-left: 1px solid var(--border-2); }
+/* A line with lines under it is a heading, so it reads as a band across the page rather than as one
+   more line in the list. */
+.out-row.is-head { background: var(--surface-3); border-top: 1px solid var(--border-2); }
+.out-row.is-head:first-child { border-top: none; }
+.out-row.is-head .out-name { font-weight: 700; font-size: 14px; color: var(--text); }
+.out-row.is-head .out-step, .out-row.is-head .out-days { color: var(--text-2); font-weight: 700; }
+.out-row.is-head .out-when { color: var(--text-2); }
 .out-row.is-late { border-left-color: var(--red); }
 .out-row.is-held { border-left-color: var(--amber); }
 .out-row.is-loose { border-left-color: var(--border-2); }
@@ -496,36 +508,37 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-step:hover, .out-who:hover, .out-days:hover { border-color: var(--border); }
 .out-step:focus, .out-who:focus, .out-days:focus { border-color: var(--accent);
   background: var(--surface); color: var(--text); }
-.out-step { flex: none; width: 30px; text-align: right; font-size: 10.5px;
+.out-step { min-width: 0; text-align: right; font-size: 10.5px;
   font-variant-numeric: tabular-nums; }
-.out-who { flex: none; width: 116px; font-size: 11.5px; text-overflow: ellipsis; }
-.out-days { flex: none; width: 46px; font-size: 11.5px; text-align: right; }
+.out-who { min-width: 0; font-size: 11.5px; text-overflow: ellipsis; }
+.out-days { min-width: 0; font-size: 11.5px; text-align: right; }
 .out-days::-webkit-outer-spin-button, .out-days::-webkit-inner-spin-button { opacity: 0; }
 .out-days:focus::-webkit-outer-spin-button, .out-days:focus::-webkit-inner-spin-button { opacity: 1; }
-.out-when { flex: none; width: 182px; font-size: 11.5px; color: var(--text-3); cursor: pointer;
+.out-when { min-width: 0; overflow: hidden; font-size: 11.5px; color: var(--text-3); cursor: pointer;
   padding: 3px 4px; border: 1px solid transparent; border-radius: 5px;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .out-when:hover { border-color: var(--border); }
 .out-when.is-pinned { color: var(--accent); font-weight: 600; }
 .out-when i { color: var(--text-3); opacity: .6; }
-.out-datein { width: 174px; padding: 1px 4px; font-size: 11.5px; }
+.out-datein { width: 100%; padding: 1px 4px; font-size: 11.5px; }
 .out-row.is-clash { border-left-color: var(--red); }
 .out-tag.is-clash { background: var(--red-sf); color: var(--red); font-weight: 600; }
 .out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
-  padding: 0; flex: none; }
+  padding: 0; text-align: center; }
 .out-tick:hover { color: var(--accent); }
 .out-ms { color: var(--accent); flex: none; font-size: 11px; }
-.out-name { flex: 1; min-width: 0; border: none; background: none; font: inherit; font-size: 13.5px;
-  color: var(--text); padding: 5px 2px; outline: none; }
+.out-name { min-width: 0; border: none; background: none; font: inherit; font-size: 13.5px;
+  color: var(--text); padding: 5px 2px; padding-left: calc(2px + var(--d) * 22px); outline: none; }
 .out-name:focus { background: var(--accent-sf); border-radius: 5px; }
 .out-name::placeholder { color: var(--text-3); font-style: italic; }
-.out-meta { display: flex; align-items: center; gap: 8px; flex: none; font-size: 11.5px; color: var(--text-3); }
+.out-meta { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;
+  font-size: 11.5px; color: var(--text-3); }
 .out-who { color: var(--text-2); }
 .out-when { font-variant-numeric: tabular-nums; }
 .out-tag { border-radius: 999px; padding: 1px 7px; font-size: 10px; white-space: nowrap; }
 .out-tag.is-hold { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
 .out-tag.is-late { background: var(--red-sf); color: var(--red); font-weight: 600; }
-.out-act { display: flex; gap: 1px; flex: none; opacity: 0; }
+.out-act { display: flex; gap: 1px; justify-content: flex-end; opacity: 0; }
 .out-row:hover .out-act, .out-row:focus-within .out-act { opacity: 1; }
 .out-act .x { border: none; background: none; color: var(--text-3); cursor: pointer;
   font-size: 11px; padding: 0 3px; }
@@ -535,8 +548,8 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .pick-row { display: flex; align-items: center; gap: 8px; padding: 4px 9px; font-size: 13px; }
 .pick-row:hover { background: var(--surface-2); }
 .pick-name { min-width: 170px; flex: 1; }
-.out-days.is-rolled { color: var(--text-3); font-style: italic; cursor: default;
-  flex: none; width: 46px; text-align: right; font-size: 11.5px; padding: 3px 4px; }
+.out-days.is-rolled { color: var(--text-3); cursor: pointer;
+  min-width: 0; text-align: right; font-size: 11.5px; padding: 3px 4px; }
 .out-tag.is-ov { background: var(--surface-3); color: var(--text-3); }
 /* the bar that is up while you say what has to happen first */
 .pick-bar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px;
@@ -550,13 +563,13 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-tick.is-sel { color: var(--accent); font-size: 14px; }
 .out-tick.is-me { color: var(--accent); cursor: default; }
 .out-tick.is-off { color: var(--text-3); opacity: .5; cursor: default; }
-.out-who.is-none { flex: none; width: 116px; }
+.out-who.is-none { min-width: 0; }
 .out-tag.is-slack { background: var(--surface-3); color: var(--text-3); }
 .out-tag.is-over { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
 button.out-tag { border: none; cursor: pointer; font-family: inherit; }
 button.out-tag.is-ov { opacity: .55; }
 button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(--accent); font-weight: 600; }
-.out-days.in-cell { width: 100%; border-color: var(--accent); }
+.out-days.in-cell { width: 100%; border-color: var(--accent); text-align: right; }
 .out-row.is-lead .out-name { font-style: italic; }
 .pick-lead { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
 .pick-lead .input { width: 64px; }
@@ -649,9 +662,14 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 .cd-item.is-late { background: var(--red-sf); color: var(--red); }
 .cd-item.is-held { background: var(--amber-sf); color: var(--amber); }
 .cd-item.is-done { opacity: .5; text-decoration: line-through; }
+@media (max-width: 1180px) {
+  .out-row { grid-template-columns: 26px 18px minmax(90px, 1fr) 88px 40px 150px minmax(0, 120px) auto; }
+}
 @media (max-width: 760px) {
   .sl-head { display: none; }
   .sl-row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
+  .out-row { grid-template-columns: 24px 18px minmax(80px, 1fr) 40px 118px auto; }
+  .out-row .out-who, .out-row .out-meta { display: none; }
 }
 .nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
   border-radius: 999px; padding: 2px 6px; cursor: pointer; text-transform: none; letter-spacing: 0; }
@@ -1638,7 +1656,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.07';
+const APP_VERSION = 'v8.08';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13578,7 +13596,7 @@ function planOutlineHtml(p, rows, res) {
              onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
-          r.id === planPick ? ' is-picked' : ''}" style="--d:${r.depth}">
+          r.rolled ? ' is-head' : ''}${r.id === planPick ? ' is-picked' : ''}" style="--d:${r.depth}">
         <input class="out-step" value="${step}" title="Step ${step} — type another number to move it there"
           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
           onchange="moveToStep('${r.id}',this.value)">
