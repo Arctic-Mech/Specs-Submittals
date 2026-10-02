@@ -1656,7 +1656,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.08';
+const APP_VERSION = 'v8.09';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12711,6 +12711,7 @@ function nearestWorkDay(iso, cal, dir) {
   return iso;
 }
 const prevWorkDay = (iso, cal) => nearestWorkDay(dShift(iso, -1), cal, -1);
+const nextWorkDay = (iso, cal) => nearestWorkDay(dShift(iso, 1), cal, 1);
 /* n working days back from a day that is itself worked, counting that day as the first: one day
    of work finishing Friday starts Friday. */
 function subWorkDays(iso, n, cal) {
@@ -12827,6 +12828,21 @@ function planDates(plan, cal) {
     memo[it.id] = v;
     return v;
   };
+  /* Which way the plan is written. Back from the end is the pull plan: a date on a line is the day
+     it has to be done by, and everything under it is fitted in front of it. Forward from the start
+     is the same plan read the other way: a date is the day a line begins, and what comes after it
+     follows on. The page reads the same either way — step one at the bottom, step x at the top — so
+     all that changes is what a date on a line means. */
+  const fwd = planBasis(plan) === 'start';
+  /* The end of a line that is fixed: the day it finishes working back, the day it starts going
+     forward. A date cannot land on a day the job does not work, so it moves to the nearest one that
+     it does — later going forward, earlier working back. */
+  const edgeOf = iso => nearestWorkDay(iso, cal, fwd ? 1 : -1);
+  const spanFrom = (edge, n) => !n ? edge
+    : (fwd ? addWorkDays(edge, n - 1, cal) : subWorkDays(edge, n - 1, cal));
+  const stepOver = iso => fwd ? nextWorkDay(iso, cal) : prevWorkDay(iso, cal);
+  const past = (a, b) => fwd ? a < b : a > b;
+
   const out = Object.create(null), seen = Object.create(null);
   /* Lead time counts down in plain days to the morning the work starts. */
   const walkLead = (it, endBy) => {
@@ -12843,48 +12859,52 @@ function planDates(plan, cal) {
     const before = start ? dShift(start, -1) : '';
     for (const k of kidsOf(it)) walkLead(k, before);
   };
-  /* endBy is the last day this line may run to. */
-  const walk = (it, endBy) => {
+  /* bound is the day this line is held to: the last day it may run to working back, the first day
+     it may begin going forward. */
+  const walk = (it, bound) => {
     if (seen[it.id]) return; seen[it.id] = 1;
     const total = span(it, Object.create(null));
-    let start = '', finish = '', anchored = false, clash = false;
+    let edge = '', far = '', anchored = false, clash = false;
     if (pinnedDate(it)) {
-      /* A date typed on a line is the day it has to be done by — they are end targets, which is what
-         a plan written backwards is made of. The line is fitted to end there and everything under it
-         works back from that, so pinning a date part way down moves its own branch and nothing else.
-         A deadline cannot fall on a day the job does not work, so it moves to the last one that it
-         does, and the plan says it has. */
-      finish = nearestWorkDay(it.date, cal, -1);
-      start = total ? subWorkDays(finish, total - 1, cal) : finish;
+      /* A date typed on a line is the one end of it that is fixed. The line is fitted from there and
+         everything under it works out from that, so pinning a date part way down moves its own
+         branch and nothing else. */
+      edge = edgeOf(it.date);
+      far = spanFrom(edge, total);
       anchored = true;
-      if (endBy && finish > endBy) clash = true;
-    } else if (endBy) {
-      finish = endBy;
-      start = total ? subWorkDays(finish, total - 1, cal) : finish;
+      if (bound && past(edge, bound)) clash = true;
+    } else if (bound) {
+      edge = bound;
+      far = spanFrom(edge, total);
       anchored = true;
     }
+    const start = fwd ? edge : far, finish = fwd ? far : edge;
     out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash, total: total };
-    /* What is under it fills its window, the top one last and each one before it earlier, so the
-       page reads in the order the work happens. An overlapping line is fitted into the window
-       without moving the next one along, and is held to the window rather than running out of it. */
-    let cur = finish;
-    for (const k of fieldKids(it)) {
+    /* What is under it fills its window in the order the work happens: step one of it first, each
+       one after that following on. An overlapping line is fitted into the window without moving the
+       next one along, and is held to the window rather than running out of it. */
+    let cur = edge;
+    for (const k of (fwd ? fieldKids(it).slice().reverse() : fieldKids(it))) {
       walk(k, cur);
       const o = out[k.id];
       if (!o || !o.start) continue;
-      if (k.overlap) { if (start && o.start < start) { o.start = start; o.clash = true; } }
-      else cur = prevWorkDay(o.start, cal);
+      if (k.overlap) {
+        if (fwd) { if (finish && o.finish > finish) { o.finish = finish; o.clash = true; } }
+        else if (start && o.start < start) { o.start = start; o.clash = true; }
+      } else cur = stepOver(fwd ? o.finish : o.start);
     }
+    /* Whichever way round the plan is written, what is on order has to be in before the work
+       starts. That end of it never flips. */
     for (const k of leadKids(it)) walkLead(k, start ? prevWorkDay(start, cal) : '');
   };
-  /* The top level is a sequence like any other: the line above is what the next one has to be
-     finished before. Something on order at the top level waits on nothing, so it does not take a
-     turn in that sequence. */
+  /* The top level is a sequence like any other, taken in the order the work happens. Something on
+     order at the top level waits on nothing, so it does not take a turn in that sequence. */
   let bound = '';
-  for (const r of tr.roots) {
+  for (const r of (fwd ? tr.roots.slice().reverse() : tr.roots)) {
     if (isLead(r)) { walkLead(r, ''); continue; }
-    walk(r, bound ? prevWorkDay(bound, cal) : '');
-    bound = (out[r.id] && out[r.id].start) || bound;
+    walk(r, bound);
+    const o = out[r.id], e = o && (fwd ? o.finish : o.start);
+    if (e) bound = stepOver(e);
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -12937,10 +12957,22 @@ function planDates(plan, cal) {
     clashes: rows.filter(r => r.clash).length,
     rootless: rows.filter(r => !r.anchored && r.depth === 0).length,
     strays: rows.filter(r => r.stray).length,
+    fwd: fwd,
     over: rows.filter(r => r.slack != null && r.slack < 0).length,
     behind: rows.filter(r => r.late).length };
 }
 
+/* Which end of the plan the dates are built from. Plans made before there was a choice were all
+   worked back from the end, so that is what no answer means. */
+const planBasis = p => (p && String(p.basis || '')) === 'start' ? 'start' : 'end';
+async function setPlanBasis(v) {
+  const p = currentPlan(); if (!p) return;
+  const want = v === 'start' ? 'start' : 'end';
+  if (planBasis(p) === want) return;
+  p.basis = want;
+  renderSchedule();
+  await savePlan(p);
+}
 function planById(id) { return (schedules || []).find(p => p.id === id) || null; }
 function currentPlan() { return planById(openPlan) || (schedules || [])[0] || null; }
 function planItems(p) { return (p && p.items) || []; }
@@ -13437,17 +13469,25 @@ function renderScheduleInner() {
 
   const warn = [];
   if (res.undated) warn.push(res.undated + ' milestone' + (res.undated === 1 ? ' has' : 's have') + ' no date yet — nothing can be worked back from ' + (res.undated === 1 ? 'it' : 'them'));
-  for (const r of rows) if (r.pinned && r.start && r.start !== r.item.date)
-    warn.push('"' + (r.item.name || 'A line') + '" is dated ' + shortDate(r.item.date) +
-      ', a day this job does not work — it is taken as ' + shortDate(r.start) + ' instead');
+  /* The end of the line that was actually pinned: the day it finishes working back, the day it
+     starts going forward. Comparing the typed date against the wrong end of a line that runs more
+     than a day said every one of them fell on a weekend. */
+  for (const r of rows) {
+    if (!r.pinned) continue;
+    const edge = res.fwd ? r.start : r.finish;
+    if (edge && edge !== r.item.date)
+      warn.push('"' + (r.item.name || 'A line') + '" is dated ' + shortDate(r.item.date) +
+        ', a day this job does not work — it is taken as ' + shortDate(edge) + ' instead');
+  }
   if (res.clashes) warn.push(res.clashes + ' dated line' + (res.clashes === 1 ? '' : 's') +
-    ' run' + (res.clashes === 1 ? 's' : '') + ' past what it has to be finished before');
+    (res.fwd ? ' start' + (res.clashes === 1 ? 's' : '') + ' before what has to happen first is done'
+             : ' run' + (res.clashes === 1 ? 's' : '') + ' past what it has to be finished before'));
   /* Only once something has a date to work back from. Until then every line is dateless, which is
      just what a plan looks like while it is being written. */
   const anyDated = res.dated > 0;
-  if (anyDated && res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits' : 's sit') +
-    ' at the top with no date — put ' + (res.rootless === 1 ? 'it' : 'them') + ' under something, or make ' +
-    (res.rootless === 1 ? 'it a milestone' : 'them milestones'));
+  if (anyDated && res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits on its own' : 's sit on their own') +
+    ' with no date — put ' + (res.rootless === 1 ? 'it' : 'them') + ' under something, or give ' +
+    (res.rootless === 1 ? 'it a date' : 'them dates'));
   if (res.behind) warn.push(res.behind + ' line' + (res.behind === 1 ? '' : 's') + ' should have started already');
 
   host.innerHTML = `
@@ -13464,6 +13504,10 @@ function renderScheduleInner() {
         <button class="${planView === 'wall' ? 'on' : ''}" onclick="setPlanView('wall')">Wall</button>
         <button class="${planView === 'list' ? 'on' : ''}" onclick="setPlanView('list')">List</button>
         <button class="${planView === 'calendar' ? 'on' : ''}" onclick="setPlanView('calendar')">Calendar</button>
+      </div>
+      <div class="seg" title="Which end the dates are built from. A date on a line is the day it has to be done by working back, and the day it starts going forward.">
+        <button class="${planBasis(p) === 'end' ? 'on' : ''}" onclick="setPlanBasis('end')">Back from the end</button>
+        <button class="${planBasis(p) === 'start' ? 'on' : ''}" onclick="setPlanBasis('start')">Forward from the start</button>
       </div>
       <select class="input sm" style="max-width:190px" onchange="setPlanWho(this.value)">
         <option value="">Everyone</option>
@@ -13615,7 +13659,9 @@ function planOutlineHtml(p, rows, res) {
           : `<input class="out-days" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
                title="${r.lead ? 'Days of lead time' : 'Working days'}" onchange="setLineDays('${r.id}',this.value)">`}
         <span class="out-when${r.pinned ? ' is-pinned' : ''}" onclick="editLineDate('${r.id}')"
-          title="${r.pinned ? 'Set to this date — click to change or clear it' : 'Click to set a date'}"
+          title="${r.pinned
+            ? (res && res.fwd ? 'Starts on this date' : 'Has to be done by this date') + ' — click to change or clear it'
+            : 'Click to set ' + (res && res.fwd ? 'the day it starts' : 'the day it has to be done by')}"
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
           ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
@@ -13628,7 +13674,9 @@ function planOutlineHtml(p, rows, res) {
                  title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${
                  r.slack < 0 ? (0 - r.slack) + 'd over' : r.slack + 'd left'}</span>`
             : ''}
-          ${r.clash ? `<span class="out-tag is-clash" title="This date runs past what it has to be finished before">clashes</span>` : ''}
+          ${r.clash ? `<span class="out-tag is-clash" title="${res && res.fwd
+            ? 'This date is before what has to happen first is done'
+            : 'This date runs past what it has to be finished before'}">clashes</span>` : ''}
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">

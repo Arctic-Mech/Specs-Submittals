@@ -721,6 +721,106 @@ const testCode = `
       rowOf('Install ductwork').indexOf('is-head') < 0 &&
       rowOf('Turn on').indexOf('is-head') < 0); }
 
+  /* The same plan written the other way round. Working back from the end, a date is the day a line
+     has to be done by. Going forward from the start, it is the day the line begins and what comes
+     after it follows on. The page reads the same either way \u2014 step one at the bottom. */
+  { var fitems = [
+      { id:'m', name:'Ceilings closed', days:2, parent:null, order:10 },
+      { id:'t', name:'Trim out', days:5, parent:null, order:20 },
+      { id:'h', name:'Hang duct', date:'2026-12-01', days:0, parent:null, order:30 },
+      { id:'d', name:'Duct on site', days:1, parent:'h', order:10 },
+      { id:'g', name:'Hangers in', days:4, parent:'h', order:20 },
+      { id:'o', name:'Order the duct', kind:'order', days:28, parent:'g', order:10 } ];
+    var ff = planDates({ id:'pf', basis:'start', items: fitems }, five);
+    ck('basis: going forward, a date on a line is the day it starts',
+      ff.by['h'].start === '2026-12-01' && ff.fwd === true);
+    ck('basis: step one goes first and the rest follow on',
+      ff.by['g'].start === '2026-12-01' && ff.by['g'].finish === '2026-12-04' &&
+      ff.by['d'].start === '2026-12-07' && ff.by['d'].finish === '2026-12-07');
+    ck('basis: a line with work under it is still exactly that work',
+      ff.by['h'].start === ff.by['g'].start && ff.by['h'].finish === ff.by['d'].finish &&
+      ff.by['h'].days === 5);
+    ck('basis: and the lines above it follow on, each after the one below',
+      ff.by['t'].start === '2026-12-08' && ff.by['t'].finish === '2026-12-14' &&
+      ff.by['m'].start === '2026-12-15' && ff.by['m'].finish === '2026-12-16');
+    ck('basis: what is on order still has to be in before the work starts, whichever way round',
+      ff.by['o'].finish === '2026-11-30' && ff.by['o'].start === '2026-11-03' &&
+      ff.by['o'].finish < ff.by['g'].start);
+
+    /* The same shape worked back from the end instead. */
+    var ee = planDates({ id:'pe', basis:'end', items: fitems.map(function (x) {
+      return Object.assign({}, x, x.id === 'h' ? { date:'' } : x.id === 'm' ? { date:'2026-12-18' } : {});
+    }) }, five);
+    ck('basis: working back, that same date is the day it has to be done by',
+      ee.by['m'].finish === '2026-12-18' && ee.fwd === false);
+    ck('basis: and the plan runs the other way out from it',
+      ee.by['t'].finish === '2026-12-16' && ee.by['h'].finish === '2026-12-09' &&
+      ee.by['g'].start === '2026-12-03');
+
+    ck('basis: a plan that never said which way round is worked back from the end, as it always was',
+      planBasis({}) === 'end' && planBasis({ basis:'' }) === 'end' &&
+      planBasis({ basis:'start' }) === 'start' && planDates({ items: fitems }, five).fwd === false);
+
+    ck('basis: a start date on a day the job does not work moves on to the next one it does',
+      planDates({ basis:'start', items: [{ id:'a', name:'A', date:'2026-12-05', days:1, parent:null, order:10 }] },
+        five).by['a'].start === '2026-12-07' &&
+      planDates({ basis:'end', items: [{ id:'a', name:'A', date:'2026-12-05', days:1, parent:null, order:10 }] },
+        five).by['a'].finish === '2026-12-04');
+
+    ck('basis: going forward the page still reads in order, and nothing runs outside its parent',
+      (function () {
+        var seq = ff.rows.filter(keepRow), ok = true;
+        var chain = function (list) {
+          for (var i = 1; i < list.length; i++) {
+            var x = ff.by[list[i - 1].id], y = ff.by[list[i].id];
+            if (x.start && y.finish && y.finish >= x.start) ok = false;
+          }
+        };
+        chain(ff.tree.roots);
+        seq.forEach(function (r) {
+          chain(ff.tree.kids[r.id] || []);
+          var pw = r.item.parent ? ff.by[r.item.parent] : null;
+          if (pw && pw.start && r.start && !r.lead &&
+              (r.start < pw.start || r.finish > pw.finish)) ok = false;
+        });
+        return ok;
+      })()); }
+
+  /* The whole panel, warnings and all. A line that runs more than a day has two ends, and the
+     warning about a date landing on a day the job does not work was reading the wrong one. */
+  { var panel = {}, heldCal = job.workCal;
+    job.workCal = { days:[1,2,3,4,5], holidays:[], shift:'5x8' };
+    __stubEl('schedPanel', panel);
+    var drawPlan = function (basis, items) {
+      schedules[0].basis = basis; schedules[0].items = items;
+      panel.innerHTML = ''; renderScheduleInner();
+      return String(panel.innerHTML || '');
+    };
+    var warnsIn = function (h) {
+      return h.indexOf('sch-warn') < 0 ? [] :
+        h.slice(h.indexOf('sch-warn')).split('<div>').slice(1).map(function (c) { return c.split('</div>')[0]; });
+    };
+    var offDay = function (ws) { return ws.filter(function (w) { return w.indexOf('does not work') > 0; }); };
+    var clean = drawPlan('end', [
+      { id:'m', name:'Turn on', date:'2026-12-18', days:3, parent:null, order:10 } ]);
+    ck('panel: a line that runs three days to a working day is not called a weekend',
+      offDay(warnsIn(clean)).length === 0);
+    var odd = drawPlan('end', [
+      { id:'m', name:'Turn on', date:'2026-12-19', days:3, parent:null, order:10 } ]);
+    ck('panel: a deadline on a day the job does not work is taken as the last day it does',
+      offDay(warnsIn(odd)).length === 1 && offDay(warnsIn(odd))[0].indexOf('Dec 18, 2026') > 0);
+    var oddF = drawPlan('start', [
+      { id:'m', name:'Turn on', date:'2026-12-19', days:3, parent:null, order:10 } ]);
+    ck('panel: and a start date on one is taken as the next day it does',
+      offDay(warnsIn(oddF)).length === 1 && offDay(warnsIn(oddF))[0].indexOf('Dec 21, 2026') > 0);
+    ck('panel: the bar offers both ways round, and shows which one is on',
+      oddF.indexOf('Forward from the start') > 0 && oddF.indexOf('Back from the end') > 0 &&
+      oddF.indexOf('class=' + Q + 'on' + Q + ' onclick=' + Q + "setPlanBasis('start')") > 0 &&
+      clean.indexOf('class=' + Q + 'on' + Q + ' onclick=' + Q + "setPlanBasis('end')") > 0);
+    delete schedules[0].basis;
+    job.workCal = heldCal;
+    __stubEl('schedPanel', null); }
+
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
       { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },
