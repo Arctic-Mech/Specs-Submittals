@@ -1664,7 +1664,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.16';
+const APP_VERSION = 'v8.17';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13247,6 +13247,19 @@ function headingTakesItsParts(p, parentId) {
   const kids = planItems(p).filter(x => (x.parent || null) === parentId && !isLead(x));
   if (kids.length === 1 && Number(par.days) === 1) par.days = 0;
 }
+/* Whatever runs alongside a line goes where it goes. They are one step, and a step cannot be left
+   behind in two places — the pairing only holds between lines sitting beside each other, so a lead
+   moved on its own would quietly lose whatever was running with it. */
+const mateIdsOf = (p, id) => (planTree(p).mates[id] || []).map(m => m.id);
+function moveMatesWith(p, id, ids) {
+  const it = planItemById(p, id); if (!it || !ids || !ids.length) return;
+  ids.forEach((mid, i) => {
+    const m = planItemById(p, mid);
+    if (!m) return;
+    m.parent = it.parent || null;
+    m.order = (Number(it.order) || 0) + (i + 1) / 1000;
+  });
+}
 function blankLine(p, parent, order) {
   return { id: uid('li'), name: '', who: '', days: 1, parent: parent || null,
     order: order == null ? nextOrder(p, parent) : order, hold: '', note: '', done: false };
@@ -13305,6 +13318,7 @@ async function indentLine(id, out) {
   const p = currentPlan(); if (!p) return;
   stashLine(id);
   const it = planItemById(p, id); if (!it) return;
+  const ms = mateIdsOf(p, id);
   const sibs = planItems(p).filter(x => (x.parent || null) === (it.parent || null))
     .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
   const i = sibs.findIndex(x => x.id === id);
@@ -13321,6 +13335,7 @@ async function indentLine(id, out) {
     it.order = nextOrder(p, it.parent);
     headingTakesItsParts(p, it.parent);
   }
+  moveMatesWith(p, id, ms);
   renderSchedule(); focusLine(id);
   await savePlan(p);
 }
@@ -13419,13 +13434,20 @@ async function setMate(id, hostId) {
   if (tr.leadOf[it.id] === host.id) { await clearMate(id, true); return; }
   if (tr.leadOf[host.id] !== host.id) return;          // that one already runs alongside something
   if (planAncestors(p, host.id)[it.id]) return;        // and it cannot be its own parent's partner
+  /* Only one beside it in the same list. The run is a sequence of the lines at one level, so a line
+     could only pair across levels by being moved out of whatever it was under — which it was, and
+     quietly, and taking the pairing off again never put it back. The heading above it then stopped
+     counting it, and came out shorter than the work in it. */
+  if ((host.parent || null) !== (it.parent || null)) {
+    toast('It can only run alongside a line at the same level', true);
+    return;
+  }
   /* The two of them share one length from here on, so it starts as the longer of what they were and
      nothing silently gets shorter. It lives on the line holding the step number. */
   const leafKids = x => planItems(p).filter(y => (y.parent || null) === x.id && !isLead(y));
   if (!leafKids(host).length && !leafKids(it).length) {
     host.days = Math.max(Math.round(Number(host.days) || 0), Math.round(Number(it.days) || 0));
   }
-  it.parent = host.parent || null;
   it.alongside = host.id;
   delete it.overlap;
   const mates = (tr.mates[host.id] || []).filter(m => m.id !== it.id).length;
@@ -13449,8 +13471,10 @@ async function clearMate(id, stay) {
 async function toggleNeed(parentId, childId) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, childId); if (!it) return;
+  const ms = mateIdsOf(p, childId);
   if (it.parent === parentId) { it.parent = null; it.order = nextOrder(p, null); }
   else { it.parent = parentId; it.order = nextOrder(p, parentId); headingTakesItsParts(p, parentId); }
+  moveMatesWith(p, childId, ms);
   renderSchedule();
   await savePlan(p);
 }
@@ -13826,6 +13850,7 @@ function planOutlineHtml(p, rows, res) {
   /* Or the other thing you can be in the middle of: saying which line this one runs alongside. */
   const mate = (!me && planMate) ? planItemById(p, planMate) : null;
   const mateUp = mate ? planAncestors(p, planMate) : null;
+  const mateLvl = mate ? (mate.parent || null) : null;
   const tr0 = planTree(p);
   return `<div class="out-list${(me || mate) ? ' is-picking' : ''}">
     <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
@@ -13840,8 +13865,10 @@ function planOutlineHtml(p, rows, res) {
       const tick = mate
         ? (r.id === planMate
             ? `<span class="out-tick is-me" title="This is the line you are placing — tick the one it runs alongside">∥</span>`
-            : ((mateUp[r.id] || tr0.leadOf[r.id] !== r.id)
-                ? `<span class="out-tick is-off" title="This one cannot be its partner">·</span>`
+            : ((r.item.parent || null) !== mateLvl
+                ? `<span class="out-tick is-off" title="Not beside it — put it at this level first, and then it can run alongside it">·</span>`
+                : (mateUp[r.id] || tr0.leadOf[r.id] !== r.id)
+                ? `<span class="out-tick is-off" title="${tr0.leadOf[r.id] !== r.id ? 'This one already runs alongside something' : 'This one cannot be its partner'}">·</span>`
                 : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="setMate('${planMate}','${r.id}')"
                      title="Run it alongside this one">${r.id === (res.by[planMate] || {}).mate ? '☑' : '☐'}</button>`))
         : me
@@ -13997,8 +14024,10 @@ async function moveToStep(id, v) {
   for (let i = from + 1; i < flat.length && flat[i].depth > flat[from].depth; i++) mark(flat[i]);
   if (below[target.item.id]) { toast('That one is already under this line', true); renderSchedule(); return; }
   const it = planItemById(p, id);
+  const ms = mateIdsOf(p, id);
   it.parent = target.item.parent || null;
   it.order = (Number(target.item.order) || 0) - (toIdx > from ? -1 : 1) * 0.5;
+  moveMatesWith(p, id, ms);
   renderSchedule();
   await savePlan(p);
 }

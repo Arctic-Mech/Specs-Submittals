@@ -693,6 +693,40 @@ const testCode = `
       })());
     planMate = null; }
 
+  /* Pairing across levels could only work by moving the line out of whatever it was under, which it
+     did quietly, and taking the pairing off again never put it back \u2014 so the heading above it
+     stopped counting that work and came out shorter than what was in it. */
+  { schedules[0].items = [
+      { id:'tmp', name:'Temp', days:0, parent:null, order:10 },
+      { id:'a', name:'Run flex', days:8, parent:'tmp', order:20 },
+      { id:'b', name:'Open shaft', days:8, parent:'tmp', order:30 },
+      { id:'z', name:'Something at the top', days:2, parent:null, order:99 } ];
+    planMate = 'a';
+    await setMate('a', 'z');
+    ck('level: a line cannot be paired with one at another level, so it is not moved out',
+      planItemById(currentPlan(), 'a').parent === 'tmp' &&
+      !planItemById(currentPlan(), 'a').alongside);
+    ck('level: and the picker says which ones it cannot be paired with',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Something at the top') > 0; });
+        return row.indexOf('out-tick is-off') > 0 && row.indexOf('put it at this level first') > 0;
+      })());
+    planMate = 'a';
+    await setMate('a', 'b');
+    ck('level: one beside it pairs as it always did, and the heading still counts the work',
+      planItemById(currentPlan(), 'a').alongside === 'b' &&
+      planDates(currentPlan(), five).by['tmp'].days === 8);
+
+    /* And moving the one holding the step number takes whatever runs with it along. */
+    await toggleNeed('z', 'b');                      // put the pair under the other line instead
+    ck('level: moving a line takes whatever runs alongside it along too',
+      planItemById(currentPlan(), 'b').parent === 'z' &&
+      planItemById(currentPlan(), 'a').parent === 'z' &&
+      planDates(currentPlan(), five).by['a'].mate === 'b');
+    planMate = null; }
+
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
       { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },
