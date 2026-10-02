@@ -1660,7 +1660,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.13';
+const APP_VERSION = 'v8.14';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13407,8 +13407,11 @@ async function setMate(id, hostId) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id), host = planItemById(p, hostId);
   if (!it || !host || it.id === host.id) return;
-  /* It has to sit beside the one it runs with: the run is a sequence of the lines at one level. */
+  /* Ticking the one it already runs with unticks it, because that is what a tick that is already
+     ticked does. Without this the only way back out was a button on the bar, and a tick that will
+     not untick reads as the thing being stuck. */
   const tr = planTree(p);
+  if (tr.leadOf[it.id] === host.id) { await clearMate(id, true); return; }
   if (tr.leadOf[host.id] !== host.id) return;          // that one already runs alongside something
   if (planAncestors(p, host.id)[it.id]) return;        // and it cannot be its own parent's partner
   it.parent = host.parent || null;
@@ -13420,12 +13423,15 @@ async function setMate(id, hostId) {
   renderSchedule();
   await savePlan(p);
 }
-async function clearMate(id) {
+async function clearMate(id, stay) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) return;
+  /* It goes back to being a step of its own, where it was sitting rather than at the end of the
+     list — undoing something should not also move it somewhere you have to go and find it. */
+  const host = planItemById(p, it.alongside || '');
   delete it.alongside; delete it.overlap;
-  it.order = nextOrder(p, it.parent || null);
-  planMate = null;
+  if (host) it.order = (Number(host.order) || 0) - 0.5;
+  if (!stay) planMate = null;
   renderSchedule();
   await savePlan(p);
 }
@@ -13464,10 +13470,12 @@ function mateBarHtml(p, me, res) {
   const on = (res.by[me.id] || {}).mate;
   return `
     <div class="pick-bar">
-      <b>Which line does "${esc(me.name || 'this')}" run alongside?</b>
-      <small>They take one step between them, and it lasts as long as the longer of the two.</small>
+      <b>Tick the line "${esc(me.name || 'this')}" runs alongside</b>
+      <small>${on ? 'Running alongside step ' + esc((res.by[me.id] || {}).mateStep || '') +
+          ' — tick another to move it, or untick that one to put it back on its own.'
+        : 'The two take one step between them, and it lasts as long as the longer of the two.'}</small>
       <span class="spacer" style="flex:1"></span>
-      ${on ? `<button class="btn sm ghost" onclick="clearMate('${me.id}')">On its own</button>` : ''}
+      ${on ? `<button class="btn sm ghost" onclick="clearMate('${me.id}')">Put it back on its own</button>` : ''}
       <button class="btn sm primary" onclick="startMate('${me.id}')">Done</button>
     </div>`;
 }
@@ -13820,7 +13828,7 @@ function planOutlineHtml(p, rows, res) {
         : '';
       const tick = mate
         ? (r.id === planMate
-            ? `<span class="out-tick is-me" title="This is the line you are placing">∥</span>`
+            ? `<span class="out-tick is-me" title="This is the line you are placing — tick the one it runs alongside">∥</span>`
             : ((mateUp[r.id] || tr0.leadOf[r.id] !== r.id)
                 ? `<span class="out-tick is-off" title="This one cannot be its partner">·</span>`
                 : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="setMate('${planMate}','${r.id}')"
@@ -13865,7 +13873,7 @@ function planOutlineHtml(p, rows, res) {
         <span class="out-meta">
           ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
           ${r.mate ? `<button class="out-tag is-ov on" onclick="startMate('${r.id}')"
-               title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, as long as the longer of the two. Click to change it.">alongside ${esc(r.mateStep)}</button>` : ''}
+               title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to change it or put it back on its own.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
           ${r.slack != null && r.slack !== 0
             ? `<span class="out-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}"
                  title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${

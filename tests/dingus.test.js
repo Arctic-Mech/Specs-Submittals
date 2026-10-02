@@ -614,15 +614,15 @@ const testCode = `
       (function () {
         var h = planOutlineHtml({ id:'x', items: [] }, beside.rows.filter(keepRow), beside);
         var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
-        return row.indexOf('alongside 1<') > 0 && row.indexOf('out-step is-mate') > 0 &&
-               row.indexOf('>1a<') > 0;
+        return row.indexOf('>alongside 1 ') > 0 && row.indexOf('out-step is-mate') > 0 &&
+               row.indexOf('>1a<') > 0 && row.indexOf("startMate('b')") > 0;
       })());
     ck('alongside: picking the partner is the outline itself, one tick and no second list',
       (function () {
         planMate = 'b';
         var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
         planMate = null;
-        return h.indexOf('Which line does') > 0 && h.indexOf("setMate('b','c')") > 0 &&
+        return h.indexOf('Tick the line') > 0 && h.indexOf("setMate('b','c')") > 0 &&
                h.indexOf('pick-list') < 0;
       })()); }
 
@@ -655,6 +655,39 @@ const testCode = `
       return x.id === 't1' ? Object.assign({}, x, { overlap: true }) : x; }) }, fourD);
     ck('alongside: one from before, which only said that it did, runs with the line below it',
       old.by['t1'].mate === 't2' && old.by['tmp'].days === 11); }
+
+  // and taking it back off again, which is the same tick
+  { schedules[0].items = [
+      { id:'a', name:'Ceilings closed', date:'2026-12-18', days:2, parent:null, order:10 },
+      { id:'b', name:'Set hangers', days:3, parent:null, order:20 },
+      { id:'c', name:'Pull wire', days:4, parent:null, order:30 } ];
+    planMate = 'b';
+    await setMate('b', 'c');
+    var paired = planDates(currentPlan(), five);
+    ck('alongside: ticking a line pairs this one with it',
+      planItemById(currentPlan(), 'b').alongside === 'c' && paired.by['b'].step === '1a' &&
+      planMate === null);
+    planMate = 'b';
+    await setMate('b', 'c');                       // tick the one it already runs with
+    var undone = planDates(currentPlan(), five);
+    ck('alongside: ticking that same one again puts it back on its own',
+      !planItemById(currentPlan(), 'b').alongside && undone.by['b'].mate === '' &&
+      undone.by['b'].step === '2');
+    ck('alongside: and it is left where it was rather than sent to the end of the list',
+      planFlat(currentPlan()).map(function (f) { return f.item.id; }).join() === 'a,b,c');
+    ck('alongside: the bar says what it is paired with and offers the way back out',
+      (function () {
+        var p2 = currentPlan();
+        planItemById(p2, 'b').alongside = 'c';
+        planMate = 'b';
+        var d = planDates(p2, five);
+        var h = planOutlineHtml(p2, d.rows.filter(keepRow), d);
+        delete planItemById(p2, 'b').alongside;
+        planMate = null;
+        return h.indexOf('Tick the line') > 0 && h.indexOf('Running alongside step 1') > 0 &&
+               h.indexOf('Put it back on its own') > 0 && h.indexOf("clearMate('b')") > 0;
+      })());
+    planMate = null; }
 
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
