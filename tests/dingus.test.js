@@ -498,9 +498,9 @@ const testCode = `
     planPick = 'a';
     var rows5 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] }).rows.filter(keepRow);
     var ph = planOutlineHtml(currentPlan(), rows5, {});
-    ck('picker: the ticks stop meaning done and start meaning chosen',
+    ck('picker: the ticks stop making groups and start meaning chosen',
       (ph.match(/out-tick is-sel/g) || []).length === 2 &&
-      ph.indexOf('togglePlanDone') < 0 && ph.indexOf('toggleNeed(') > 0);
+      ph.indexOf('tapPair(') < 0 && ph.indexOf('toggleNeed(') > 0);
     ck('picker: the lines stay where they were, in the order the work happens',
       ph.indexOf('Zulu') < ph.indexOf('Alpha') && ph.indexOf('Alpha') < ph.indexOf('Mike'));
     ck('picker: a bar says what you are doing and how to stop',
@@ -513,8 +513,9 @@ const testCode = `
       ph.indexOf('pick-list') < 0 && ph.indexOf('filterNeeds') < 0);
     planPick = null;
     var ph0 = planOutlineHtml(currentPlan(), rows5, {});
-    ck('picker: with nothing being chosen the ticks go back to meaning done',
-      ph0.indexOf('pick-bar') < 0 && ph0.indexOf('togglePlanDone') > 0); }
+    ck('picker: with nothing being chosen the ticks go back to making groups',
+      ph0.indexOf('pick-bar') < 0 && ph0.indexOf('tapPair(') > 0 &&
+      ph0.indexOf('out-done') > 0); }
 
   // a line with things under it is those things: its length is what they come to
   { schedules[0].items = [
@@ -606,11 +607,12 @@ const testCode = `
       beside.by['b'].days === beside.by['c'].days && beside.by['b'].days === 4 &&
       beside.by['b'].start === beside.by['c'].start &&
       beside.by['b'].finish === beside.by['c'].finish);
-    ck('alongside: the row carries the switch itself, so it is there on hover',
+    ck('alongside: the tick down the side is what makes them, and is not the done mark',
       (function () {
         var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
         var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
-        return row.indexOf("startMate('b')") > 0 && row.indexOf('out-act') > 0;
+        return row.indexOf("tapPair('b')") > 0 && row.indexOf('out-tick is-grp') > 0 &&
+               row.indexOf("togglePlanDone('b')") > 0 && row.indexOf('out-done') > 0;
       })());
     ck('alongside: and once it is set, the row says which line it runs with',
       (function () {
@@ -619,15 +621,15 @@ const testCode = `
         return row.indexOf('>alongside 1 ') > 0 && row.indexOf('out-step is-mate') > 0 &&
                row.indexOf('>1a<') > 0 &&
                row.indexOf("clearMate('b')") > 0 &&      // the chip takes it off outright
-               row.indexOf("startMate('b')") > 0;        // the bar button starts again
+               row.indexOf('out-tick is-grp on') > 0;    // and the tick shows it is in a group
       })());
-    ck('alongside: picking the partner is the outline itself, one tick and no second list',
+    ck('alongside: one ticked and waiting says so, and asks for the next one',
       (function () {
-        planMate = 'b';
+        planSel = 'b';
         var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
-        planMate = null;
-        return h.indexOf('Tick the line') > 0 && h.indexOf("setMate('b','c')") > 0 &&
-               h.indexOf('pick-list') < 0;
+        planSel = null;
+        return h.indexOf('Tick another line beside') > 0 && h.indexOf('out-tick is-grp') > 0 &&
+               h.indexOf('is-waiting') > 0 && h.indexOf('pick-list') < 0;
       })()); }
 
   /* The line carrying the date is what the rest of the run hangs off, so a line set to run beside
@@ -665,33 +667,35 @@ const testCode = `
       { id:'a', name:'Ceilings closed', date:'2026-12-18', days:2, parent:null, order:10 },
       { id:'b', name:'Set hangers', days:3, parent:null, order:20 },
       { id:'c', name:'Pull wire', days:4, parent:null, order:30 } ];
-    planMate = 'b';
-    await setMate('b', 'c');
+    planSel = null;
+    await tapPair('b');                            // tick one
+    ck('alongside: one tick on its own just waits for the next',
+      planSel === 'b' && !planItemById(currentPlan(), 'b').alongside);
+    await tapPair('c');                            // tick another beside it
     var paired = planDates(currentPlan(), five);
-    ck('alongside: ticking a line pairs this one with it',
+    ck('alongside: ticking a second line beside it makes them a group',
       planItemById(currentPlan(), 'b').alongside === 'c' && paired.by['b'].step === '1a' &&
-      planMate === null);
-    planMate = 'b';
-    await setMate('b', 'c');                       // tick the one it already runs with
+      paired.by['c'].step === '1');
+    await tapPair('b');                            // untick the one running alongside
     var undone = planDates(currentPlan(), five);
     ck('alongside: ticking that same one again puts it back on its own',
       !planItemById(currentPlan(), 'b').alongside && undone.by['b'].mate === '' &&
       undone.by['b'].step === '2');
     ck('alongside: and it is left where it was rather than sent to the end of the list',
       planFlat(currentPlan()).map(function (f) { return f.item.id; }).join() === 'a,b,c');
-    ck('alongside: the bar says what it is paired with and offers the way back out',
-      (function () {
-        var p2 = currentPlan();
-        planItemById(p2, 'b').alongside = 'c';
-        planMate = 'b';
-        var d = planDates(p2, five);
-        var h = planOutlineHtml(p2, d.rows.filter(keepRow), d);
-        delete planItemById(p2, 'b').alongside;
-        planMate = null;
-        return h.indexOf('Tick the line') > 0 && h.indexOf('Running alongside step 1') > 0 &&
-               h.indexOf('Put it back on its own') > 0 && h.indexOf("clearMate('b')") > 0;
+    ck('alongside: a third beside them joins the same group, all lettered off one number',
+      await (async function () {
+        await tapPair('b');                              // b and c together again
+        schedules[0].items.push({ id:'d', name:'Lay out', days:1, parent:null, order:40 });
+        await tapPair('d');
+        var d3 = planDates(currentPlan(), five);
+        var leads = ['b','c','d'].filter(function (k) { return !d3.by[k].mate; });
+        var steps = ['b','c','d'].map(function (k) { return d3.by[k].step; }).sort().join();
+        /* The one furthest down the page holds the number, because the run reaches it first. */
+        return leads.join() === 'd' && steps === '1,1a,1b' &&
+               d3.by['b'].start === d3.by['d'].start && d3.by['c'].start === d3.by['d'].start;
       })());
-    planMate = null; }
+    planSel = null; }
 
   /* Pairing across levels could only work by moving the line out of whatever it was under, which it
      did quietly, and taking the pairing off again never put it back \u2014 so the heading above it
@@ -701,19 +705,12 @@ const testCode = `
       { id:'a', name:'Run flex', days:8, parent:'tmp', order:20 },
       { id:'b', name:'Open shaft', days:8, parent:'tmp', order:30 },
       { id:'z', name:'Something at the top', days:2, parent:null, order:99 } ];
-    planMate = 'a';
-    await setMate('a', 'z');
+    planSel = 'a';
+    await tapPair('z');
     ck('level: a line cannot be paired with one at another level, so it is not moved out',
       planItemById(currentPlan(), 'a').parent === 'tmp' &&
       !planItemById(currentPlan(), 'a').alongside);
-    ck('level: and the picker says which ones it cannot be paired with',
-      (function () {
-        var d = planDates(currentPlan(), five);
-        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
-        var row = h.split('out-row').find(function (c) { return c.indexOf('Something at the top') > 0; });
-        return row.indexOf('out-tick is-off') > 0 && row.indexOf('put it at this level first') > 0;
-      })());
-    planMate = 'a';
+    planSel = null;
     await setMate('a', 'b');
     ck('level: one beside it pairs as it always did, and the heading still counts the work',
       planItemById(currentPlan(), 'a').alongside === 'b' &&
@@ -725,7 +722,7 @@ const testCode = `
       planItemById(currentPlan(), 'b').parent === 'z' &&
       planItemById(currentPlan(), 'a').parent === 'z' &&
       planDates(currentPlan(), five).by['a'].mate === 'b');
-    planMate = null; }
+    planSel = null; }
 
   // dragging a line where you want it, and starring the ones the plan is read by
   { schedules[0].items = [
@@ -774,6 +771,48 @@ const testCode = `
     ck('star: clicking it again makes it an ordinary line',
       !planItemById(currentPlan(), 'c').main &&
       planDates(currentPlan(), five).by['c'].head === false); }
+
+  // crossing a line off is its own mark, and the end of a block is marked too
+  { schedules[0].items = [
+      { id:'h', name:'Demo', days:0, parent:null, order:10, main:true },
+      { id:'x', name:'Demo piping', days:3, parent:'h', order:10 },
+      { id:'n', name:'Prep inside', days:2, parent:null, order:20, main:true },
+      { id:'f', name:'Start here', days:1, parent:null, order:30, date:'2026-10-12' } ];
+    await togglePlanDone('x');
+    ck('done: crossing a line off is a mark of its own, not the tick that makes the groups',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Demo piping') > 0; });
+        return planItemById(currentPlan(), 'x').done === true &&
+               row.indexOf('out-done on') > 0 && row.indexOf("togglePlanDone('x')") > 0 &&
+               row.indexOf('out-tick is-grp') > 0 && row.indexOf("tapPair('x')") > 0;
+      })());
+    await togglePlanDone('x');
+    await toggleMain('n');
+    ck('star: taking it off a line does not move the line anywhere',
+      planItemById(currentPlan(), 'n').parent === null && !planItemById(currentPlan(), 'n').main &&
+      planFlat(currentPlan()).map(function (z) { return z.item.id + '@' + z.depth; }).join() ===
+        'h@0,x@1,n@0,f@0');
+    ck('star: and the line after a block is ruled off it, so it does not read as part of it',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Prep inside') > 0; });
+        return row.indexOf('is-outof') > 0;
+      })());
+    ck('star: a line with work under it reads as a main line whether it says so or not',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('>Demo<') > 0 || c.indexOf('value="Demo"') > 0; });
+        delete planItemById(currentPlan(), 'h').main;
+        var d2 = planDates(currentPlan(), five);
+        var h2 = planOutlineHtml(currentPlan(), d2.rows.filter(keepRow), d2);
+        var row2 = h2.split('out-row').find(function (c) { return c.indexOf('value="Demo"') > 0; });
+        return row2.indexOf('star on') > 0 && row2.indexOf('\u2605') > 0 &&
+               row2.indexOf('because there is work under it') > 0;
+      })()); }
 
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [

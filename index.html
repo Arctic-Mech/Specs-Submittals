@@ -480,7 +480,7 @@ textarea.autosize[rows="1"] { min-height: 0; }
    the step numbers staggered with the indent, so nothing down the page lined up with anything. Only
    the name steps in now; everything else holds its column. */
 .out-row { display: grid; align-items: center; gap: 7px;
-  grid-template-columns: 14px 30px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
+  grid-template-columns: 14px 30px 18px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
   padding: 3px 10px; border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent; position: relative; }
 .out-row:last-of-type { border-bottom: none; }
@@ -488,12 +488,13 @@ textarea.autosize[rows="1"] { min-height: 0; }
 /* the indent is the whole grammar of the thing, so it is drawn rather than left to be counted */
 .out-row[style*="--d:1"]::before, .out-row[style*="--d:2"]::before, .out-row[style*="--d:3"]::before,
 .out-row[style*="--d:4"]::before, .out-row[style*="--d:5"]::before, .out-row[style*="--d:6"]::before {
-  content: ''; position: absolute; left: calc(var(--nx) + 21px + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
+  content: ''; position: absolute; left: calc(var(--nx) + 46px + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
   border-left: 1px solid var(--border-2); }
 /* A line with lines under it is a heading, so it reads as a band across the page rather than as one
    more line in the list. */
 .out-row.is-head { background: var(--surface-3); border-top: 1px solid var(--border-2); }
 .out-row.is-head:first-child { border-top: none; }
+.out-row.is-outof { border-top: 1px solid var(--border-2); }
 .out-row.is-head .out-name { font-weight: 700; font-size: 14px; color: var(--text); }
 .out-row.is-head .out-step, .out-row.is-head .out-days { color: var(--text-2); font-weight: 700; }
 .out-row.is-head .out-when { color: var(--text-2); }
@@ -526,6 +527,13 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
   padding: 0; text-align: center; }
 .out-tick:hover { color: var(--accent); }
+/* the tick makes the groups; crossing a line off is its own mark beside it */
+.out-tick.is-grp.on { color: var(--accent); }
+.out-tick.is-grp.is-waiting { color: var(--accent); }
+.out-done { border: none; background: none; cursor: pointer; font-size: 12px; color: var(--text-3);
+  padding: 0; text-align: center; opacity: .5; }
+.out-done:hover { opacity: 1; color: var(--green, var(--accent)); }
+.out-done.on { opacity: 1; color: var(--green, var(--accent)); }
 .out-ms { color: var(--accent); flex: none; font-size: 11px; }
 .out-name { min-width: 0; border: none; background: none; font: inherit; font-size: 13.5px;
   color: var(--text); padding: 5px 2px; padding-left: calc(2px + var(--d) * 22px); outline: none; }
@@ -682,12 +690,12 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 .cd-item.is-held { background: var(--amber-sf); color: var(--amber); }
 .cd-item.is-done { opacity: .5; text-decoration: line-through; }
 @media (max-width: 1180px) {
-  .out-row { grid-template-columns: 14px 26px 18px minmax(90px, 1fr) 88px 40px 150px minmax(0, 120px) auto; }
+  .out-row { grid-template-columns: 14px 26px 18px 18px minmax(90px, 1fr) 88px 40px 150px minmax(0, 120px) auto; }
 }
 @media (max-width: 760px) {
   .sl-head { display: none; }
   .sl-row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
-  .out-row { grid-template-columns: 14px 24px 18px minmax(80px, 1fr) 40px 118px auto; }
+  .out-row { grid-template-columns: 14px 24px 18px 18px minmax(80px, 1fr) 40px 118px auto; }
   .out-row .out-who, .out-row .out-meta { display: none; }
 }
 .nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
@@ -1675,7 +1683,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.18';
+const APP_VERSION = 'v8.19';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3957,7 +3965,7 @@ let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
 let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
 let planPick = null;         // the line whose 'what has to happen first' list is open
-let planMate = null;         // the line that is being told which other line it runs alongside
+let planSel = null;          // the line whose group the next tick joins
 let planDrag = null;         // the line being dragged
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
@@ -13356,7 +13364,7 @@ async function indentLine(id, out) {
 async function removeLine(id, quiet) {
   const p = currentPlan(); if (!p) return;
   for (const x of planItems(p)) if (x.alongside === id) { delete x.alongside; delete x.overlap; }
-  if (planMate === id) planMate = null;
+  if (planSel === id) planSel = null;
   const it = planItemById(p, id); if (!it) return;
   const tr = planTree(p);
   const kids = (tr.kids[id] || []);
@@ -13430,11 +13438,57 @@ function openNeeds(id) {
   renderSchedule();
 }
 /* Two things done at once take one slot in the run, and that slot takes as long as the longer of
-   them. Saying a line runs alongside another is therefore saying which one, so it is picked from the
-   plan the same way everything else is — by ticking it where it sits. */
-function startMate(id) {
-  planMate = (planMate === id) ? null : id;
-  planPick = null;
+   them. The tick down the side of the plan is what makes them: tick one, tick another beside it,
+   and they are a group — a, b, c off the one step number. Ticking one that is already in a group
+   takes it back out. */
+async function tapPair(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  const tr = planTree(p);
+  const lead = tr.leadOf[id];
+  const mates = tr.mates[id] || [];
+  if (lead !== id) {                       // in a group, as one of the ones alongside
+    const host = planItemById(p, lead);
+    delete it.alongside; delete it.overlap;
+    /* Back to a step of its own, where it was sitting rather than at the end of the list. */
+    if (host) it.order = (Number(host.order) || 0) - 0.5;
+    planSel = lead;
+    renderSchedule();
+    await savePlan(p);
+    return;
+  }
+  if (mates.length) {                      // in a group, as the one holding the number
+    /* The next one along takes the number and its place, so taking one out of a group of three
+       does not throw the other two away with it. */
+    const next = mates[mates.length - 1];
+    const base = Number(it.order) || 0;
+    delete next.alongside; delete next.overlap;
+    next.order = base;
+    it.order = base - 0.5;
+    let k = 1;
+    for (const m of mates) if (m.id !== next.id) { m.alongside = next.id; m.order = base + (k++) / 1000; }
+    planSel = next.id;
+    renderSchedule();
+    await savePlan(p);
+    return;
+  }
+  if (planSel && planSel !== id) {
+    const other = planItemById(p, planSel);
+    if (other && (other.parent || null) === (it.parent || null)) {
+      const host = planTree(p).leadOf[other.id] === other.id ? other : planItemById(p, planTree(p).leadOf[other.id]);
+      if (host) {
+        /* Whichever of them is further down the page holds the number, because that is the one the
+           run reaches first. */
+        if ((Number(it.order) || 0) > (Number(host.order) || 0)) { await setMate(host.id, it.id); planSel = it.id; }
+        else { await setMate(it.id, host.id); planSel = host.id; }
+        renderSchedule();
+        return;
+      }
+    }
+    toast('Tick one beside it — a group is lines at the same level', true);
+    return;
+  }
+  planSel = (planSel === id) ? null : id;
   renderSchedule();
 }
 async function setMate(id, hostId) {
@@ -13466,7 +13520,7 @@ async function setMate(id, hostId) {
   delete it.overlap;
   const mates = (tr.mates[host.id] || []).filter(m => m.id !== it.id).length;
   it.order = (Number(host.order) || 0) + (mates + 1) / 1000;
-  planMate = null;
+  planSel = host.id;
   renderSchedule();
   await savePlan(p);
 }
@@ -13478,7 +13532,7 @@ async function clearMate(id, stay) {
   const host = planItemById(p, it.alongside || '');
   delete it.alongside; delete it.overlap;
   if (host) it.order = (Number(host.order) || 0) - 0.5;
-  if (!stay) planMate = null;
+  if (!stay) planSel = null;
   renderSchedule();
   await savePlan(p);
 }
@@ -13513,21 +13567,18 @@ async function addNeedNew(parentId) {
 /* The bar that comes up while you are saying what has to happen first. The ticks down the outline
    do the choosing — there is no second list to scroll — so all this holds is the way out and a way
    to put something on the plan that is not on it yet. */
-/* The bar that is up while you are saying what a line runs alongside. One tick, not many: a line
-   runs with one other line, and the two of them share its number. */
-function mateBarHtml(p, me, res) {
-  const on = (res.by[me.id] || {}).mate;
+/* The bar that is up once one line has been ticked and is waiting for the next. */
+function selBarHtml(p, me) {
   return `
     <div class="pick-bar">
-      <b>Tick the line "${esc(me.name || 'this')}" runs alongside</b>
-      <small>${on ? 'Running alongside step ' + esc((res.by[me.id] || {}).mateStep || '') +
-          ' — tick another to move it, or untick that one to put it back on its own.'
-        : 'The two take one step between them, and it lasts as long as the longer of the two.'}</small>
+      <b>Tick another line beside "${esc(me.name || 'this')}" to do them at once</b>
+      <small>They take one step between them — a, b, c off the one number — and it lasts as long
+        as the one length you set on it.</small>
       <span class="spacer" style="flex:1"></span>
-      ${on ? `<button class="btn sm ghost" onclick="clearMate('${me.id}')">Put it back on its own</button>` : ''}
-      <button class="btn sm primary" onclick="startMate('${me.id}')">Done</button>
+      <button class="btn sm primary" onclick="clearSel()">Done</button>
     </div>`;
 }
+function clearSel() { planSel = null; renderSchedule(); }
 function pickBarHtml(p, me) {
   return `
     <div class="pick-bar">
@@ -13861,43 +13912,41 @@ function planOutlineHtml(p, rows, res) {
   const up = me ? planAncestors(p, planPick) : null;
   const picked = Object.create(null);
   if (me) for (const k of (planTree(p).kids[planPick] || [])) picked[k.id] = 1;
-  /* Or the other thing you can be in the middle of: saying which line this one runs alongside. */
-  const mate = (!me && planMate) ? planItemById(p, planMate) : null;
-  const mateUp = mate ? planAncestors(p, planMate) : null;
-  const mateLvl = mate ? (mate.parent || null) : null;
+  /* Or the other thing: one line ticked and waiting for the next one to pair it with. */
+  const sel = (!me && planSel) ? planItemById(p, planSel) : null;
   const tr0 = planTree(p);
-  return `<div class="out-list${(me || mate) ? ' is-picking' : ''}">
+  return `<div class="out-list${me ? ' is-picking' : ''}">
     <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
-    ${me ? pickBarHtml(p, me) : ''}${mate ? mateBarHtml(p, mate, res) : ''}
+    ${me ? pickBarHtml(p, me) : ''}${sel ? selBarHtml(p, sel) : ''}
     ${rows.map((r, i) => {
       const it = r.item;
+      /* Coming back out of a block, the line that follows it is not part of it. Nothing said so
+         once that line was not a main line itself, so it read as the last thing in the block
+         above it. */
+      const outOf = i > 0 && r.depth < rows[i - 1].depth;
       const step = r.step || String(n - i);
       const dates = r.anchored
         ? ((r.finish && r.finish !== r.start)
             ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
         : '';
-      const tick = mate
-        ? (r.id === planMate
-            ? `<span class="out-tick is-me" title="This is the line you are placing — tick the one it runs alongside">∥</span>`
-            : ((r.item.parent || null) !== mateLvl
-                ? `<span class="out-tick is-off" title="Not beside it — put it at this level first, and then it can run alongside it">·</span>`
-                : (mateUp[r.id] || tr0.leadOf[r.id] !== r.id)
-                ? `<span class="out-tick is-off" title="${tr0.leadOf[r.id] !== r.id ? 'This one already runs alongside something' : 'This one cannot be its partner'}">·</span>`
-                : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="setMate('${planMate}','${r.id}')"
-                     title="Run it alongside this one">${r.id === (res.by[planMate] || {}).mate ? '☑' : '☐'}</button>`))
-        : me
+      const grouped = r.mate || r.withMe;
+      const tick = me
         ? (r.id === planPick
             ? `<span class="out-tick is-me" title="This is the line you are filling in">↳</span>`
             : (up[r.id]
                 ? `<span class="out-tick is-off" title="This one is already waiting on it">·</span>`
                 : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="toggleNeed('${planPick}','${r.id}')"
                      title="${picked[r.id] ? 'Take it back off' : 'It has to happen first'}">${picked[r.id] ? '☑' : '☐'}</button>`))
-        : `<button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
-             onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
+        : `<button class="out-tick is-grp${grouped ? ' on' : ''}${r.id === planSel ? ' is-waiting' : ''}"
+             onclick="tapPair('${r.id}')"
+             title="${grouped ? 'Done at the same time as step ' + escAttr(r.mateStep || r.step) + ' — click to take it out of that group'
+               : r.id === planSel ? 'Waiting — tick another line beside it to do them at once'
+               : 'Tick this and another beside it to do them at once'}">${
+             grouped ? '☑' : r.id === planSel ? '◉' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
-          r.head ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
-          (r.id === planPick || r.id === planMate) ? ' is-picked' : ''}" style="--d:${r.depth}"
+          r.head ? ' is-head' : ''}${outOf ? ' is-outof' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
+          (r.id === planPick || r.id === planSel) ? ' is-picked' : ''}" style="--d:${r.depth}"
         ondragover="dragOverLine(event,'${r.id}')" ondrop="dropOnLine(event,'${r.id}')">
         <span class="out-grip" draggable="true" ondragstart="dragLine(event,'${r.id}')"
           ondragend="dragEndLine()" title="Drag it where you want it — onto a line to put it under that line">⠿</span>
@@ -13907,6 +13956,8 @@ function planOutlineHtml(p, rows, res) {
                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
                onchange="moveToStep('${r.id}',this.value)">`}
         ${tick}
+        <button class="out-done${it.done ? ' on' : ''}" onclick="togglePlanDone('${r.id}')"
+          title="${it.done ? 'Done — click to put it back' : 'Cross it off'}">${it.done ? '✔' : '✓'}</button>
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
           placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
           onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
@@ -13944,12 +13995,10 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
-          <button class="x star${r.main ? ' on' : ''}" onclick="toggleMain('${r.id}')"
-            title="${r.main ? 'A main line — the plan is read by these, and it carries the overall dates of what is under it. Click to make it an ordinary line again.'
-                            : 'Make it a main line, with the overall dates of whatever goes under it'}">${r.main ? '★' : '☆'}</button>
-          <button class="x${(r.mate || r.id === planMate) ? ' on' : ''}" onclick="startMate('${r.id}')"
-            title="${r.mate ? 'Runs alongside step ' + escAttr(r.mateStep) + '. Click to change it.'
-                            : 'Run it alongside another line, so the two take one step between them'}">∥</button>
+          <button class="x star${r.head ? ' on' : ''}" onclick="toggleMain('${r.id}')"
+            title="${r.rolled && !r.main ? 'A main line, because there is work under it — it carries the overall dates of that work'
+              : r.main ? 'A main line — the plan is read by these, and it carries the overall dates of what goes under it. Click to make it an ordinary line again.'
+              : 'Make it a main line, with the overall dates of whatever goes under it'}">${r.head ? '★' : '☆'}</button>
           <button class="x${planPick === r.id ? ' on' : ''}" title="What is holding this up"
             onclick="openNeeds('${r.id}')">↳</button>
           <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
