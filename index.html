@@ -571,6 +571,10 @@ button.out-tag.is-ov { opacity: .55; }
 button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(--accent); font-weight: 600; }
 .out-days.in-cell { width: 100%; border-color: var(--accent); text-align: right; }
 .out-row.is-lead .out-name { font-style: italic; }
+/* one that runs alongside another shares its step, so it is tied to it rather than listed under it */
+.out-row.is-mate { background: linear-gradient(90deg, var(--accent-sf) 0 3px, transparent 3px); }
+.out-step.is-mate { text-align: right; font-size: 10.5px; color: var(--accent); font-weight: 600;
+  padding: 3px 4px; font-variant-numeric: tabular-nums; }
 .pick-lead { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
 .pick-lead .input { width: 64px; }
 .out-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
@@ -1656,7 +1660,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.12';
+const APP_VERSION = 'v8.13';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3938,6 +3942,7 @@ let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
 let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
 let planPick = null;         // the line whose 'what has to happen first' list is open
+let planMate = null;         // the line that is being told which other line it runs alongside
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
@@ -12772,7 +12777,52 @@ function planTree(p) {
   const byOrder = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0);
   roots.sort(byOrder);
   for (const k in kids) kids[k].sort(byOrder);
-  return { byId: byId, kids: kids, roots: roots };
+
+  /* A line can be set to run alongside another one rather than after it. The two share a slot in
+     the run and a step number — the one alongside takes a letter, 8a, 8b — and the slot is as long
+     as the longest thing in it. Only a line beside it in the same list can be its partner, since
+     the run is a sequence of those. */
+  const sibsOf = it => (it.parent && kids[it.parent]) ? kids[it.parent] : roots;
+  const partner = it => {
+    const h = it.alongside ? byId[it.alongside] : null;
+    return (h && h.id !== it.id && (h.parent || null) === (it.parent || null)) ? h : null;
+  };
+  const leadOf = Object.create(null), mates = Object.create(null);
+  for (const it of items) {
+    let at = it;
+    const hop = Object.create(null);
+    for (let i = 0; i < 50; i++) {
+      const h = partner(at);
+      if (!h || hop[h.id]) break;
+      hop[at.id] = 1;
+      at = h;
+    }
+    /* Plans written before a line said what it ran alongside just said that it did. Take it as the
+       line below it in the list, which is the one it was running inside. */
+    if (at.id === it.id && it.overlap && !partner(it)) {
+      const sb = sibsOf(it), i = sb.indexOf(it);
+      const near = (i >= 0 && sb[i + 1]) || (i > 0 && sb[i - 1]) || null;
+      if (near && !near.overlap) at = near;
+    }
+    leadOf[it.id] = at.id;
+    if (at.id !== it.id) (mates[at.id] = mates[at.id] || []).push(it);
+  }
+  for (const k in mates) mates[k].sort(byOrder);
+  /* Kept next to the one it runs with, above it, so reading up the page gives 8, 8a, 8b. */
+  const grouped = list => {
+    const done = Object.create(null), out = [];
+    for (const it of list) {
+      if (leadOf[it.id] !== it.id) continue;
+      const ms = (mates[it.id] || []);
+      for (let i = ms.length - 1; i >= 0; i--) { out.push(ms[i]); done[ms[i].id] = 1; }
+      out.push(it); done[it.id] = 1;
+    }
+    for (const it of list) if (!done[it.id]) out.push(it);
+    return out;
+  };
+  const rootsG = grouped(roots);
+  for (const k in kids) kids[k] = grouped(kids[k]);
+  return { byId: byId, kids: kids, roots: rootsG, leadOf: leadOf, mates: mates };
 }
 /* The tree flattened back into the lines you see, each with how far in it sits. The guard is for a
    plan that has been edited into a ring by two lines claiming each other as parent — it cannot
@@ -12818,13 +12868,31 @@ function planDates(plan, cal) {
      of temp duct is the taps, the mains and the tie-in. A length typed on a line like that is a
      target to hit rather than more work to do, and the plan says whether it fits. An overlapping
      line adds nothing: it goes on while something else does. */
+  /* The children of a line as the run sees them: one entry per slot, each holding the line that
+     takes the slot and anything set to run alongside it. */
+  const slotsOf = (it, order) => {
+    const ks = order || fieldKids(it);
+    const at = Object.create(null), out = [];
+    for (const k of ks) if (tr.leadOf[k.id] === k.id) { at[k.id] = { lead: k, with: [] }; out.push(at[k.id]); }
+    for (const k of ks) {
+      if (tr.leadOf[k.id] === k.id) continue;
+      const g = at[tr.leadOf[k.id]];
+      if (g) g.with.push(k); else out.push({ lead: k, with: [] });
+    }
+    return out;
+  };
+  const slotLong = (g, guard) => {
+    let n = span(g.lead, guard);
+    for (const m of g.with) n = Math.max(n, span(m, guard));
+    return n;
+  };
   const memo = Object.create(null);
   const span = (it, guard) => {
     if (memo[it.id] != null) return memo[it.id];
     if (guard[it.id]) return 0;
     guard[it.id] = 1;
-    const ks = fieldKids(it);
-    const v = ks.length ? ks.reduce((a, k) => a + (k.overlap ? 0 : span(k, guard)), 0) : dur(it);
+    const gs = slotsOf(it);
+    const v = gs.length ? gs.reduce((a, g) => a + slotLong(g, guard), 0) : dur(it);
     memo[it.id] = v;
     return v;
   };
@@ -12883,54 +12951,43 @@ function planDates(plan, cal) {
     /* What is under it fills its window in the order the work happens: step one of it first, each
        one after that following on. An overlapping line is fitted into the window without moving the
        next one along, and is held to the window rather than running out of it. */
-    /* The run: each line after the one before it. A line going alongside takes no slot in that run,
-       so it is left out of it here and fitted into the window once the window is known — taken from
-       where the line before it left off, it was squeezed into whatever room was left over. But one
-       carrying a date of its own is taken here as well, because with nothing else dated the whole
-       run hangs off it, and left out it took every line after it down with it. */
+    /* The run: a slot at a time, each after the one before it. Everything in a slot runs together,
+       so it all begins where the slot begins, and the slot is as long as the longest of them. */
     const ordered = fwd ? fieldKids(it).slice().reverse() : fieldKids(it);
-    const alongside = [];
     let cur = edge;
-    for (const k of ordered) {
-      if (k.overlap) {
-        alongside.push(k);
-        if (!pinnedDate(k)) continue;
-        walk(k, cur);
-        const o = out[k.id];
-        if (o && o.start && !cur) cur = fwd ? o.start : o.finish;
-        continue;
+    for (const g of slotsOf(it, ordered)) {
+      const together = [g.lead].concat(g.with);
+      /* With nothing to go on yet, whatever in the slot brought a date of its own is where the run
+         starts, or every line after it is left with nothing to work from. */
+      let at = cur;
+      if (!at) for (const k of together) if (pinnedDate(k)) {
+        const e = edgeOf(k.date);
+        if (!at || past(e, at)) at = e;
       }
-      walk(k, cur);
-      const o = out[k.id];
-      if (!o || !o.start) continue;
-      cur = stepOver(fwd ? o.finish : o.start);
+      for (const k of together) walk(k, at);
+      let far = '';
+      for (const k of together) {
+        const o = out[k.id];
+        if (!o || !o.start) continue;
+        const f = fwd ? o.finish : o.start;
+        if (!far || past(far, f)) far = f;
+      }
+      if (far) cur = stepOver(far);
     }
     /* A line is its parts, so its window is the first of them to the last of them — whatever they
        came to, not what the count said they would. Two things were wrong without this. A date put
        on the first thing anybody does left the heading over it blank, and with that heading blank
        there was nothing for the next one up to follow on from, so the whole plan above the date
        stayed dateless. And where the parts ran a day past what the count allowed for, the line
-       under them started on top of them. A line going alongside adds no days, so it is not one of
-       the parts that can widen it. */
+       under them started on top of them. */
     let lo = '', hi = '';
     for (const k of fieldKids(it)) {
-      if (k.overlap) continue;
       const o = out[k.id];
       if (!o || !o.start) continue;
       if (!lo || o.start < lo) lo = o.start;
       if (!hi || o.finish > hi) hi = o.finish;
     }
     if (lo) { out[it.id].start = lo; out[it.id].finish = hi; out[it.id].anchored = true; }
-    /* And now there is a window, the ones going alongside are fitted into it, at its own edge and
-       held to it rather than running out of it. */
-    const win = out[it.id];
-    for (const k of alongside) {
-      if (!pinnedDate(k)) walk(k, fwd ? win.start : win.finish);
-      const o = out[k.id];
-      if (!o || !o.start) continue;
-      if (fwd) { if (win.finish && o.finish > win.finish) { o.finish = win.finish; o.clash = true; } }
-      else if (win.start && o.start < win.start) { o.start = win.start; o.clash = true; }
-    }
     /* Whichever way round the plan is written, what is on order has to be in before the work
        starts. That end of it never flips. */
     const began = out[it.id].start;
@@ -12939,15 +12996,24 @@ function planDates(plan, cal) {
   /* The top level is a sequence like any other, taken in the order the work happens. Something on
      order at the top level waits on nothing, so it does not take a turn in that sequence. */
   let bound = '';
-  for (const r of (fwd ? tr.roots.slice().reverse() : tr.roots)) {
-    if (isLead(r)) { walkLead(r, ''); continue; }
-    walk(r, bound);
-    const o = out[r.id];
-    if (!o) continue;
-    /* One going alongside passes the run straight through: the next line is held to the same day
-       this one was. Only where there was nothing to go on does it seed the run instead. */
-    if (r.overlap) { const near = fwd ? o.start : o.finish; if (!bound && near) bound = near; }
-    else { const e = fwd ? o.finish : o.start; if (e) bound = stepOver(e); }
+  for (const r of tr.roots) if (isLead(r)) walkLead(r, '');
+  const topRun = (fwd ? tr.roots.slice().reverse() : tr.roots).filter(r => !isLead(r));
+  for (const g of slotsOf(null, topRun)) {
+    const together = [g.lead].concat(g.with);
+    let at = bound;
+    if (!at) for (const k of together) if (pinnedDate(k)) {
+      const e = edgeOf(k.date);
+      if (!at || past(e, at)) at = e;
+    }
+    for (const k of together) walk(k, at);
+    let far = '';
+    for (const k of together) {
+      const o = out[k.id];
+      if (!o || !o.start) continue;
+      const f = fwd ? o.finish : o.start;
+      if (!far || past(far, f)) far = f;
+    }
+    if (far) bound = stepOver(far);
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -12978,6 +13044,19 @@ function planDates(plan, cal) {
 
   const today0 = today();
   const flat = planFlat(plan);
+  /* Numbered from the bottom: step one is the first thing anybody does. A line set to run alongside
+     another is not a step of its own — it shares that one's number and takes a letter, 8a, 8b — so
+     the numbers still count the slots in the run rather than the lines on the page. */
+  const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+  const stepOf = Object.create(null);
+  let slotNo = 0;
+  for (let i = flat.length - 1; i >= 0; i--) {
+    const it = flat[i].item;
+    if (tr.leadOf[it.id] !== it.id) continue;
+    slotNo++;
+    stepOf[it.id] = String(slotNo);
+    (tr.mates[it.id] || []).forEach((m, j) => { stepOf[m.id] = slotNo + (LETTERS[j] || '+'); });
+  }
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
     const fk = fieldKids(it).length, ks = kidsOf(it).length;
@@ -12993,7 +13072,10 @@ function planDates(plan, cal) {
       pinned: pinnedDate(it), days: long, own: dur(it), kids: ks, rolled: fk > 0,
       lead: !!d.lead, kind: String(it.kind || ''),
       target: target, slack: target ? target - long : null,
-      overlap: !!it.overlap,
+      step: stepOf[it.id] || '',
+      mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
+      mateStep: tr.leadOf[it.id] !== it.id ? (stepOf[tr.leadOf[it.id]] || '') : '',
+      withMe: (tr.mates[it.id] || []).length,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
       onDayOff: !isWorkDay(today0, cal),
@@ -13005,6 +13087,7 @@ function planDates(plan, cal) {
     clashes: rows.filter(r => r.clash).length,
     rootless: rows.filter(r => !r.anchored && r.depth === 0).length,
     strays: rows.filter(r => r.stray).length,
+    slots: slotNo,
     fwd: fwd,
     over: rows.filter(r => r.slack != null && r.slack < 0).length,
     behind: rows.filter(r => r.late).length };
@@ -13238,6 +13321,8 @@ async function indentLine(id, out) {
 }
 async function removeLine(id, quiet) {
   const p = currentPlan(); if (!p) return;
+  for (const x of planItems(p)) if (x.alongside === id) { delete x.alongside; delete x.overlap; }
+  if (planMate === id) planMate = null;
   const it = planItemById(p, id); if (!it) return;
   const tr = planTree(p);
   const kids = (tr.kids[id] || []);
@@ -13310,12 +13395,37 @@ function openNeeds(id) {
   planPick = (planPick === id) ? null : id;
   renderSchedule();
 }
-/* Something that goes on while something else does. It still takes as long as it takes; it just
-   does not lengthen the thing it sits under. */
-async function toggleOverlap(id) {
+/* Two things done at once take one slot in the run, and that slot takes as long as the longer of
+   them. Saying a line runs alongside another is therefore saying which one, so it is picked from the
+   plan the same way everything else is — by ticking it where it sits. */
+function startMate(id) {
+  planMate = (planMate === id) ? null : id;
+  planPick = null;
+  renderSchedule();
+}
+async function setMate(id, hostId) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id), host = planItemById(p, hostId);
+  if (!it || !host || it.id === host.id) return;
+  /* It has to sit beside the one it runs with: the run is a sequence of the lines at one level. */
+  const tr = planTree(p);
+  if (tr.leadOf[host.id] !== host.id) return;          // that one already runs alongside something
+  if (planAncestors(p, host.id)[it.id]) return;        // and it cannot be its own parent's partner
+  it.parent = host.parent || null;
+  it.alongside = host.id;
+  delete it.overlap;
+  const mates = (tr.mates[host.id] || []).filter(m => m.id !== it.id).length;
+  it.order = (Number(host.order) || 0) + (mates + 1) / 1000;
+  planMate = null;
+  renderSchedule();
+  await savePlan(p);
+}
+async function clearMate(id) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) return;
-  if (it.overlap) delete it.overlap; else it.overlap = true;
+  delete it.alongside; delete it.overlap;
+  it.order = nextOrder(p, it.parent || null);
+  planMate = null;
   renderSchedule();
   await savePlan(p);
 }
@@ -13348,6 +13458,19 @@ async function addNeedNew(parentId) {
 /* The bar that comes up while you are saying what has to happen first. The ticks down the outline
    do the choosing — there is no second list to scroll — so all this holds is the way out and a way
    to put something on the plan that is not on it yet. */
+/* The bar that is up while you are saying what a line runs alongside. One tick, not many: a line
+   runs with one other line, and the two of them share its number. */
+function mateBarHtml(p, me, res) {
+  const on = (res.by[me.id] || {}).mate;
+  return `
+    <div class="pick-bar">
+      <b>Which line does "${esc(me.name || 'this')}" run alongside?</b>
+      <small>They take one step between them, and it lasts as long as the longer of the two.</small>
+      <span class="spacer" style="flex:1"></span>
+      ${on ? `<button class="btn sm ghost" onclick="clearMate('${me.id}')">On its own</button>` : ''}
+      <button class="btn sm primary" onclick="startMate('${me.id}')">Done</button>
+    </div>`;
+}
 function pickBarHtml(p, me) {
   return `
     <div class="pick-bar">
@@ -13681,17 +13804,28 @@ function planOutlineHtml(p, rows, res) {
   const up = me ? planAncestors(p, planPick) : null;
   const picked = Object.create(null);
   if (me) for (const k of (planTree(p).kids[planPick] || [])) picked[k.id] = 1;
-  return `<div class="out-list${me ? ' is-picking' : ''}">
+  /* Or the other thing you can be in the middle of: saying which line this one runs alongside. */
+  const mate = (!me && planMate) ? planItemById(p, planMate) : null;
+  const mateUp = mate ? planAncestors(p, planMate) : null;
+  const tr0 = planTree(p);
+  return `<div class="out-list${(me || mate) ? ' is-picking' : ''}">
     <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
-    ${me ? pickBarHtml(p, me) : ''}
+    ${me ? pickBarHtml(p, me) : ''}${mate ? mateBarHtml(p, mate, res) : ''}
     ${rows.map((r, i) => {
       const it = r.item;
-      const step = n - i;
+      const step = r.step || String(n - i);
       const dates = r.anchored
         ? ((r.finish && r.finish !== r.start)
             ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
         : '';
-      const tick = me
+      const tick = mate
+        ? (r.id === planMate
+            ? `<span class="out-tick is-me" title="This is the line you are placing">∥</span>`
+            : ((mateUp[r.id] || tr0.leadOf[r.id] !== r.id)
+                ? `<span class="out-tick is-off" title="This one cannot be its partner">·</span>`
+                : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="setMate('${planMate}','${r.id}')"
+                     title="Run it alongside this one">${r.id === (res.by[planMate] || {}).mate ? '☑' : '☐'}</button>`))
+        : me
         ? (r.id === planPick
             ? `<span class="out-tick is-me" title="This is the line you are filling in">↳</span>`
             : (up[r.id]
@@ -13702,10 +13836,13 @@ function planOutlineHtml(p, rows, res) {
              onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
-          r.rolled ? ' is-head' : ''}${r.id === planPick ? ' is-picked' : ''}" style="--d:${r.depth}">
-        <input class="out-step" value="${step}" title="Step ${step} — type another number to move it there"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
-          onchange="moveToStep('${r.id}',this.value)">
+          r.rolled ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${
+          (r.id === planPick || r.id === planMate) ? ' is-picked' : ''}" style="--d:${r.depth}">
+        ${r.mate
+          ? `<span class="out-step is-mate" title="Runs alongside step ${esc(r.mateStep)} — they take one step between them">${esc(step)}</span>`
+          : `<input class="out-step" value="${escAttr(step)}" title="Step ${step} — type another number to move it there"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+               onchange="moveToStep('${r.id}',this.value)">`}
         ${tick}
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
           placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
@@ -13727,11 +13864,8 @@ function planOutlineHtml(p, rows, res) {
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
           ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
-          ${me && picked[r.id]
-            ? `<button class="out-tag is-ov${r.overlap ? ' on' : ''}" onclick="toggleOverlap('${r.id}')"
-                 title="It goes on while something else does, so it does not add to how long this takes">overlaps</button>`
-            : (r.overlap ? `<button class="out-tag is-ov on" onclick="toggleOverlap('${r.id}')"
-                 title="Goes alongside what is already there — it adds no days to the plan. Click to put it back in the run.">overlaps</button>` : '')}
+          ${r.mate ? `<button class="out-tag is-ov on" onclick="startMate('${r.id}')"
+               title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, as long as the longer of the two. Click to change it.">alongside ${esc(r.mateStep)}</button>` : ''}
           ${r.slack != null && r.slack !== 0
             ? `<span class="out-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}"
                  title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${
@@ -13743,9 +13877,9 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
-          <button class="x${r.overlap ? ' on' : ''}" onclick="toggleOverlap('${r.id}')"
-            title="${r.overlap ? 'Goes alongside — it is not adding days to the plan. Click to put it back in the run.'
-                               : 'It goes alongside what is already there, so it adds no days to the plan'}">∥</button>
+          <button class="x${(r.mate || r.id === planMate) ? ' on' : ''}" onclick="startMate('${r.id}')"
+            title="${r.mate ? 'Runs alongside step ' + escAttr(r.mateStep) + '. Click to change it.'
+                            : 'Run it alongside another line, so the two take one step between them'}">∥</button>
           <button class="x${planPick === r.id ? ' on' : ''}" title="What is holding this up"
             onclick="openNeeds('${r.id}')">↳</button>
           <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
@@ -13820,12 +13954,14 @@ async function setLineDate(id, v) {
 async function moveToStep(id, v) {
   const p = currentPlan(); if (!p) return;
   const flat = planFlat(p);
-  const n = flat.length;
-  const want = Math.round(Number(v) || 0);
-  if (!want || want < 1 || want > n) { renderSchedule(); return; }
+  const want = String(v == null ? '' : v).trim().toLowerCase();
+  if (!want) { renderSchedule(); return; }
+  /* The numbers count slots in the run, not lines on the page, so the one you typed is looked up
+     rather than counted back from the end. */
+  const steps = planDates(p, workCal(job)).by;
+  const toIdx = flat.findIndex(f => String((steps[f.item.id] || {}).step || '').toLowerCase() === want);
   const from = flat.findIndex(f => f.item.id === id);
-  const toIdx = n - want;
-  if (from < 0 || toIdx === from) { renderSchedule(); return; }
+  if (toIdx < 0 || from < 0 || toIdx === from) { renderSchedule(); return; }
   const target = flat[toIdx];
   if (!target) { renderSchedule(); return; }
   /* Nothing can be put underneath something that is already underneath it. */

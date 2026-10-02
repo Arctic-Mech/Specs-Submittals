@@ -554,17 +554,22 @@ const testCode = `
     ck('roll-up: the bottom one is step one and goes first',
       rr.by['t3'].start < rr.by['t2'].start && rr.by['t2'].start < rr.by['t1'].start);
 
-    // one of them marked as overlapping does not lengthen the parent
-    planItemById(currentPlan(), 't2').overlap = true;
+    /* Two of them run at once: they take one slot between them, and the slot is as long as the
+       longer of the two. */
+    planItemById(currentPlan(), 't2').alongside = 't3';     // install mains beside the tie-in
     var ro2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
-    ck('overlap: a line marked as overlapping adds nothing to how long the one above takes',
-      ro2.by['td'].days === 8);
-    ck('overlap: it still takes as long as it takes, and sits inside the window',
-      ro2.by['t2'].start >= ro2.by['td'].start && ro2.by['t2'].finish <= ro2.by['td'].finish &&
-      workDaysBetween(ro2.by['t2'].start, ro2.by['t2'].finish, { days:[1,2,3,4,5], holidays:[] }) === 7);
-    ck('overlap: and it does not push the next one along',
-      ro2.by['t1'].start === rr.by['t1'].start && ro2.by['t3'].start > rr.by['t3'].start);
-    delete planItemById(currentPlan(), 't2').overlap; }
+    ck('alongside: the two of them take one slot, as long as the longer of them',
+      ro2.by['td'].days === 12);                            // 5 detailing, then max(7, 3)
+    ck('alongside: working back they finish together, and each takes as long as it takes',
+      ro2.by['t2'].finish === ro2.by['t3'].finish &&
+      workDaysBetween(ro2.by['t2'].start, ro2.by['t2'].finish, five) === 7 &&
+      workDaysBetween(ro2.by['t3'].start, ro2.by['t3'].finish, five) === 3);
+    ck('alongside: and the one after them waits for the longer one to be done',
+      ro2.by['t1'].start > ro2.by['t2'].finish);
+    ck('alongside: they share a step number, and the one running alongside takes a letter',
+      ro2.by['t3'].step === '1' && ro2.by['t2'].step === '1a' && ro2.by['t1'].step === '2' &&
+      ro2.by['t2'].mate === 't3' && ro2.by['t2'].mateStep === '1');
+    delete planItemById(currentPlan(), 't2').alongside; }
 
   // a line stops carrying the day it was born with the moment work goes under it
   { schedules[0].items = [
@@ -587,58 +592,69 @@ const testCode = `
       { id:'a', name:'Ceilings closed', date:'2026-12-18', days:2, parent:null, order:10 },
       { id:'b', name:'Set hangers', days:3, parent:null, order:20 },
       { id:'c', name:'Pull wire', days:4, parent:null, order:30 } ];
-    var ovOff = planDates({ basis:'end', items: ovBase }, five);
-    var ovOn = planDates({ basis:'end', items: ovBase.map(function (x) {
-      return x.id === 'b' ? Object.assign({}, x, { overlap: true }) : x; }) }, five);
-    ck('overlap: a top line marked as going alongside adds no days to the plan',
-      ovOn.by['c'].start > ovOff.by['c'].start &&
-      ovOn.by['c'].finish === ovOn.by['b'].finish);
-    ck('overlap: and it still takes as long as it takes',
-      workDaysBetween(ovOn.by['b'].start, ovOn.by['b'].finish, five) === 3);
-    ck('overlap: the row carries the switch itself, so it is there on hover',
+    var apart = planDates({ basis:'end', items: ovBase }, five);
+    var beside = planDates({ basis:'end', items: ovBase.map(function (x) {
+      return x.id === 'b' ? Object.assign({}, x, { alongside: 'c' }) : x; }) }, five);
+    ck('alongside: it works at the top level too, where there is no line over them',
+      beside.by['b'].finish === beside.by['c'].finish &&
+      beside.by['c'].start > apart.by['c'].start);
+    ck('alongside: the slot is the longer of the two, so three days beside four costs four',
+      workDaysBetween(beside.by['c'].start, beside.by['a'].start, five) === 5 &&
+      workDaysBetween(apart.by['c'].start, apart.by['a'].start, five) === 8);
+    ck('alongside: and each of them still takes as long as it takes',
+      workDaysBetween(beside.by['b'].start, beside.by['b'].finish, five) === 3 &&
+      workDaysBetween(beside.by['c'].start, beside.by['c'].finish, five) === 4);
+    ck('alongside: the row carries the switch itself, so it is there on hover',
       (function () {
-        var h = planOutlineHtml({ id:'x', items: ovBase }, ovOff.rows.filter(keepRow), ovOff);
+        var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
         var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
-        return row.indexOf("toggleOverlap('b')") > 0 && row.indexOf('out-act') > 0;
+        return row.indexOf("startMate('b')") > 0 && row.indexOf('out-act') > 0;
       })());
-    ck('overlap: and once it is on, the chip says so and turns it off again',
+    ck('alongside: and once it is set, the row says which line it runs with',
       (function () {
-        var on = planDates({ items: ovBase.map(function (x) {
-          return x.id === 'b' ? Object.assign({}, x, { overlap: true }) : x; }) }, five);
-        var h = planOutlineHtml({ id:'x', items: [] }, on.rows.filter(keepRow), on);
+        var h = planOutlineHtml({ id:'x', items: [] }, beside.rows.filter(keepRow), beside);
         var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
-        return row.indexOf('>overlaps<') > 0 &&
-               (row.match(/toggleOverlap/g) || []).length === 2;
+        return row.indexOf('alongside 1<') > 0 && row.indexOf('out-step is-mate') > 0 &&
+               row.indexOf('>1a<') > 0;
+      })());
+    ck('alongside: picking the partner is the outline itself, one tick and no second list',
+      (function () {
+        planMate = 'b';
+        var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
+        planMate = null;
+        return h.indexOf('Which line does') > 0 && h.indexOf("setMate('b','c')") > 0 &&
+               h.indexOf('pick-list') < 0;
       })()); }
 
-  /* Going alongside takes no slot in the run. But the line carrying the date is what the rest of
-     the run hangs off, so leaving that one out of it took every line after it down too. */
+  /* The line carrying the date is what the rest of the run hangs off, so a line set to run beside
+     it has to take its place in the run rather than be left out of it. */
   { var fourD = { days:[1,2,3,4], holidays:[] };
-    var tempPlan = function (flexAlongside) { return { basis:'start', items: [
+    var tempPlan = function (flexBeside) { return { basis:'start', items: [
       { id:'tmp', name:'Temp', days:0, parent:null, order:10 },
       { id:'t7', name:'Tie in to temp units', days:1, parent:'tmp', order:10 },
       { id:'t6', name:'Set temp units', days:1, parent:'tmp', order:20 },
       { id:'t5', name:'Connect OSA flex', days:1, parent:'tmp', order:30 },
-      { id:'t4', name:'Open OSA shaft', days:1, parent:'tmp', order:40, overlap:true },
-      { id:'t3', name:'Insulate rooftop duct', days:4, parent:'tmp', order:50, overlap:true },
       { id:'t2', name:'Run rooftop duct', days:8, parent:'tmp', order:60 },
       { id:'t1', name:'Run flex', date:'2026-10-12', days:1, parent:'tmp', order:70,
-        overlap: !!flexAlongside } ] }; };
+        alongside: flexBeside ? 't2' : '' } ] }; };
     var was = planDates(tempPlan(false), fourD);
     var now = planDates(tempPlan(true), fourD);
-    ck('alongside: the line carrying the date still carries the run when it goes alongside',
+    ck('alongside: the line carrying the date still carries the run when it runs beside another',
       was.by['tmp'].days === 12 && now.by['tmp'].days === 11 &&
       now.rows.every(function (r) { return !!r.start; }));
-    ck('alongside: it takes its own day off the plan, and the next line runs beside it',
-      now.by['t2'].start === '2026-10-12' &&
+    ck('alongside: going forward the two of them begin together, on the date it carries',
+      now.by['t1'].start === '2026-10-12' && now.by['t2'].start === '2026-10-12' &&
       now.by['tmp'].start === '2026-10-12' && now.by['tmp'].finish === '2026-10-28');
-    ck('alongside: one is dated even when the line over it has no date of its own',
-      !!was.by['t3'].start && !!was.by['t4'].start &&
-      was.by['t3'].start >= was.by['tmp'].start && was.by['t3'].finish <= was.by['tmp'].finish);
-    ck('alongside: and it keeps its full length without making the line over it any longer',
-      was.by['t3'].days === 4 &&
-      workDaysBetween(was.by['t3'].start, was.by['t3'].finish, fourD) === 4 &&
-      was.by['tmp'].days === 12); }
+    ck('alongside: the one day it takes comes off the plan, not every day after it',
+      was.by['tmp'].finish === '2026-10-29' && now.by['tmp'].finish === '2026-10-28');
+    ck('alongside: and it is lettered off the line it runs with',
+      now.by['t2'].step === '1' && now.by['t1'].step === '1a' && now.by['t5'].step === '2');
+
+    /* A plan written before a line said which one it ran with just said that it did. */
+    var old = planDates({ basis:'start', items: tempPlan(false).items.map(function (x) {
+      return x.id === 't1' ? Object.assign({}, x, { overlap: true }) : x; }) }, fourD);
+    ck('alongside: one from before, which only said that it did, runs with the line below it',
+      old.by['t1'].mate === 't2' && old.by['tmp'].days === 11); }
 
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
