@@ -571,10 +571,14 @@ button.out-tag.is-ov { opacity: .55; }
 button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(--accent); font-weight: 600; }
 .out-days.in-cell { width: 100%; border-color: var(--accent); text-align: right; }
 .out-row.is-lead .out-name { font-style: italic; }
-/* one that runs alongside another shares its step, so it is tied to it rather than listed under it */
-.out-row.is-mate { background: linear-gradient(90deg, var(--accent-sf) 0 3px, transparent 3px); }
+/* Lines done at once are one step with one length, so they are drawn as one block: tied together
+   down the left, no rule between them, and the length they share shown the same on both. */
+.out-row.is-mate, .out-row.is-paired { box-shadow: inset 3px 0 0 var(--accent); }
+.out-row.is-mate { border-bottom-color: transparent; }
 .out-step.is-mate { text-align: right; font-size: 10.5px; color: var(--accent); font-weight: 600;
   padding: 3px 4px; font-variant-numeric: tabular-nums; }
+.out-days.is-shared { color: var(--accent); }
+.out-row.is-mate .out-when { color: var(--text-3); opacity: .55; }
 .pick-lead { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
 .pick-lead .input { width: 64px; }
 .out-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
@@ -1660,7 +1664,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.15';
+const APP_VERSION = 'v8.16';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12881,11 +12885,9 @@ function planDates(plan, cal) {
     }
     return out;
   };
-  const slotLong = (g, guard) => {
-    let n = span(g.lead, guard);
-    for (const m of g.with) n = Math.max(n, span(m, guard));
-    return n;
-  };
+  /* Two lines done at once are one length, not two. It is the length on the line holding the step
+     number, so there is one number to choose and one window they both sit in. */
+  const slotLong = (g, guard) => span(g.lead, guard);
   const memo = Object.create(null);
   const span = (it, guard) => {
     if (memo[it.id] != null) return memo[it.id];
@@ -12927,6 +12929,18 @@ function planDates(plan, cal) {
     const before = start ? dShift(start, -1) : '';
     for (const k of kidsOf(it)) walkLead(k, before);
   };
+  /* Everything in a slot sits in the slot's window: the same days, start and finish, because the
+     two of them are one step on the plan and not two things each with its own run of days. */
+  const shareSlot = together => {
+    if (together.length < 2) return;
+    const o0 = out[together[0].id];
+    if (!o0 || !o0.start) return;
+    for (let i = 1; i < together.length; i++) {
+      const o = out[together[i].id];
+      if (!o) continue;
+      o.start = o0.start; o.finish = o0.finish; o.anchored = o0.anchored; o.total = o0.total;
+    }
+  };
   /* bound is the day this line is held to: the last day it may run to working back, the first day
      it may begin going forward. */
   const walk = (it, bound) => {
@@ -12965,14 +12979,9 @@ function planDates(plan, cal) {
         if (!at || past(e, at)) at = e;
       }
       for (const k of together) walk(k, at);
-      let far = '';
-      for (const k of together) {
-        const o = out[k.id];
-        if (!o || !o.start) continue;
-        const f = fwd ? o.finish : o.start;
-        if (!far || past(far, f)) far = f;
-      }
-      if (far) cur = stepOver(far);
+      shareSlot(together);
+      const o0 = out[g.lead.id];
+      if (o0 && o0.start) cur = stepOver(fwd ? o0.finish : o0.start);
     }
     /* A line is its parts, so its window is the first of them to the last of them — whatever they
        came to, not what the count said they would. Two things were wrong without this. A date put
@@ -13006,14 +13015,9 @@ function planDates(plan, cal) {
       if (!at || past(e, at)) at = e;
     }
     for (const k of together) walk(k, at);
-    let far = '';
-    for (const k of together) {
-      const o = out[k.id];
-      if (!o || !o.start) continue;
-      const f = fwd ? o.finish : o.start;
-      if (!far || past(far, f)) far = f;
-    }
-    if (far) bound = stepOver(far);
+    shareSlot(together);
+    const o0 = out[g.lead.id];
+    if (o0 && o0.start) bound = stepOver(fwd ? o0.finish : o0.start);
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -13070,6 +13074,7 @@ function planDates(plan, cal) {
     return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
       pinned: pinnedDate(it), days: long, own: dur(it), kids: ks, rolled: fk > 0,
+      shared: tr.leadOf[it.id] !== it.id || (tr.mates[it.id] || []).length > 0,
       lead: !!d.lead, kind: String(it.kind || ''),
       target: target, slack: target ? target - long : null,
       step: stepOf[it.id] || '',
@@ -13414,6 +13419,12 @@ async function setMate(id, hostId) {
   if (tr.leadOf[it.id] === host.id) { await clearMate(id, true); return; }
   if (tr.leadOf[host.id] !== host.id) return;          // that one already runs alongside something
   if (planAncestors(p, host.id)[it.id]) return;        // and it cannot be its own parent's partner
+  /* The two of them share one length from here on, so it starts as the longer of what they were and
+     nothing silently gets shorter. It lives on the line holding the step number. */
+  const leafKids = x => planItems(p).filter(y => (y.parent || null) === x.id && !isLead(y));
+  if (!leafKids(host).length && !leafKids(it).length) {
+    host.days = Math.max(Math.round(Number(host.days) || 0), Math.round(Number(it.days) || 0));
+  }
   it.parent = host.parent || null;
   it.alongside = host.id;
   delete it.overlap;
@@ -13844,7 +13855,7 @@ function planOutlineHtml(p, rows, res) {
              onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
-          r.rolled ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${
+          r.rolled ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
           (r.id === planPick || r.id === planMate) ? ' is-picked' : ''}" style="--d:${r.depth}">
         ${r.mate
           ? `<span class="out-step is-mate" title="Runs alongside step ${esc(r.mateStep)} — they take one step between them">${esc(step)}</span>`
@@ -13859,7 +13870,11 @@ function planOutlineHtml(p, rows, res) {
           ? `<span class="out-who is-none" title="Whose it is is on the lines underneath"></span>`
           : `<input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
                onchange="setLineWho('${r.id}',this.value)">`}
-        ${r.rolled
+        ${r.mate
+          ? `<input class="out-days is-shared" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
+               title="The ${r.days} days step ${escAttr(r.mateStep)} and this one share — set it on either of them"
+               onchange="setLineDays('${r.id}',this.value)">`
+          : r.rolled
           ? `<span class="out-days is-rolled" id="dy_${r.id}" onclick="editLineTarget('${r.id}')"
                title="${escAttr(r.days + ' days, what the ' + r.kids + ' line' + (r.kids === 1 ? '' : 's') +
                  ' under it come to. Click to say how long you want it to take.')}">${r.days}</span>`
@@ -13929,7 +13944,11 @@ async function setLineWho(id, v) {
 }
 async function setLineDays(id, v) {
   const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, id); if (!it) return;
+  let it = planItemById(p, id); if (!it) return;
+  /* A line running alongside another has no length of its own — they share one — so typing on
+     either of them sets the one they share. */
+  const lead = planTree(p).leadOf[it.id];
+  if (lead && lead !== it.id) it = planItemById(p, lead) || it;
   it.days = Math.max(0, Math.round(Number(v) || 0));
   renderSchedule();
   await savePlan(p);

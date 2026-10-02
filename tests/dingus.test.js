@@ -558,12 +558,13 @@ const testCode = `
        longer of the two. */
     planItemById(currentPlan(), 't2').alongside = 't3';     // install mains beside the tie-in
     var ro2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
-    ck('alongside: the two of them take one slot, as long as the longer of them',
-      ro2.by['td'].days === 12);                            // 5 detailing, then max(7, 3)
-    ck('alongside: working back they finish together, and each takes as long as it takes',
+    ck('alongside: the two of them take one slot, of the one length they share',
+      ro2.by['td'].days === 8);                             // 5 detailing, then the 3 they share
+    ck('alongside: they are the same days, start and finish, not two runs of days',
+      ro2.by['t2'].start === ro2.by['t3'].start &&
       ro2.by['t2'].finish === ro2.by['t3'].finish &&
-      workDaysBetween(ro2.by['t2'].start, ro2.by['t2'].finish, five) === 7 &&
-      workDaysBetween(ro2.by['t3'].start, ro2.by['t3'].finish, five) === 3);
+      ro2.by['t2'].days === ro2.by['t3'].days &&
+      workDaysBetween(ro2.by['t2'].start, ro2.by['t2'].finish, five) === 3);
     ck('alongside: and the one after them waits for the longer one to be done',
       ro2.by['t1'].start > ro2.by['t2'].finish);
     ck('alongside: they share a step number, and the one running alongside takes a letter',
@@ -598,12 +599,13 @@ const testCode = `
     ck('alongside: it works at the top level too, where there is no line over them',
       beside.by['b'].finish === beside.by['c'].finish &&
       beside.by['c'].start > apart.by['c'].start);
-    ck('alongside: the slot is the longer of the two, so three days beside four costs four',
+    ck('alongside: the slot is the one length they share, set on the line holding the number',
       workDaysBetween(beside.by['c'].start, beside.by['a'].start, five) === 5 &&
       workDaysBetween(apart.by['c'].start, apart.by['a'].start, five) === 8);
-    ck('alongside: and each of them still takes as long as it takes',
-      workDaysBetween(beside.by['b'].start, beside.by['b'].finish, five) === 3 &&
-      workDaysBetween(beside.by['c'].start, beside.by['c'].finish, five) === 4);
+    ck('alongside: and both of them read as that one length, not as two',
+      beside.by['b'].days === beside.by['c'].days && beside.by['b'].days === 4 &&
+      beside.by['b'].start === beside.by['c'].start &&
+      beside.by['b'].finish === beside.by['c'].finish);
     ck('alongside: the row carries the switch itself, so it is there on hover',
       (function () {
         var h = planOutlineHtml({ id:'x', items: ovBase }, apart.rows.filter(keepRow), apart);
