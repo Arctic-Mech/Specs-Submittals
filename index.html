@@ -472,6 +472,44 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .sch-hols .hol { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 4px 2px 10px; }
 .sch-hols .hol .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 10px; }
+/* the outline */
+.out-list { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  overflow: hidden; }
+.out-row { display: flex; align-items: center; gap: 7px; padding: 3px 10px 3px 0;
+  padding-left: calc(10px + var(--d) * 22px); border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent; position: relative; }
+.out-row:last-of-type { border-bottom: none; }
+.out-row:hover { background: var(--surface-2); }
+/* the indent is the whole grammar of the thing, so it is drawn rather than left to be counted */
+.out-row[style*="--d:1"]::before, .out-row[style*="--d:2"]::before, .out-row[style*="--d:3"]::before,
+.out-row[style*="--d:4"]::before, .out-row[style*="--d:5"]::before, .out-row[style*="--d:6"]::before {
+  content: ''; position: absolute; left: calc(10px + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
+  border-left: 1px solid var(--border-2); }
+.out-row.is-late { border-left-color: var(--red); }
+.out-row.is-held { border-left-color: var(--amber); }
+.out-row.is-loose { border-left-color: var(--border-2); }
+.out-row.is-done .out-name { text-decoration: line-through; color: var(--text-3); }
+.out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
+  padding: 0; flex: none; }
+.out-tick:hover { color: var(--accent); }
+.out-ms { color: var(--accent); flex: none; font-size: 11px; }
+.out-name { flex: 1; min-width: 0; border: none; background: none; font: inherit; font-size: 13.5px;
+  color: var(--text); padding: 5px 2px; outline: none; }
+.out-name:focus { background: var(--accent-sf); border-radius: 5px; }
+.out-name::placeholder { color: var(--text-3); font-style: italic; }
+.out-meta { display: flex; align-items: center; gap: 8px; flex: none; font-size: 11.5px; color: var(--text-3); }
+.out-who { color: var(--text-2); }
+.out-when { font-variant-numeric: tabular-nums; }
+.out-tag { border-radius: 999px; padding: 1px 7px; font-size: 10px; white-space: nowrap; }
+.out-tag.is-hold { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
+.out-tag.is-late { background: var(--red-sf); color: var(--red); font-weight: 600; }
+.out-act { display: flex; gap: 1px; flex: none; opacity: 0; }
+.out-row:hover .out-act, .out-row:focus-within .out-act { opacity: 1; }
+.out-act .x { border: none; background: none; color: var(--text-3); cursor: pointer;
+  font-size: 11px; padding: 0 3px; }
+.out-act .x:hover { color: var(--accent); }
+.out-add { display: flex; align-items: center; gap: 6px; padding: 9px 10px; flex-wrap: wrap;
+  background: var(--surface-2); }
 /* the list */
 .sch-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .sl-head, .sl-row { display: grid; align-items: center; gap: 10px;
@@ -1536,7 +1574,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.99';
+const APP_VERSION = 'v8.00';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1618,7 +1656,12 @@ const CO_LOG_XLSX = 'Change Order Log.xlsx';   // the register of every CO, kept
 const CO_LOG_PDF  = 'Change Order Log.pdf';    // the same log on Arctic letterhead, ready to send
 const CO_EMAIL_DIR = 'Change Orders/Emails';   // legacy shared CO-email bucket (now per-CO: coEmailDir)
 
-const today = () => new Date().toISOString().slice(0, 10);
+/* The day it is HERE. toISOString gives the UTC date, so from late afternoon on the west coast
+   every date this app stamped, defaulted or compared against was already tomorrow's. */
+const today = () => {
+  const d = new Date(), p = n => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+};
 const fmtMoney = v => {
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.-]/g, ''));
   if (!isFinite(n)) return '';
@@ -3788,8 +3831,9 @@ let unsubDrawings = null;
 let rfiQuery = '', rfiStatusFilter = null;
 let schedules = [];          // pull plans on this job, each with its own items
 let openPlan = null;         // the plan being looked at, if any
-let planView = 'wall';       // 'wall' | 'list' | 'calendar'
-let planEdit = null;         // the line open on its form, if any
+let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
+let planEdit = null;         // the line open on its full form, if any
+let planFocus = null;        // the line the caret goes back to after a repaint
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
@@ -3959,8 +4003,13 @@ function watchSchedules(jobId) {
       if (!openPlan && schedules.length) openPlan = schedules[0].id;
       if (view === 'job' && jobTab === 'schedule') {
         /* Re-rendering while a line is open on its form would throw away what is half typed. */
+        /* A form open on a line, or a name being typed in the outline, is work that exists only on
+           the page. Somebody else's change can wait until it has been put away. */
         const ae = document.activeElement;
-        if (!(planEdit && ae && ae.closest && ae.closest('.sch-form'))) renderJob();
+        const busy = planEdit ||
+          (ae && ae.classList && ae.classList.contains('out-name')) ||
+          (ae && ae.closest && ae.closest('.sch-form'));
+        if (!busy) renderJob();
       }
       if (jobFolder) scheduleFolderSave();
     },
@@ -4233,7 +4282,7 @@ async function openJob(id) {
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = []; drawings = []; drawingQuery = '';
-  schedules = []; openPlan = null; planEdit = null; planView = 'wall'; planWho = ''; planHot = false;
+  schedules = []; openPlan = null; planEdit = null; planView = 'outline'; planWho = ''; planHot = false;
   ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
   openRfi = null; trackCat = null; trackItem = null; openCo = null; openDrawing = null; estCompare = [];
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
@@ -12570,90 +12619,143 @@ function workDaysBetween(aIso, bIso, cal) {        // both ends counted, a <= b
   for (let i = 0; i < 2000 && at <= bIso; i++) { if (isWorkDay(at, cal)) n++; at = dShift(at, 1); }
   return n;
 }
+/* Working days from one day to another, signed: negative means it has gone by. Counting the days
+   in between rather than at both ends is what makes "starts tomorrow" come out as 1 and not 2, and
+   what stopped every overdue line reading the same. Absurdly far apart, it says nothing rather than
+   the number it had to stop counting at. */
+function workDaysTo(fromIso, toIso, cal) {
+  if (!fromIso || !toIso) return null;
+  if (fromIso === toIso) return 0;
+  const back = toIso < fromIso;
+  const a = back ? toIso : fromIso, b = back ? fromIso : toIso;
+  let n = 0, at = a;
+  for (let i = 0; i < 4000 && at < b; i++) { if (isWorkDay(at, cal)) n++; at = dShift(at, 1); }
+  if (at < b) return null;                      // further off than is worth counting
+  return back ? -n : n;
+}
+
+/* ── the shape of a plan ──
+   The plan is a tree you read downwards: a line sits under the line it has to happen before. So
+   "Set and hang ductwork" sits under "Trim out and test", and the two things the ductwork waits on
+   sit under it again. Everything indented under a line has to be finished before that line starts.
+
+   A tree cannot double back on itself, which is why it is a tree — no rings to find, no ordering to
+   work out, just a walk down from the milestone. */
+function planTree(p) {
+  const items = planItems(p);
+  const byId = Object.create(null);
+  for (const it of items) byId[it.id] = it;
+  const kids = Object.create(null), roots = [];
+  for (const it of items) {
+    const par = (it.parent && byId[it.parent] && it.parent !== it.id) ? it.parent : null;
+    if (par) (kids[par] = kids[par] || []).push(it);
+    else roots.push(it);
+  }
+  const byOrder = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0);
+  roots.sort(byOrder);
+  for (const k in kids) kids[k].sort(byOrder);
+  return { byId: byId, kids: kids, roots: roots };
+}
+/* The tree flattened back into the lines you see, each with how far in it sits. The guard is for a
+   plan that has been edited into a ring by two lines claiming each other as parent — it cannot
+   happen through the buttons, but a bad write should not cost you the page. */
+function planFlat(p) {
+  const tr = planTree(p);
+  const out = [], seen = Object.create(null);
+  const walk = (list, depth) => {
+    for (const it of list) {
+      if (seen[it.id]) continue;
+      seen[it.id] = 1;
+      out.push({ item: it, depth: depth });
+      walk(tr.kids[it.id] || [], depth + 1);
+    }
+  };
+  walk(tr.roots, 0);
+  for (const it of planItems(p)) if (!seen[it.id]) out.push({ item: it, depth: 0, stray: true });
+  return out;
+}
+const planDepth = (p, id) => { const f = planFlat(p).find(x => x.item.id === id); return f ? f.depth : 0; };
 
 /* ── the backward pass ──
-   A milestone is the only line with a date of its own. Everything else finishes the working day
-   before whatever it feeds starts, and starts its own duration before that. Where a line feeds
-   two things the earlier one wins — that is the whole point of pulling.
-
-   Three things it says out loud rather than guesses at: a line nothing pulls gets no date and is
-   told so; a ring of lines waiting on each other is named rather than hung on; and the longest
-   run of days back from a milestone is the chain that moves the date if it slips. */
+   Start at the milestone and walk down. Everything under a line finishes the working day before
+   that line starts, and starts its own duration before that. Where several lines sit under one,
+   they all have to be done before it — so they all finish on the same day and the longest one
+   reaches furthest back. That is the chain that drives the date. */
 function planDates(plan, cal) {
-  const items = (plan && plan.items) || [];
-  /* Null-prototype throughout. These are keyed on ids and on names someone typed, and a plain
-     object already answers to "constructor" and "__proto__" before anything is put in it — which
-     turns a lookup into a function and the next line into a crash. */
-  const byId = Object.create(null), succ = Object.create(null);
-  for (const it of items) { byId[it.id] = it; succ[it.id] = []; }
-  for (const it of items) for (const a of (it.after || [])) if (succ[a]) succ[a].push(it.id);
-  const out = Object.create(null), mark = Object.create(null), looped = Object.create(null);
+  const tr = planTree(plan);
   const dur = it => Math.max(0, Math.round(Number(it.days) || 0));
-  function solve(id) {
-    if (mark[id] === 2) return out[id];
-    if (mark[id] === 1) { looped[id] = true; return null; }
-    mark[id] = 1;
-    const it = byId[id];
-    let r;
-    if (it.milestone) {
-      const d = it.date ? nearestWorkDay(it.date, cal, -1) : '';
-      r = { start: d, finish: d, chain: 0, anchored: !!d };
-    } else {
-      let finish = '', chain = -1;
-      for (const sid of succ[id]) {
-        const sv = solve(sid);
-        if (!sv || !sv.anchored) continue;
-        const f = prevWorkDay(sv.start, cal);
-        if (!finish || f < finish) finish = f;
-        if (sv.chain > chain) chain = sv.chain;
-      }
-      r = finish
-        ? { start: subWorkDays(finish, Math.max(1, dur(it)) - 1, cal), finish: finish,
-            chain: Math.max(0, chain) + dur(it), anchored: true }
-        : { start: '', finish: '', chain: 0, anchored: false };
+  const out = Object.create(null), seen = Object.create(null);
+  const walk = (it, afterStart) => {
+    if (seen[it.id]) return; seen[it.id] = 1;
+    let start = '', finish = '', anchored = false;
+    if (it.milestone && it.date) {
+      start = finish = nearestWorkDay(it.date, cal, -1);   // a date of its own always wins
+      anchored = true;
+    } else if (afterStart) {
+      finish = prevWorkDay(afterStart, cal);
+      start = dur(it) ? subWorkDays(finish, dur(it) - 1, cal) : finish;
+      anchored = true;
     }
-    mark[id] = 2; out[id] = r;
-    return r;
-  }
-  for (const it of items) solve(it.id);
-  /* Everything in the ring, not just the line the walk happened to come back to — naming one of
-     three is not telling you where the loop is. */
-  const inLoop = Object.create(null);
-  if (Object.keys(looped).length) {
-    const seen = Object.create(null);
-    const back = id => {
-      if (seen[id]) return; seen[id] = 1; inLoop[id] = true;
-      for (const a of ((byId[id] || {}).after || [])) if (byId[a]) back(a);
-    };
-    for (const id of Object.keys(looped)) back(id);
-  }
+    out[it.id] = { start: start, finish: finish, anchored: anchored };
+    for (const k of (tr.kids[it.id] || [])) walk(k, start);
+  };
+  for (const r of tr.roots) walk(r, '');
+  for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false };
+
+  /* The earliest day anything in a line's own subtree has to start. Following the earliest one down
+     from the milestone is the chain that sets when you have to begin. */
+  const earliest = Object.create(null);
+  const deep = (it, guard) => {
+    if (guard[it.id]) return '';
+    guard[it.id] = 1;
+    let best = out[it.id].start || '';
+    for (const k of (tr.kids[it.id] || [])) {
+      const e = deep(k, guard);
+      if (e && (!best || e < best)) best = e;
+    }
+    earliest[it.id] = best;
+    return best;
+  };
+  for (const r of tr.roots) deep(r, Object.create(null));
+  const critical = Object.create(null);
+  const markDown = it => {
+    critical[it.id] = true;
+    const ks = tr.kids[it.id] || [];
+    let pick = null;
+    for (const k of ks) if (earliest[k.id] && (!pick || earliest[k.id] < earliest[pick.id])) pick = k;
+    if (pick) markDown(pick);
+  };
+  for (const r of tr.roots) if (out[r.id].anchored && earliest[r.id]) markDown(r);
+
   const today0 = today();
-  let deepest = 0;
-  for (const it of items) if (out[it.id] && out[it.id].anchored) deepest = Math.max(deepest, out[it.id].chain);
-  const rows = items.map(it => {
-    const d = out[it.id] || { start: '', finish: '', chain: 0, anchored: false };
-    return Object.assign({}, d, { item: it, id: it.id, loop: !!inLoop[it.id], days: dur(it),
+  const flat = planFlat(plan);
+  const rows = flat.map(f => {
+    const it = f.item, d = out[it.id];
+    return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
+      start: d.start, finish: d.finish, anchored: d.anchored, days: dur(it),
+      kids: (tr.kids[it.id] || []).length,
       late: !!(d.start && !it.done && d.start < today0),
-      /* working days left before this one has to be moving; 0 is today, below 0 is behind */
-      runway: d.start ? workDaysBetween(today0, d.start, cal) - 1 : null,
-      critical: !!(d.anchored && !it.milestone && deepest && d.chain === deepest) });
+      runway: d.start ? workDaysTo(today0, d.start, cal) : null,
+      onDayOff: !isWorkDay(today0, cal),
+      critical: !!critical[it.id] && !it.milestone };
   });
   const by = Object.create(null); rows.forEach(r => by[r.id] = r);
-  return { rows: rows, by: by,
-    loops: rows.filter(r => r.loop).length,
-    orphans: rows.filter(r => !r.anchored && !r.loop && !r.item.milestone).length,
+  return { rows: rows, by: by, tree: tr,
     undated: rows.filter(r => r.item.milestone && !r.start).length,
+    rootless: rows.filter(r => !r.anchored && !r.item.milestone && r.depth === 0).length,
+    strays: rows.filter(r => r.stray).length,
     behind: rows.filter(r => r.late).length };
 }
 
-
-/* ── the plans themselves ── */
 function planById(id) { return (schedules || []).find(p => p.id === id) || null; }
 function currentPlan() { return planById(openPlan) || (schedules || [])[0] || null; }
 function planItems(p) { return (p && p.items) || []; }
 function planItemById(p, id) { return planItems(p).find(x => x.id === id) || null; }
 async function savePlan(p) {
   if (!job || !p) return;
+  /* Gone means gone. A save already on its way would otherwise put the plan back, because a set
+     creates the document it cannot find. */
+  if (!schedules.some(x => x.id === p.id)) return;
   p.updated = Date.now();
   try { await FB.setDoc(scheduleRef(job.id, p.id), clean(p)); }
   catch (e) { toast(writeError(e), true); }
@@ -12701,7 +12803,7 @@ async function setWorkShift(v) {
   if (!job) return;
   const hit = WORK_SHIFTS.find(x => x.id === v);
   job.workCal = Object.assign({}, job.workCal || {}, { shift: v, days: hit ? hit.days.slice() : [1,2,3,4,5] });
-  renderSchedule();
+  refreshSchedule();
   try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
 }
 async function addHoliday() {
@@ -12711,14 +12813,14 @@ async function addHoliday() {
   const cal = workCal(job);
   if (cal.holidays.indexOf(d.trim()) >= 0) return;
   job.workCal = Object.assign({}, job.workCal || {}, { holidays: cal.holidays.concat([d.trim()]).sort() });
-  renderSchedule();
+  refreshSchedule();
   try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
 }
 async function removeHoliday(d) {
   if (!job) return;
   const cal = workCal(job);
   job.workCal = Object.assign({}, job.workCal || {}, { holidays: cal.holidays.filter(x => x !== d) });
-  renderSchedule();
+  refreshSchedule();
   try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
 }
 
@@ -12738,19 +12840,144 @@ function jobPeople() {
   for (const p of (schedules || [])) for (const it of planItems(p)) add(it.who);
   return out.sort((a, b) => a.localeCompare(b));
 }
-async function addPlanLine(isMilestone) {
+/* ── building the outline ──
+   The whole point is that it is quick: Enter puts the next line in, Tab pushes a line under the one
+   above to say it has to happen first, Shift+Tab pulls it back out. Nothing is saved per keystroke
+   — the line is written when you leave it, so typing never waits on the network. */
+const nextOrder = (p, parent) => {
+  let n = 0;
+  for (const it of planItems(p)) if ((it.parent || null) === (parent || null)) n = Math.max(n, Number(it.order) || 0);
+  return n + 10;
+};
+function blankLine(p, parent, order) {
+  return { id: uid('li'), name: '', who: '', days: 1, parent: parent || null,
+    order: order == null ? nextOrder(p, parent) : order, hold: '', note: '', done: false };
+}
+/* A new line goes in right under the one you were on, at the same depth — which is what "the next
+   thing" means when you are typing a list. */
+async function addLineAfter(afterId, asChild) {
   const p = currentPlan(); if (!p) return;
-  const it = { id: uid('li'), name: '', who: '', days: isMilestone ? 0 : 1,
-    after: [], hold: '', note: '', done: false };
-  if (isMilestone) { it.milestone = true; it.date = ''; }
+  const prev = afterId ? planItemById(p, afterId) : null;
+  const parent = !prev ? null : (asChild ? prev.id : (prev.parent || null));
+  const it = blankLine(p, parent);
+  if (prev && !asChild) {
+    /* Slot it directly below, rather than at the end, by sitting between this one and the next. */
+    const sibs = planItems(p).filter(x => (x.parent || null) === parent)
+      .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    const i = sibs.findIndex(x => x.id === prev.id);
+    const before = Number(prev.order) || 0;
+    const after = (i >= 0 && sibs[i + 1]) ? (Number(sibs[i + 1].order) || before + 20) : before + 20;
+    it.order = before + (after - before) / 2;
+  }
   p.items = planItems(p).concat([it]);
-  planEdit = it.id;
-  renderSchedule();
-  const b = $('liName'); if (b && b.focus) b.focus();
+  planFocus = it.id;
+  renderSchedule(); focusLine(it.id);
   await savePlan(p);
 }
-function editPlanLine(id) { planEdit = id; renderSchedule();
-  const b = $('liName'); if (b && b.focus) b.focus(); }
+async function addPlanLine(isMilestone) {
+  const p = currentPlan(); if (!p) return;
+  const it = blankLine(p, null);
+  if (isMilestone) { it.milestone = true; it.date = ''; it.days = 0; }
+  p.items = planItems(p).concat([it]);
+  planFocus = it.id;
+  renderSchedule(); focusLine(it.id);
+  await savePlan(p);
+}
+/* "Something has to happen before this" — a new line, already sitting under the one you clicked. */
+async function addNeedBefore(id) { await addLineAfter(id, true); }
+
+function focusLine(id) {
+  const el = $('ln_' + id);
+  if (el && el.focus) { try { el.focus(); if (el.setSelectionRange) el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }
+}
+/* Writing what was typed into the record, without a repaint: a repaint mid-type takes the caret
+   with it. The list is only redrawn when the shape changes — an indent, a new line, a removal. */
+function stashLine(id) {
+  const p = currentPlan(); if (!p) return null;
+  const it = planItemById(p, id); if (!it) return null;
+  const el = $('ln_' + id);
+  if (el && el.value != null) it.name = String(el.value);
+  return p;
+}
+async function commitLine(id) {
+  const p = stashLine(id);
+  if (p) await savePlan(p);
+}
+async function indentLine(id, out) {
+  const p = currentPlan(); if (!p) return;
+  stashLine(id);
+  const it = planItemById(p, id); if (!it) return;
+  const sibs = planItems(p).filter(x => (x.parent || null) === (it.parent || null))
+    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+  const i = sibs.findIndex(x => x.id === id);
+  if (out) {
+    /* Out one level: it becomes the next thing after what used to be its parent. */
+    const par = it.parent ? planItemById(p, it.parent) : null;
+    if (!par) return;                       // already at the top; nothing to come out of
+    it.parent = par.parent || null;
+    it.order = (Number(par.order) || 0) + 1;
+  } else {
+    /* In one level: it goes under the line above it, which is what the indent means. */
+    if (i <= 0) return;                     // nothing above it at this level to go under
+    it.parent = sibs[i - 1].id;
+    it.order = nextOrder(p, it.parent);
+  }
+  renderSchedule(); focusLine(id);
+  await savePlan(p);
+}
+async function removeLine(id, quiet) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  const tr = planTree(p);
+  const kids = (tr.kids[id] || []);
+  if (!quiet && (String(it.name || '').trim() || kids.length)) {
+    const msg = 'Take "' + (it.name || 'this line') + '" off the plan?' +
+      (kids.length ? '\n\nThe ' + kids.length + ' line' + (kids.length === 1 ? '' : 's') +
+        ' under it come' + (kids.length === 1 ? 's' : '') + ' up a level rather than going with it.' : '');
+    if (!confirm(msg)) return;
+  }
+  /* What was under it comes up to where it was, so nothing is lost by taking out a middle line. */
+  for (const k of kids) { k.parent = it.parent || null; k.order = (Number(it.order) || 0) + (Number(k.order) || 0) / 1000; }
+  p.items = planItems(p).filter(x => x.id !== id);
+  if (planEdit === id) planEdit = null;
+  renderSchedule();
+  await savePlan(p);
+}
+/* Backspace at the start of an empty line takes it out and puts you on the one above, the way an
+   outline is expected to behave. */
+async function lineKey(ev, id) {
+  const el = ev.target;
+  const flat = planFlat(currentPlan());
+  const i = flat.findIndex(f => f.item.id === id);
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    await commitLine(id);
+    await addLineAfter(id, false);
+    return;
+  }
+  if (ev.key === 'Tab') {
+    ev.preventDefault();
+    await indentLine(id, !!ev.shiftKey);
+    return;
+  }
+  if (ev.key === 'Backspace' && el && !String(el.value || '').length) {
+    ev.preventDefault();
+    const prev = i > 0 ? flat[i - 1].item.id : null;
+    await removeLine(id, true);
+    if (prev) focusLine(prev);
+    return;
+  }
+  if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
+    const to = ev.key === 'ArrowDown' ? flat[i + 1] : flat[i - 1];
+    if (to) { ev.preventDefault(); await commitLine(id); focusLine(to.item.id); }
+  }
+}
+
+/* ── the rest of a line ──
+   The outline holds the name and the shape. Everything else about a line — whose it is, how long it
+   takes, what is holding it up — lives behind the pencil, so building the plan is not interrupted
+   by filling it in. */
+function editPlanLine(id) { planEdit = id; renderSchedule(); const b = $('liName'); if (b && b.focus) b.focus(); }
 function cancelPlanLine() { planEdit = null; renderSchedule(); }
 async function savePlanLine(id) {
   const p = currentPlan(); if (!p) return;
@@ -12762,30 +12989,12 @@ async function savePlanLine(id) {
   it.note = autoCap(v('liNote'));
   const ms = $('liIsMilestone');
   it.milestone = !!(ms && ms.checked);
-  if (it.milestone) { it.date = v('liDate'); it.days = 0; }
-  else { delete it.date; it.days = Math.max(0, Math.round(Number(v('liDays')) || 0)); }
-  const after = [];
-  const box = $('liAfter');
-  if (box && typeof box.querySelectorAll === 'function') {
-    for (const el of box.querySelectorAll('input.liDep')) if (el.checked) after.push(el.value);
-  }
-  it.after = after;
+  /* Keeping both: ticking the box and changing your mind should give you back the duration you had
+     typed, not a 1 the app guessed at. */
+  if (it.milestone) { it.date = v('liDate') || it.date || ''; it.days = 0; }
+  else { it.days = Math.max(0, Math.round(Number(v('liDays')) || 0)); }
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
   planEdit = null;
-  renderSchedule();
-  await savePlan(p);
-}
-async function removePlanLine(id) {
-  const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, id); if (!it) return;
-  const feeds = planItems(p).filter(x => (x.after || []).indexOf(id) >= 0);
-  if (!confirm('Take "' + (it.name || 'this line') + '" off the plan?' +
-      (feeds.length ? '\n\n' + feeds.length + ' line' + (feeds.length === 1 ? ' that waits' : 's that wait') +
-       ' on it will stop waiting on it.' : ''))) return;
-  /* Nothing is left pointing at a line that is gone, or the backward pass would wait on a ghost. */
-  p.items = planItems(p).filter(x => x.id !== id)
-    .map(x => Object.assign({}, x, { after: (x.after || []).filter(a => a !== id) }));
-  if (planEdit === id) planEdit = null;
   renderSchedule();
   await savePlan(p);
 }
@@ -12795,6 +13004,64 @@ async function togglePlanDone(id) {
   it.done = !it.done;
   renderSchedule();
   await savePlan(p);
+}
+const removePlanLine = id => removeLine(id, false);
+
+/* ── pasting a list in ──
+   A list from an email or a spreadsheet, one thing per line, with indentation kept if it is there. */
+function pasteListModal() {
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
+    <div class="modal-head"><h3>Type or paste the plan</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <div class="muted" style="margin-bottom:8px">One thing per line. Indent a line with a tab or
+        two spaces to say it has to happen before the line above it. They go in at the end of the
+        plan, and you can move them about afterwards.</div>
+      <textarea class="input" id="pasteBox" rows="12" style="font-family:ui-monospace,monospace;font-size:13px"
+        placeholder="Ceilings closed&#10;&#9;Trim out and test&#10;&#9;&#9;Set and hang ductwork&#10;&#9;&#9;&#9;Duct on site"></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closePdf()">Cancel</button>
+      <button class="btn primary" onclick="takePastedList()">Add them</button>
+    </div></div></div>`;
+  const b = $('pasteBox'); if (b && b.focus) b.focus();
+}
+/* Leading tabs, or every two spaces, count as one level in. A line indented further than one step
+   past the line above it is pulled back to one step, because there is nothing for it to hang off. */
+function parseOutline(text) {
+  const out = [];
+  for (const raw of String(text == null ? '' : text).split('\n')) {
+    if (!String(raw).trim()) continue;
+    const lead = (String(raw).match(/^[\t ]*/) || [''])[0];
+    const tabs = (lead.match(/\t/g) || []).length;
+    const spaces = lead.replace(/\t/g, '').length;
+    out.push({ depth: tabs + Math.floor(spaces / 2), name: normSp(raw) });
+  }
+  let last = -1;
+  for (const r of out) { r.depth = Math.max(0, Math.min(r.depth, last + 1)); last = r.depth; }
+  return out;
+}
+async function takePastedList() {
+  const p = currentPlan(); if (!p) return;
+  const text = ($('pasteBox') || {}).value || '';
+  const rows = parseOutline(text);
+  if (!rows.length) { toast('Nothing to add', true); return; }
+  const stack = [];                       // the last line seen at each depth
+  const made = [];
+  for (const r of rows) {
+    const parent = r.depth > 0 ? (stack[r.depth - 1] || null) : null;
+    const it = blankLine(p, parent, null);
+    it.name = autoCap(r.name);
+    it.order = nextOrder(p, parent) + made.filter(m => (m.parent || null) === (parent || null)).length * 10;
+    made.push(it);
+    stack[r.depth] = it.id;
+    stack.length = r.depth + 1;
+    p.items = planItems(p).concat([it]);   // in as we go, so nextOrder sees them
+  }
+  closePdf();
+  renderSchedule();
+  await savePlan(p);
+  toast(made.length + ' line' + (made.length === 1 ? '' : 's') + ' added');
 }
 
 /* ── drawing it ── */
@@ -12814,15 +13081,13 @@ function weekSpan(rows) {
 const shortDate = iso => iso ? fmtDate(iso + 'T00:00:00') : '';
 function runwayLabel(r) {
   if (r.item.done) return 'done';
-  if (!r.anchored) return '';
-  if (r.runway == null) return '';
+  if (!r.anchored || r.runway == null) return '';
   if (r.runway < 0) return Math.abs(r.runway) + 'd behind';
-  if (r.runway === 0) return 'starts today';
+  if (r.runway === 0) return r.onDayOff ? 'starts next working day' : 'starts today';
   return r.runway + 'd to go';
 }
 function planRowClass(r) {
   if (r.item.done) return ' is-done';
-  if (r.loop) return ' is-loop';
   if (!r.anchored) return ' is-loose';
   if (r.late) return ' is-late';
   if (String(r.item.hold || '').trim()) return ' is-held';
@@ -12830,7 +13095,7 @@ function planRowClass(r) {
 }
 function keepRow(r) {
   if (planWho && String(r.item.who || '').trim() !== planWho) return false;
-  if (planHot && !(r.late || r.loop || !r.anchored || String(r.item.hold || '').trim())) return false;
+  if (planHot && !(r.late || !r.anchored || String(r.item.hold || '').trim())) return false;
   return true;
 }
 
@@ -12840,10 +13105,9 @@ function renderSchedule() {
     host.innerHTML = `<div class="empty" style="max-width:620px">
       <div style="font-size:30px;margin-bottom:6px">\u{1F5D3}\u{FE0F}</div>
       <b>No pull plan yet</b><br>
-      <span class="muted">A pull plan starts at the end: put in the milestone and the date it has to
-      be met, then work backwards — each line is a piece of work, how long it takes, and what has to
-      be finished before it can start. The app works out the latest each one can start and still
-      make the date.</span><br><br>
+      <span class="muted">Start by typing the list. A line each, and when something has to happen
+      before another thing, put it underneath — Tab, or the ↳ button. Put dates and durations on
+      afterwards and it works back to the latest each line can start.</span><br><br>
       <button class="btn primary" onclick="newPullPlan()">+ New pull plan</button>
     </div>`;
     return;
@@ -12860,8 +13124,12 @@ function renderSchedule() {
 
   const warn = [];
   if (res.undated) warn.push(res.undated + ' milestone' + (res.undated === 1 ? ' has' : 's have') + ' no date yet — nothing can be worked back from ' + (res.undated === 1 ? 'it' : 'them'));
-  if (res.loops) warn.push(res.loops + ' lines are waiting on each other in a ring');
-  if (res.orphans) warn.push(res.orphans + ' line' + (res.orphans === 1 ? '' : 's') + ' nothing pulls — say what ' + (res.orphans === 1 ? 'it feeds' : 'they feed'));
+  for (const r of rows) if (r.item.milestone && r.item.date && r.start && r.start !== r.item.date)
+    warn.push('"' + (r.item.name || 'A milestone') + '" is dated ' + shortDate(r.item.date) +
+      ', a day this job does not work — everything is worked back from ' + shortDate(r.start) + ' instead');
+  if (res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits' : 's sit') +
+    ' at the top with no date — put ' + (res.rootless === 1 ? 'it' : 'them') + ' under something, or make ' +
+    (res.rootless === 1 ? 'it a milestone' : 'them milestones'));
   if (res.behind) warn.push(res.behind + ' line' + (res.behind === 1 ? '' : 's') + ' should have started already');
 
   host.innerHTML = `
@@ -12874,6 +13142,7 @@ function renderSchedule() {
 
     <div class="sch-bar">
       <div class="seg">
+        <button class="${planView === 'outline' ? 'on' : ''}" onclick="setPlanView('outline')">Outline</button>
         <button class="${planView === 'wall' ? 'on' : ''}" onclick="setPlanView('wall')">Wall</button>
         <button class="${planView === 'list' ? 'on' : ''}" onclick="setPlanView('list')">List</button>
         <button class="${planView === 'calendar' ? 'on' : ''}" onclick="setPlanView('calendar')">Calendar</button>
@@ -12894,14 +13163,17 @@ function renderSchedule() {
 
     ${warn.length ? `<div class="sch-warn">${warn.map(w => `<div>⚠ ${esc(w)}</div>`).join('')}</div>` : ''}
     ${planEdit ? lineForm(p, planEdit, rows) : ''}
-    ${!planItems(p).length ? `<div class="muted" style="font-size:13px;padding:10px 2px">
-       Nothing on this plan yet. Put the milestone in first — the date it has to be met — then add
-       the work that leads up to it.</div>`
+    ${planView === 'outline' ? planOutlineHtml(p, shown, res)
+     : !planItems(p).length ? `<div class="muted" style="font-size:13px;padding:10px 2px">
+       Nothing on this plan yet — start on the Outline.</div>`
      : !shown.length ? `<div class="muted" style="font-size:13px;padding:10px 2px">Nothing matches that filter.</div>`
      : planView === 'list' ? planListHtml(p, shown, res)
      : planView === 'calendar' ? planCalendarHtml(p, shown, cal)
      : planWallHtml(p, shown, cal)}`;
   autosizeAll(host);
+  /* Put the caret back where it was, so a line that was added or moved is still the one you are
+     typing in after the list is redrawn. */
+  if (planFocus) { const id = planFocus; planFocus = null; focusLine(id); }
 }
 
 
@@ -12910,7 +13182,6 @@ function renderSchedule() {
    is a length. */
 function lineForm(p, id, rows) {
   const it = planItemById(p, id); if (!it) return '';
-  const others = planItems(p).filter(x => x.id !== id);
   const isM = !!it.milestone;
   const people = jobPeople();
   return `
@@ -12933,14 +13204,11 @@ function lineForm(p, id, rows) {
           ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="${escAttr(it.date || '')}">`
           : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String(it.days == null ? 1 : it.days))}">`}</div>
       </div>
-      <div class="field"><label class="fl">What has to be finished first</label>
-        ${others.length ? `<div class="sch-deps" id="liAfter">${others.map(o => `
-          <label class="tick-row"><input type="checkbox" class="liDep" value="${o.id}"
-            ${(it.after || []).indexOf(o.id) >= 0 ? 'checked' : ''}>
-            <span>${o.milestone ? '◆ ' : ''}${esc(o.name || '(unnamed)')}${o.who ? ' · ' + esc(o.who) : ''}</span></label>`).join('')}</div>`
-          : `<div class="muted" style="font-size:13px">Nothing else on the plan yet.</div>`}
-        <div class="muted" style="font-size:12px;margin-top:4px">Tick what this one waits on. It will
-          be worked back from whatever it feeds, so a line in the middle wants both.</div></div>
+      <div class="field"><label class="fl">Where it sits</label>
+        <div class="muted" style="font-size:13px">${it.parent
+          ? 'Has to be finished before <b>' + esc((planItemById(p, it.parent) || {}).name || 'the line above') + '</b>.'
+          : 'At the top of the plan — nothing on this plan waits on it.'}
+          Move it with the arrows on its line, or with Tab while typing in it.</div></div>
       <div class="grid2">
         <div class="field"><label class="fl">What is holding it up</label>
           <input class="input" id="liHold" value="${escAttr(it.hold || '')}"
@@ -12961,11 +13229,24 @@ function lineForm(p, id, rows) {
    the form is not thrown away mid-edit. */
 function renderMilestoneSwap(isM) {
   const wrap = $('liWhenWrap'); if (!wrap) return;
+  /* Seeded from what the line already has, so ticking the box to see what happens and then changing
+     your mind gives you back the date — or the duration — you had typed, not a blank. */
+  const p = currentPlan(), it = (p && planEdit) ? planItemById(p, planEdit) : null;
   wrap.innerHTML = isM
-    ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="">`
-    : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="1">`;
+    ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="${escAttr((it && it.date) || '')}">`
+    : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String((it && it.days) || 1))}">`;
 }
 
+/* Redraw what is on screen after the working week changes: the panel behind, and the modal itself
+   if it is still up — otherwise adding a shut day looks like it did nothing. A line open on its form
+   keeps its place, because rebuilding it would seed it from the record and lose what is typed. */
+function refreshSchedule() {
+  const keep = planEdit;
+  renderSchedule();
+  planEdit = keep;
+  const host = $('modalHost');
+  if (host && String(host.innerHTML || '').indexOf('sch-hols') >= 0) workWeekModal();
+}
 function workWeekModal() {
   const cal = workCal(job);
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
@@ -12990,6 +13271,50 @@ function workWeekModal() {
   </div></div>`;
 }
 
+/* ── the outline ──
+   The plan as you build it: a line each, indented under what it has to happen before. The name is
+   an input you can just type into; everything else about a line lives behind the pencil. */
+function planOutlineHtml(p, rows, res) {
+  return `<div class="out-list">
+    ${rows.map(r => {
+      const it = r.item;
+      const when = it.milestone
+        ? (it.date ? esc(shortDate(r.start)) : '<i>no date yet</i>')
+        : (r.anchored ? esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) : '');
+      return `
+      <div class="out-row${planRowClass(r)}" style="--d:${r.depth}">
+        <button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
+          onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>
+        ${it.milestone ? '<span class="out-ms" title="A milestone — it has a date of its own">◆</span>' : ''}
+        <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
+          placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
+          onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
+        <span class="out-meta">
+          ${it.who ? `<span class="out-who">${esc(it.who)}</span>` : ''}
+          ${it.milestone ? '' : `<span class="out-days">${r.days}d</span>`}
+          ${when ? `<span class="out-when">${when}</span>` : ''}
+          ${it.hold ? `<span class="out-tag is-hold" title="${escAttr(it.hold)}">held up</span>` : ''}
+          ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
+        </span>
+        <span class="out-act">
+          <button class="x" title="Something has to happen before this"
+            onclick="addNeedBefore('${r.id}')">↳</button>
+          <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
+          <button class="x" title="Pull it back out (Shift+Tab)" onclick="indentLine('${r.id}',true)">←</button>
+          <button class="x" title="Whose it is, how long, what is holding it up" onclick="editPlanLine('${r.id}')">✎</button>
+          <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
+        </span>
+      </div>`;
+    }).join('')}
+    <div class="out-add">
+      <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
+      <button class="btn sm ghost" onclick="addPlanLine(true)">+ Milestone</button>
+      <button class="btn sm ghost" onclick="pasteListModal()">Type or paste a list…</button>
+      <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab puts it under the one above · Shift+Tab pulls it back out</span>
+    </div>
+  </div>`;
+}
+
 /* ── list ──
    Every line, in the order the work actually happens: by the day it has to start. */
 function planListHtml(p, shown, res) {
@@ -13002,21 +13327,20 @@ function planListHtml(p, shown, res) {
   const nameOf = id => { const o = planItemById(p, id); return o ? (o.name || '(unnamed)') : '(gone)'; };
   return `<div class="sch-list">
     <div class="sl-head"><span>Line</span><span>Whose</span><span>Days</span><span>Latest start</span>
-      <span>Must finish</span><span>Runway</span><span>Waiting on</span><span></span></div>
+      <span>Must finish</span><span>Runway</span><span>Comes before</span><span></span></div>
     ${order.map(r => `
       <div class="sl-row${planRowClass(r)}">
         <span class="sl-name">${r.item.milestone ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
           ${r.critical ? '<span class="sl-tag is-crit" title="The longest run of days back from the milestone — if this slips, the date slips">drives the date</span>' : ''}
           ${r.item.hold ? `<span class="sl-tag is-hold" title="${escAttr(r.item.hold)}">held up</span>` : ''}
-          ${r.loop ? '<span class="sl-tag is-loop">in a ring</span>' : ''}
-          ${!r.anchored && !r.loop && !r.item.milestone ? '<span class="sl-tag is-loose">nothing pulls it</span>' : ''}
+          ${!r.anchored && !r.item.milestone ? '<span class="sl-tag is-loose">no date — put it under something</span>' : ''}
           ${r.item.note ? `<small class="muted sl-note">${esc(r.item.note)}</small>` : ''}</span>
         <span>${esc(r.item.who || '')}</span>
         <span>${r.item.milestone ? '' : r.days}</span>
         <span>${esc(shortDate(r.start))}</span>
         <span>${r.item.milestone ? '' : esc(shortDate(r.finish))}</span>
         <span class="sl-run">${esc(runwayLabel(r))}</span>
-        <span class="sl-dep">${(r.item.after || []).map(a => esc(nameOf(a))).join(', ')}</span>
+        <span class="sl-dep">${r.item.parent ? esc(nameOf(r.item.parent)) : ''}</span>
         <span class="sl-act">
           <button class="x" title="${r.item.done ? 'Not done after all' : 'Mark it done'}"
             onclick="togglePlanDone('${r.id}')">${r.item.done ? '↺' : '✓'}</button>
