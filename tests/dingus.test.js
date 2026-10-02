@@ -526,6 +526,13 @@ const testCode = `
     var rr = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
     ck('roll-up: a line with things under it is as long as they come to, not what was typed on it',
       rr.by['td'].days === 15 && rr.by['td'].rolled === true);
+    ck('roll-up: the one day every new line starts with is not a target it has missed',
+      (function () {
+        planItemById(currentPlan(), 'td').days = 1;
+        var x = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+        planItemById(currentPlan(), 'td').days = 20;
+        return x.by['td'].days === 15 && x.by['td'].slack === null && x.over === 0;
+      })());
     ck('roll-up: what was typed on it is a target, and the row says what it leaves you',
       rr.by['td'].target === 20 && rr.by['td'].slack === 5 && rr.over === 0);
     ck('roll-up: and says by how much when the parts come to more than the target',
@@ -557,6 +564,21 @@ const testCode = `
     ck('overlap: and it does not push the next one along',
       ro2.by['t1'].start === rr.by['t1'].start && ro2.by['t3'].start > rr.by['t3'].start);
     delete planItemById(currentPlan(), 't2').overlap; }
+
+  // a line stops carrying the day it was born with the moment work goes under it
+  { schedules[0].items = [
+      { id:'a', name:'Prep inside', days:1, parent:null, order:10 },
+      { id:'b', name:'Take motor readings', days:1, parent:null, order:20 },
+      { id:'c', name:'Set it by hand', days:4, parent:null, order:30 } ];
+    await indentLine('b', false);                  // b goes under a
+    var aBorn = planItemById(currentPlan(), 'a').days;
+    planItemById(currentPlan(), 'a').days = 9;     // a length somebody chose
+    await indentLine('c', false);                  // c goes under a as well
+    ck('roll-up: a line drops the day it was born with when work goes under it',
+      aBorn === 0 && planItemById(currentPlan(), 'b').parent === 'a');
+    ck('roll-up: but a length somebody chose is left alone',
+      planItemById(currentPlan(), 'a').days === 9 &&
+      planItemById(currentPlan(), 'c').parent === 'a'); }
 
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
@@ -820,6 +842,70 @@ const testCode = `
     delete schedules[0].basis;
     job.workCal = heldCal;
     __stubEl('schedPanel', null); }
+
+  /* A date on the first thing anybody does has to carry the whole plan above it, and a heading has
+     to own whatever its parts actually came to. */
+  { var carry = planDates({ basis:'start', items: [
+      { id:'pi', name:'Prep inside', days:1, parent:null, order:10 },
+      { id:'p1', name:'Motor readings', days:1, parent:'pi', order:10 },
+      { id:'pp', name:'Piping prep', days:1, parent:null, order:20 },
+      { id:'q1', name:'Isolate steam', days:1, parent:'pp', order:10 },
+      { id:'q2', name:'Isolation valves', days:0, parent:'pp', order:20 },
+      { id:'tm', name:'Temp', days:1, parent:null, order:30 },
+      { id:'t2', name:'Run rooftop duct', days:3, parent:'tm', order:10 },
+      { id:'t1', name:'Run flex', date:'2026-10-12', days:1, parent:'tm', order:20 } ] }, five);
+    ck('carry: a date on the first thing anybody does dates everything above it too',
+      carry.rows.every(function (r) { return !!r.start; }));
+    ck('carry: the heading over it is from the first of its parts to the last',
+      carry.by['tm'].start === '2026-10-12' && carry.by['tm'].start === carry.by['t1'].start &&
+      carry.by['tm'].finish === carry.by['t2'].finish);
+    ck('carry: a heading owns what its parts came to, even past what its own count allowed',
+      carry.by['pp'].start === carry.by['q2'].start &&
+      carry.by['pp'].finish === carry.by['q1'].finish &&
+      carry.by['q1'].finish > carry.by['q2'].finish);
+    ck('carry: and what it says it comes to is the window it ended up with, not its parts added up',
+      carry.by['pp'].days === 2 && carry.by['tm'].days === 4);
+    ck('carry: so the row shows the range it really runs, not one date',
+      (function () {
+        var h = planOutlineHtml({ id:'x', items: [] }, carry.rows.filter(keepRow), carry);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Piping prep') > 0; });
+        return row.indexOf('\u2192') > 0;
+      })());
+    ck('carry: so the next line down does not start on top of them',
+      carry.by['pi'].start > carry.by['pp'].finish &&
+      carry.by['pp'].start > carry.by['tm'].finish);
+
+    /* And the same thing working back from the end, where the date goes at the top instead and the
+       plan flows down from it. */
+    var carryB = planDates({ basis:'end', items: [
+      { id:'ms', name:'Ceilings closed', date:'2026-12-18', days:0, parent:null, order:10 },
+      { id:'tm', name:'Temp', days:1, parent:null, order:20 },
+      { id:'t2', name:'Run rooftop duct', days:3, parent:'tm', order:10 },
+      { id:'t1', name:'Run flex', days:1, parent:'tm', order:20 },
+      { id:'pp', name:'Piping prep', days:1, parent:null, order:30 },
+      { id:'q1', name:'Isolate steam', days:1, parent:'pp', order:10 },
+      { id:'q2', name:'Isolation valves', days:0, parent:'pp', order:20 } ], }, five);
+    ck('carry: working back, the whole plan below the date is dated',
+      carryB.rows.every(function (r) { return !!r.start; }));
+    ck('carry: and a heading still owns exactly what its parts came to',
+      carryB.by['tm'].finish === carryB.by['t2'].finish &&
+      carryB.by['tm'].start === carryB.by['t1'].start &&
+      carryB.by['pp'].finish === carryB.by['q1'].finish &&
+      carryB.by['pp'].start === carryB.by['q2'].start);
+    ck('carry: with nothing starting on top of the line above it',
+      carryB.by['tm'].finish < carryB.by['ms'].start &&
+      carryB.by['pp'].finish < carryB.by['tm'].start);
+
+    /* A date part way down anchors its own branch and what comes before it, not the steps above it
+       that have nothing of their own to go on. That is the same either way round, mirrored. */
+    var part = planDates({ basis:'end', items: [
+      { id:'a', name:'Later', days:2, parent:null, order:10 },
+      { id:'b', name:'Dated', date:'2026-12-18', days:1, parent:null, order:20 },
+      { id:'c', name:'Earlier', days:2, parent:null, order:30 } ], }, five);
+    ck('carry: a date part way down carries what comes before it, and says the rest has none',
+      part.by['b'].finish === '2026-12-18' && !!part.by['c'].start &&
+      part.by['c'].finish < part.by['b'].start &&
+      part.by['a'].anchored === false && part.rootless === 1); }
 
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [

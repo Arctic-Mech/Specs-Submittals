@@ -1656,7 +1656,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.09';
+const APP_VERSION = 'v8.10';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12893,9 +12893,24 @@ function planDates(plan, cal) {
         else if (start && o.start < start) { o.start = start; o.clash = true; }
       } else cur = stepOver(fwd ? o.finish : o.start);
     }
+    /* A line is its parts, so its window is the first of them to the last of them — whatever they
+       came to, not what the count said they would. Two things were wrong without this. A date put
+       on the first thing anybody does left the heading over it blank, and with that heading blank
+       there was nothing for the next one up to follow on from, so the whole plan above the date
+       stayed dateless. And where the parts ran a day past what the count allowed for, the line
+       under them started on top of them. */
+    let lo = '', hi = '';
+    for (const k of fieldKids(it)) {
+      const o = out[k.id];
+      if (!o || !o.start) continue;
+      if (!lo || o.start < lo) lo = o.start;
+      if (!hi || o.finish > hi) hi = o.finish;
+    }
+    if (lo) { out[it.id].start = lo; out[it.id].finish = hi; out[it.id].anchored = true; }
     /* Whichever way round the plan is written, what is on order has to be in before the work
        starts. That end of it never flips. */
-    for (const k of leadKids(it)) walkLead(k, start ? prevWorkDay(start, cal) : '');
+    const began = out[it.id].start;
+    for (const k of leadKids(it)) walkLead(k, began ? prevWorkDay(began, cal) : '');
   };
   /* The top level is a sequence like any other, taken in the order the work happens. Something on
      order at the top level waits on nothing, so it does not take a turn in that sequence. */
@@ -12938,13 +12953,18 @@ function planDates(plan, cal) {
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
     const fk = fieldKids(it).length, ks = kidsOf(it).length;
-    /* A length typed on a line that has work under it is what you hoped it would take. */
-    const target = fk ? dur(it) : 0;
+    /* A length typed on a line that has work under it is what you hoped it would take. A 1 is not
+       that: it is what every new line starts with, and on a plan written before a line dropped it
+       on becoming a heading it would read as being sixteen days over. */
+    const target = (fk && dur(it) !== 1) ? dur(it) : 0;
+    /* And what it actually comes to is the window it ended up with, counted in days this job works.
+       Adding its parts up instead said one day for a line that ran over two. */
+    const long = (fk && d.start && d.finish) ? workDaysBetween(d.start, d.finish, cal) : d.total;
     return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
-      pinned: pinnedDate(it), days: d.total, own: dur(it), kids: ks, rolled: fk > 0,
+      pinned: pinnedDate(it), days: long, own: dur(it), kids: ks, rolled: fk > 0,
       lead: !!d.lead, kind: String(it.kind || ''),
-      target: target, slack: target ? target - d.total : null,
+      target: target, slack: target ? target - long : null,
       overlap: !!it.overlap,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
@@ -13101,6 +13121,16 @@ const nextOrder = (p, parent) => {
   for (const it of planItems(p)) if ((it.parent || null) === (parent || null)) n = Math.max(n, Number(it.order) || 0);
   return n + 10;
 };
+/* A line that was work and now has work under it is a heading, and a heading is as long as its
+   parts. The 1 it is carrying is not a target anybody set — it is the one every new line starts
+   with — and left on there it reads as being sixteen days over before anyone has typed anything.
+   A length somebody actually chose is left alone. */
+function headingTakesItsParts(p, parentId) {
+  if (!parentId) return;
+  const par = planItemById(p, parentId); if (!par) return;
+  const kids = planItems(p).filter(x => (x.parent || null) === parentId && !isLead(x));
+  if (kids.length === 1 && Number(par.days) === 1) par.days = 0;
+}
 function blankLine(p, parent, order) {
   return { id: uid('li'), name: '', who: '', days: 1, parent: parent || null,
     order: order == null ? nextOrder(p, parent) : order, hold: '', note: '', done: false };
@@ -13112,6 +13142,7 @@ async function addLineAfter(afterId, asChild) {
   const prev = afterId ? planItemById(p, afterId) : null;
   const parent = !prev ? null : (asChild ? prev.id : (prev.parent || null));
   const it = blankLine(p, parent);
+  headingTakesItsParts(p, parent);
   if (prev && !asChild) {
     /* Slot it directly below, rather than at the end, by sitting between this one and the next. */
     const sibs = planItems(p).filter(x => (x.parent || null) === parent)
@@ -13172,6 +13203,7 @@ async function indentLine(id, out) {
     if (i <= 0) return;                     // nothing above it at this level to go under
     it.parent = sibs[i - 1].id;
     it.order = nextOrder(p, it.parent);
+    headingTakesItsParts(p, it.parent);
   }
   renderSchedule(); focusLine(id);
   await savePlan(p);
@@ -13263,7 +13295,7 @@ async function toggleNeed(parentId, childId) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, childId); if (!it) return;
   if (it.parent === parentId) { it.parent = null; it.order = nextOrder(p, null); }
-  else { it.parent = parentId; it.order = nextOrder(p, parentId); }
+  else { it.parent = parentId; it.order = nextOrder(p, parentId); headingTakesItsParts(p, parentId); }
   renderSchedule();
   await savePlan(p);
 }
@@ -13382,6 +13414,7 @@ async function takePastedList() {
     stack[r.depth] = it.id;
     stack.length = r.depth + 1;
     p.items = planItems(p).concat([it]);   // in as we go, so nextOrder sees them
+    headingTakesItsParts(p, parent);
   }
   closePdf();
   renderSchedule();
@@ -13627,7 +13660,8 @@ function planOutlineHtml(p, rows, res) {
       const it = r.item;
       const step = n - i;
       const dates = r.anchored
-        ? (r.days > 1 ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
+        ? ((r.finish && r.finish !== r.start)
+            ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
         : '';
       const tick = me
         ? (r.id === planPick
