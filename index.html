@@ -1660,7 +1660,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.14';
+const APP_VERSION = 'v8.15';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13872,8 +13872,8 @@ function planOutlineHtml(p, rows, res) {
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
           ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
-          ${r.mate ? `<button class="out-tag is-ov on" onclick="startMate('${r.id}')"
-               title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to change it or put it back on its own.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
+          ${r.mate ? `<button class="out-tag is-ov on" onclick="clearMate('${r.id}')"
+               title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to take it off.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
           ${r.slack != null && r.slack !== 0
             ? `<span class="out-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}"
                  title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${

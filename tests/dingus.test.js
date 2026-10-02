@@ -615,7 +615,9 @@ const testCode = `
         var h = planOutlineHtml({ id:'x', items: [] }, beside.rows.filter(keepRow), beside);
         var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
         return row.indexOf('>alongside 1 ') > 0 && row.indexOf('out-step is-mate') > 0 &&
-               row.indexOf('>1a<') > 0 && row.indexOf("startMate('b')") > 0;
+               row.indexOf('>1a<') > 0 &&
+               row.indexOf("clearMate('b')") > 0 &&      // the chip takes it off outright
+               row.indexOf("startMate('b')") > 0;        // the bar button starts again
       })());
     ck('alongside: picking the partner is the outline itself, one tick and no second list',
       (function () {
