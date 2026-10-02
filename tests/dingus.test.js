@@ -727,6 +727,54 @@ const testCode = `
       planDates(currentPlan(), five).by['a'].mate === 'b');
     planMate = null; }
 
+  // dragging a line where you want it, and starring the ones the plan is read by
+  { schedules[0].items = [
+      { id:'tmp', name:'Temp', days:0, parent:null, order:10 },
+      { id:'c', name:'Connect OSA flex', days:4, parent:'tmp', order:20 },
+      { id:'f', name:'Run flex', days:8, parent:null, order:30, date:'2026-10-12' },
+      { id:'rr', name:'Run rooftop duct', days:8, parent:null, order:40, alongside:'f' } ];
+    var depths = function () {
+      return planFlat(currentPlan()).map(function (x) { return x.item.id + '@' + x.depth; }).join(' ');
+    };
+    await moveLineTo('f', 'tmp', 'into');
+    ck('drag: dropped on a line it goes under that line',
+      planItemById(currentPlan(), 'f').parent === 'tmp');
+    ck('drag: and whatever runs alongside it comes too, rather than being left behind',
+      planItemById(currentPlan(), 'rr').parent === 'tmp' &&
+      planDates(currentPlan(), five).by['rr'].mate === 'f' &&
+      depths() === 'tmp@0 c@1 rr@1 f@1');
+    await moveLineTo('c', 'tmp', 'below');
+    ck('drag: dropped between two lines it goes between them, at their level',
+      planItemById(currentPlan(), 'c').parent === null);
+    var held = depths();
+    await moveLineTo('tmp', 'f', 'into');
+    ck('drag: and a line cannot be dropped inside something that is already inside it',
+      depths() === held);
+
+    await toggleMain('c');
+    ck('star: it marks a line as one of the main lines',
+      planItemById(currentPlan(), 'c').main === true &&
+      planDates(currentPlan(), five).by['c'].head === true);
+    ck('star: which reads as a heading and takes whose it is off, before anything is under it',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        var row = h.split('out-row').find(function (x) { return x.indexOf('Connect OSA flex') > 0; });
+        return row.indexOf('is-head') > 0 && row.indexOf('out-who is-none') > 0 &&
+               row.indexOf('\u2605') > 0 && row.indexOf("toggleMain('c')") > 0;
+      })());
+    ck('star: and a line that is one carries a handle to drag it by',
+      (function () {
+        var d = planDates(currentPlan(), five);
+        var h = planOutlineHtml(currentPlan(), d.rows.filter(keepRow), d);
+        return h.indexOf('out-grip') > 0 && h.indexOf("dragLine(event,'c')") > 0 &&
+               h.indexOf("dropOnLine(event,'c')") > 0;
+      })());
+    await toggleMain('c');
+    ck('star: clicking it again makes it an ordinary line',
+      !planItemById(currentPlan(), 'c').main &&
+      planDates(currentPlan(), five).by['c'].head === false); }
+
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
       { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },

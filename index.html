@@ -480,7 +480,7 @@ textarea.autosize[rows="1"] { min-height: 0; }
    the step numbers staggered with the indent, so nothing down the page lined up with anything. Only
    the name steps in now; everything else holds its column. */
 .out-row { display: grid; align-items: center; gap: 7px;
-  grid-template-columns: 30px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
+  grid-template-columns: 14px 30px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
   padding: 3px 10px; border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent; position: relative; }
 .out-row:last-of-type { border-bottom: none; }
@@ -488,7 +488,7 @@ textarea.autosize[rows="1"] { min-height: 0; }
 /* the indent is the whole grammar of the thing, so it is drawn rather than left to be counted */
 .out-row[style*="--d:1"]::before, .out-row[style*="--d:2"]::before, .out-row[style*="--d:3"]::before,
 .out-row[style*="--d:4"]::before, .out-row[style*="--d:5"]::before, .out-row[style*="--d:6"]::before {
-  content: ''; position: absolute; left: calc(var(--nx) + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
+  content: ''; position: absolute; left: calc(var(--nx) + 21px + (var(--d) - 1) * 22px + 7px); top: 0; bottom: 0;
   border-left: 1px solid var(--border-2); }
 /* A line with lines under it is a heading, so it reads as a band across the page rather than as one
    more line in the list. */
@@ -538,8 +538,19 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-tag { border-radius: 999px; padding: 1px 7px; font-size: 10px; white-space: nowrap; }
 .out-tag.is-hold { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
 .out-tag.is-late { background: var(--red-sf); color: var(--red); font-weight: 600; }
-.out-act { display: flex; gap: 1px; justify-content: flex-end; opacity: 0; }
-.out-row:hover .out-act, .out-row:focus-within .out-act { opacity: 1; }
+.out-act { display: flex; gap: 1px; justify-content: flex-end; }
+/* visibility rather than opacity, so a star that is on can stay lit while the rest stay out of
+   the way until you go near the row */
+.out-act .x { visibility: hidden; }
+.out-row:hover .out-act .x, .out-row:focus-within .out-act .x { visibility: visible; }
+.out-act .x.star.on { visibility: visible; color: var(--amber); }
+.out-grip { color: var(--text-3); opacity: 0; cursor: grab; font-size: 11px; line-height: 1;
+  text-align: center; user-select: none; }
+.out-row:hover .out-grip { opacity: .7; }
+.out-grip:active { cursor: grabbing; }
+.out-row.drop-into { box-shadow: inset 0 0 0 2px var(--accent); }
+.out-row.drop-above { box-shadow: inset 0 3px 0 var(--accent); }
+.out-row.drop-below { box-shadow: inset 0 -3px 0 var(--accent); }
 .out-act .x { border: none; background: none; color: var(--text-3); cursor: pointer;
   font-size: 11px; padding: 0 3px; }
 .out-act .x:hover { color: var(--accent); }
@@ -671,12 +682,12 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 .cd-item.is-held { background: var(--amber-sf); color: var(--amber); }
 .cd-item.is-done { opacity: .5; text-decoration: line-through; }
 @media (max-width: 1180px) {
-  .out-row { grid-template-columns: 26px 18px minmax(90px, 1fr) 88px 40px 150px minmax(0, 120px) auto; }
+  .out-row { grid-template-columns: 14px 26px 18px minmax(90px, 1fr) 88px 40px 150px minmax(0, 120px) auto; }
 }
 @media (max-width: 760px) {
   .sl-head { display: none; }
   .sl-row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
-  .out-row { grid-template-columns: 24px 18px minmax(80px, 1fr) 40px 118px auto; }
+  .out-row { grid-template-columns: 14px 24px 18px minmax(80px, 1fr) 40px 118px auto; }
   .out-row .out-who, .out-row .out-meta { display: none; }
 }
 .nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
@@ -1664,7 +1675,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.17';
+const APP_VERSION = 'v8.18';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3947,6 +3958,7 @@ let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
 let planPick = null;         // the line whose 'what has to happen first' list is open
 let planMate = null;         // the line that is being told which other line it runs alongside
+let planDrag = null;         // the line being dragged
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
@@ -13075,6 +13087,8 @@ function planDates(plan, cal) {
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
       pinned: pinnedDate(it), days: long, own: dur(it), kids: ks, rolled: fk > 0,
       shared: tr.leadOf[it.id] !== it.id || (tr.mates[it.id] || []).length > 0,
+      main: !!it.main,
+      head: fk > 0 || !!it.main,
       lead: !!d.lead, kind: String(it.kind || ''),
       target: target, slack: target ? target - long : null,
       step: stepOf[it.id] || '',
@@ -13882,8 +13896,11 @@ function planOutlineHtml(p, rows, res) {
              onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
-          r.rolled ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
-          (r.id === planPick || r.id === planMate) ? ' is-picked' : ''}" style="--d:${r.depth}">
+          r.head ? ' is-head' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
+          (r.id === planPick || r.id === planMate) ? ' is-picked' : ''}" style="--d:${r.depth}"
+        ondragover="dragOverLine(event,'${r.id}')" ondrop="dropOnLine(event,'${r.id}')">
+        <span class="out-grip" draggable="true" ondragstart="dragLine(event,'${r.id}')"
+          ondragend="dragEndLine()" title="Drag it where you want it — onto a line to put it under that line">⠿</span>
         ${r.mate
           ? `<span class="out-step is-mate" title="Runs alongside step ${esc(r.mateStep)} — they take one step between them">${esc(step)}</span>`
           : `<input class="out-step" value="${escAttr(step)}" title="Step ${step} — type another number to move it there"
@@ -13893,7 +13910,7 @@ function planOutlineHtml(p, rows, res) {
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
           placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
           onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
-        ${r.rolled
+        ${r.head
           ? `<span class="out-who is-none" title="Whose it is is on the lines underneath"></span>`
           : `<input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
                onchange="setLineWho('${r.id}',this.value)">`}
@@ -13927,6 +13944,9 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
+          <button class="x star${r.main ? ' on' : ''}" onclick="toggleMain('${r.id}')"
+            title="${r.main ? 'A main line — the plan is read by these, and it carries the overall dates of what is under it. Click to make it an ordinary line again.'
+                            : 'Make it a main line, with the overall dates of whatever goes under it'}">${r.main ? '★' : '☆'}</button>
           <button class="x${(r.mate || r.id === planMate) ? ' on' : ''}" onclick="startMate('${r.id}')"
             title="${r.mate ? 'Runs alongside step ' + escAttr(r.mateStep) + '. Click to change it.'
                             : 'Run it alongside another line, so the two take one step between them'}">∥</button>
@@ -13946,6 +13966,70 @@ function planOutlineHtml(p, rows, res) {
       <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab puts it under the one above · Shift+Tab pulls it back out</span>
     </div>
   </div>`;
+}
+
+/* ── dragging a line where you want it ──
+   Dropped on a line it goes under it, dropped between two it goes between them. The dragging is
+   started from the handle rather than the row, so taking hold of a name to edit it still does. */
+function dragLine(ev, id) {
+  planDrag = id;
+  try { ev.dataTransfer.setData('text/plain', id); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+}
+function dropHint(row, mode) {
+  for (const e of document.querySelectorAll('.out-row.drop-into, .out-row.drop-above, .out-row.drop-below'))
+    e.classList.remove('drop-into', 'drop-above', 'drop-below');
+  if (row && mode) { row.classList.add('drop-' + mode); row.dataset.drop = mode; }
+}
+function dragOverLine(ev, id) {
+  if (!planDrag || planDrag === id) return;
+  ev.preventDefault();
+  try { ev.dataTransfer.dropEffect = 'move'; } catch (e) {}
+  const row = ev.currentTarget, b = row.getBoundingClientRect();
+  const y = ev.clientY - b.top;
+  dropHint(row, y < b.height * 0.3 ? 'above' : y > b.height * 0.7 ? 'below' : 'into');
+}
+function dragEndLine() { planDrag = null; dropHint(null, null); }
+async function dropOnLine(ev, id) {
+  ev.preventDefault();
+  const mode = ev.currentTarget.dataset.drop || 'into';
+  const from = planDrag;
+  planDrag = null; dropHint(null, null);
+  if (from && from !== id) await moveLineTo(from, id, mode);
+}
+async function moveLineTo(fromId, toId, mode) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, fromId), target = planItemById(p, toId);
+  if (!it || !target || it.id === target.id) return;
+  /* Nothing can be put underneath something that is already underneath it. */
+  if (planAncestors(p, toId)[fromId]) { toast('That one is already under this line', true); return; }
+  const ms = mateIdsOf(p, fromId);
+  if (mode === 'into') {
+    it.parent = target.id;
+    it.order = nextOrder(p, target.id);
+    headingTakesItsParts(p, target.id);
+  } else {
+    it.parent = target.parent || null;
+    it.order = (Number(target.order) || 0) + (mode === 'below' ? 0.5 : -0.5);
+  }
+  /* Two lines only run alongside each other while they are sitting beside each other. */
+  const lead = planItemById(p, it.alongside || '');
+  if (lead && (lead.parent || null) !== (it.parent || null)) delete it.alongside;
+  moveMatesWith(p, fromId, ms);
+  renderSchedule();
+  await savePlan(p);
+}
+
+/* ── the main lines ──
+   The ones the plan is read by: a section with its own overall dates, rather than one more thing to
+   do. A line with work under it is one whether it says so or not; the star is for saying so before
+   there is anything under it yet, so there is something to drop the work onto. */
+async function toggleMain(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  if (it.main) delete it.main;
+  else { it.main = true; if (Math.round(Number(it.days) || 0) === 1) it.days = 0; }
+  renderSchedule();
+  await savePlan(p);
 }
 
 /* ── editing a line where it sits ── */
