@@ -814,6 +814,62 @@ const testCode = `
                row2.indexOf('because there is work under it') > 0;
       })()); }
 
+  // the plan, out to Excel
+  { schedules[0].basis = 'start';
+    schedules[0].items = [
+      { id:'tmp', name:'Temp', days:0, parent:null, order:10, main:true },
+      { id:'t5', name:'Connect OSA flex', who:'Arctic', days:1, parent:'tmp', order:20 },
+      { id:'t3', name:'Insulate rooftop duct', who:'Arctic', days:4, parent:'tmp', order:40, alongside:'t2' },
+      { id:'t2', name:'Run rooftop duct', who:'Arctic', days:8, parent:'tmp', order:50 },
+      { id:'t1', name:'Run flex', who:'Arctic', days:1, parent:'tmp', order:60, date:'2026-10-12', note:'Night work' },
+      { id:'o', name:'Order pumps', kind:'order', days:28, parent:'tmp', order:70 } ];
+    var xr = planDates(currentPlan(), five);
+    var xshown = xr.rows.filter(keepRow);
+    var line = function (id) { return schRow(currentPlan(), xr.by[id]); };
+    ck('excel: a row carries the step, the name indented to its depth, and whose it is',
+      line('t2')[0] === '3' && line('t2')[1] === '    Run rooftop duct' && line('t2')[2] === 'Arctic');
+    ck('excel: a main line gives no whose, because that is on the lines under it',
+      line('tmp')[1] === 'Temp' && line('tmp')[2] === '');
+    ck('excel: dates go out as dates, so they sort and format rather than being retyped',
+      line('t2')[4] instanceof Date && line('t2')[5] instanceof Date &&
+      dISO(line('t2')[4]) === xr.by['t2'].start);
+    ck('excel: a line running alongside another says which step it runs with, and shares its length',
+      line('t3')[0] === '3a' && line('t3')[6] === 'Step 3' && line('t3')[3] === line('t2')[3]);
+    ck('excel: only the lines that are not plain work name a kind',
+      line('o')[7] === 'Order / release' && line('t2')[7] === '');
+    ck('excel: the note and the done mark come along',
+      line('t1')[9] === 'Night work' && line('t1')[10] === '' &&
+      (function () { var it = planItemById(currentPlan(), 't1'); it.done = true;
+        var v = schRow(currentPlan(), planDates(currentPlan(), five).by['t1'])[10];
+        delete it.done; return v === 'Yes'; })());
+    ck('excel: and a line that is behind says so in a column of its own',
+      schFlag(xr.by['o']).indexOf('behind') > 0 && schFlag(xr.by['t2']) === '');
+    ck('excel: every row has a cell for every heading',
+      xshown.every(function (r) { return schRow(currentPlan(), r).length === SCH_HEADS.length; }) &&
+      SCH_HEADS.length === SCH_WIDTHS.length);
+    if (!HAVE_XLSX) skip('excel: the workbook itself', 'xlsx engine not installed');
+    else {
+      var wbBytes = await buildScheduleXlsx(currentPlan(), xr, five, xshown);
+      var wb = XLSX.read(wbBytes, { type: 'array', cellDates: true });
+      ck('excel: two sheets \u2014 the plan as it reads, and the same lines in the order they happen',
+        wb.SheetNames.join() === 'Plan,In order');
+      var aoa = XLSX.utils.sheet_to_json(wb.Sheets['Plan'], { header: 1, raw: true });
+      ck('excel: it says which plan, which week the job works and which way it was built',
+        String(aoa[0][0]).indexOf(currentPlan().name) > 0 &&
+        String(aoa[1][4]) === workShiftLabel(five) &&
+        String(aoa[1][7]) === 'Forward from the start');
+      ck('excel: the headings are there and the lines follow them',
+        aoa[4].join() === SCH_HEADS.join() && aoa.length === 5 + xshown.length);
+      var inOrder = XLSX.utils.sheet_to_json(wb.Sheets['In order'], { header: 1, raw: true }).slice(5);
+      ck('excel: that second sheet is flat, because there is no shape to show in a date order',
+        inOrder.every(function (r) { return String(r[1]).charAt(0) !== ' '; }));
+      ck('excel: and that second sheet really is in the order the work happens',
+        inOrder.every(function (r, i) {
+          return i === 0 || !inOrder[i - 1][4] || !r[4] || r[4] >= inOrder[i - 1][4];
+        }));
+    }
+    delete schedules[0].basis; }
+
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
       { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },

@@ -1683,7 +1683,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.19';
+const APP_VERSION = 'v8.20';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13811,6 +13811,8 @@ function renderScheduleInner() {
       <span class="muted sch-cal" title="Durations are counted in these days">
         ${esc(workShiftLabel(cal))}${cal.holidays.length ? ' · ' + cal.holidays.length + ' day' + (cal.holidays.length === 1 ? '' : 's') + ' shut' : ''}
         <button class="x" title="Change the working week" onclick="workWeekModal()">✎</button></span>
+      <button class="btn sm ghost" onclick="exportSchedule()"
+        title="The plan as it reads here, and the same lines again in the order the work happens">↓ Excel</button>
       <button class="btn sm" onclick="addPlanLine()">+ Line</button>
     </div>
 
@@ -14201,6 +14203,106 @@ function planListHtml(p, shown, res) {
           <button class="x" title="Remove" onclick="removePlanLine('${r.id}')">✕</button></span>
       </div>`).join('')}
   </div>`;
+}
+
+/* ── out to Excel ──
+   The plan as it reads on the page, and the same lines again in the order the work happens, because
+   the one is for working from and the other is for sending on. Dates go out as dates rather than as
+   text, so they sort and format in Excel instead of having to be retyped. */
+const SCH_HEADS = ['Step', 'Line', 'Whose', 'Days', 'Start', 'Finish', 'Runs alongside',
+  'Kind', 'Flag', 'Note', 'Done'];
+const SCH_WIDTHS = [7, 46, 16, 7, 13, 13, 15, 14, 16, 34, 7];
+const SCH_DATE_COLS = [4, 5];
+function schFlag(r) {
+  const out = [];
+  if (r.clash) out.push('Clashes');
+  if (r.late) out.push(runwayLabel(r));
+  if (r.slack != null && r.slack !== 0) out.push(r.slack < 0 ? (0 - r.slack) + 'd over' : r.slack + 'd left');
+  return out.join(' · ');
+}
+function schRow(p, r, flat) {
+  const it = r.item;
+  return [
+    r.step || '',
+    /* On the plan the shape of it is the point, so the indent comes along. In a list sorted by date
+       there is no shape to show, and an indent there only reads as a mistake. */
+    (flat ? '' : new Array(r.depth + 1).join('    ')) + (it.name || '(unnamed)'),
+    r.head ? '' : (it.who || ''),
+    r.days || '',
+    r.start ? dAt(r.start) : '',
+    r.finish ? dAt(r.finish) : '',
+    r.mate ? 'Step ' + r.mateStep : '',
+    it.kind ? kindLabel(it.kind) : '',
+    schFlag(r),
+    it.note || '',
+    it.done ? 'Yes' : ''
+  ];
+}
+async function buildScheduleXlsx(p, res, cal, shown) {
+  const XL = await loadSheetJS();
+  const dated = shown.slice().sort((a, b) => {
+    if (a.start && b.start && a.start !== b.start) return a.start < b.start ? -1 : 1;
+    if (a.start && !b.start) return -1;
+    if (!a.start && b.start) return 1;
+    return String(a.item.name || '').localeCompare(String(b.item.name || ''));
+  });
+  const head = [
+    ['Arctic Sheet Metal — ' + (p.name || 'Pull plan')],
+    ['Job:', (job && job.name) || '', '', 'Working week:', workShiftLabel(cal),
+      '', 'Built:', res.fwd ? 'Forward from the start' : 'Back from the end'],
+    ['Exported:', dAt(today()), '', 'Lines:', shown.length, '', 'Steps:', res.slots || ''],
+    []
+  ];
+  const sheet = rows => {
+    const ws = XL.utils.aoa_to_sheet(rows, { cellDates: true });
+    ws['!cols'] = SCH_WIDTHS.map(w => ({ wch: w }));
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: SCH_HEADS.length - 1 } }];
+    ws['!freeze'] = { xSplit: 0, ySplit: head.length + 1 };
+    for (let r = 0; r < rows.length; r++) {
+      for (const c of SCH_DATE_COLS) {
+        const cell = ws[XL.utils.encode_cell({ r: r, c: c })];
+        if (cell && cell.t === 'd') cell.z = 'mmm d, yyyy';
+      }
+    }
+    const cell = ws[XL.utils.encode_cell({ r: 2, c: 1 })];
+    if (cell && cell.t === 'd') cell.z = 'mmm d, yyyy';
+    return ws;
+  };
+  const wb = XL.utils.book_new();
+  XL.utils.book_append_sheet(wb,
+    sheet(head.concat([SCH_HEADS.slice()], shown.map(r => schRow(p, r)))), 'Plan');
+  XL.utils.book_append_sheet(wb,
+    sheet(head.concat([SCH_HEADS.slice()], dated.map(r => schRow(p, r, true)))), 'In order');
+  return XL.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+async function exportSchedule() {
+  const p = currentPlan();
+  if (!p || !planItems(p).length) { toast('Nothing on this plan to export yet', true); return; }
+  const cal = workCal(job);
+  const res = planDates(p, cal);
+  const shown = res.rows.filter(keepRow);
+  if (!shown.length) { toast('Nothing matches that filter — clear it and try again', true); return; }
+  try {
+    stickyToast('Building the schedule…');
+    const bytes = await buildScheduleXlsx(p, res, cal, shown);
+    const url = URL.createObjectURL(new Blob([bytes],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sanitizeAnyName(jobFileBase() + ' ' + (p.name || 'schedule'), 'schedule') + '.xlsx';
+    /* On the page, not just made: a link that is not in the document is not guaranteed to download
+       anywhere but Chrome, and nothing tells you it did not. */
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    toast(shown.length < res.rows.length
+      ? 'Schedule exported — ' + shown.length + ' of ' + res.rows.length + ' lines, matching the filter you have set'
+      : 'Schedule exported — ' + shown.length + ' line' + (shown.length === 1 ? '' : 's'));
+  } catch (e) {
+    console.error(e);
+    toast('Could not build the schedule: ' + (e.message || e), true);
+  }
 }
 
 /* ── the wall ──
