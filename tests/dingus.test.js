@@ -664,6 +664,38 @@ const testCode = `
     ck('order: and the next one down finishes the working day before it starts',
       ord.by['su'].finish < ord.by['ic'].start && ord.by['pr'].finish < ord.by['su'].start); }
 
+  /* A date box hands out the year a digit at a time \u2014 2026 arrives as 0002, 0020, 0202, 2026 \u2014
+     and everything here redraws when a date changes, so the box was taken away on the first digit
+     and the year could never be finished. */
+  { ck('dates: a real date is taken', okDate('2026-12-18') === true && okDate('1999-01-01') === true);
+    ck('dates: a year still being typed is not a date yet',
+      okDate('0002-12-18') === false && okDate('0020-12-18') === false && okDate('0202-12-18') === false);
+    ck('dates: and nor is anything that is not one',
+      okDate('') === false && okDate('2026-12') === false && okDate('2026-13-18') === false &&
+      okDate('2026-12-00') === false && okDate(null) === false && okDate('18/12/2026') === false);
+    ck('dates: the box is not taken away while the caret is still in it',
+      (function () {
+        schedules[0].items = [{ id:'m', name:'Turn on', days:0, parent:null, order:10 }];
+        var held = {};
+        __stubEl('dt_m', held);
+        editLineDate('m');
+        __stubEl('dt_m', null);
+        var h = String(held.innerHTML || '');
+        return h.indexOf('onchange') < 0 && h.indexOf('onblur') > 0 &&
+               h.indexOf('setLineDate') > 0 && h.indexOf('Escape') > 0;
+      })()); }
+
+  { ck('dates: half a year typed and then clicked away from is not stored',
+      await (async function () {
+        schedules[0].items = [{ id:'m', name:'Turn on', days:0, parent:null, order:10 }];
+        await setLineDate('m', '0020-12-18');
+        var bad = planItemById(currentPlan(), 'm').date;
+        await setLineDate('m', '2026-12-18');
+        var good = planItemById(currentPlan(), 'm').date;
+        await setLineDate('m', '');
+        return !bad && good === '2026-12-18' && !planItemById(currentPlan(), 'm').date;
+      })()); }
+
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
       { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },

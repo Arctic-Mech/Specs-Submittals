@@ -1638,7 +1638,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.06';
+const APP_VERSION = 'v8.07';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1726,6 +1726,24 @@ const today = () => {
   const d = new Date(), p = n => (n < 10 ? '0' : '') + n;
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 };
+/* A date box types left to right, and the browser calls the year finished after every single digit
+   of it: typing 2026 gives out 0002, then 0020, then 0202, then 2026. Everything in here redraws
+   when a date changes, so the box was being taken away on the first digit and the year could never
+   be finished. Nothing counts as a date until the year is a real one. */
+const okDate = v => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v).trim());
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), dy = Number(m[3]);
+  return y >= 1900 && y <= 2200 && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31;
+};
+try {
+  document.addEventListener('change', ev => {
+    const el = ev.target;
+    if (!el || el.type !== 'date') return;
+    if (!el.value || okDate(el.value)) return;   // empty clears it; a real date goes through
+    ev.stopImmediatePropagation();               // a half-typed year is not a date yet
+  }, true);
+} catch (e) { /* no document to listen on */ }
 const fmtMoney = v => {
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.-]/g, ''));
   if (!isFinite(n)) return '';
@@ -13651,13 +13669,15 @@ function editLineDate(id) {
   const it = planItemById(p, id) || {};
   cell.innerHTML = `<input class="input sm out-datein" type="date" id="dtin_${id}"
     value="${escAttr(pinnedDate(it) || r.start || '')}"
-    onchange="setLineDate('${id}',this.value)" onblur="renderSchedule()">`;
+    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}else if(event.key==='Escape'){this.dataset.drop='1';this.blur()}"
+    onblur="this.dataset.drop ? renderSchedule() : setLineDate('${id}',this.value)">`;
   const b = $('dtin_' + id); if (b && b.focus) b.focus();
 }
 async function setLineDate(id, v) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) return;
   const d = String(v || '').trim();
+  if (d && !okDate(d)) { renderSchedule(); return; }   // half a year typed, and then clicked away
   if (d) { it.date = d; it.milestone = true; }
   else { delete it.date; delete it.milestone; }
   renderSchedule();
