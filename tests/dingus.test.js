@@ -389,6 +389,49 @@ const testCode = `
       return planWallHtml(currentPlan(), rs.filter(keepRow), workCal(job)).indexOf('Odd') > 0;
     })());
 
+  // a flat list in, placed afterwards
+  { schedules[0].items = [];
+    __stubEl('pasteBox', { value: ['Turn on new SU 131', 'Hang TU s', 'Install ductwork',
+      'Install new piping', 'Set new steel'].join(NL) });
+    await takePastedList();
+    __stubEl('pasteBox', null);
+    var fl = planFlat(currentPlan());
+    ck('paste: a flat list goes in flat, with nothing placed under anything',
+      fl.length === 5 && fl.every(f => f.depth === 0));
+    ck('paste: and the words are left as they were typed, bar the first letter',
+      fl[0].item.name === 'Turn on new SU 131');
+
+    var duct = planItems(currentPlan()).find(x => x.name === 'Install ductwork');
+    var hang = planItems(currentPlan()).find(x => x.name === 'Hang TU s');
+    var pipe = planItems(currentPlan()).find(x => x.name === 'Install new piping');
+
+    ck('place: everything else on the plan is offered, and never the line itself',
+      needCandidates(currentPlan(), duct.id).length === 4 &&
+      !needCandidates(currentPlan(), duct.id).some(x => x.id === duct.id));
+
+    await toggleNeed(duct.id, hang.id);
+    await toggleNeed(duct.id, pipe.id);
+    var fl2 = planFlat(currentPlan());
+    ck('place: ticking two moves them under it \u2014 moved, not copied',
+      fl2.length === 5 &&
+      fl2.filter(f => f.item.parent === duct.id).length === 2 &&
+      fl2.find(f => f.item.id === hang.id).depth === 1);
+
+    ck('place: what is already under it comes up ticked, and a line cannot wait on its own parent',
+      !needCandidates(currentPlan(), hang.id).some(x => x.id === duct.id));
+
+    await toggleNeed(duct.id, hang.id);
+    ck('place: unticking it puts it back at the top rather than losing it',
+      planItemById(currentPlan(), hang.id).parent === null &&
+      planFlat(currentPlan()).length === 5);
+
+    __stubEl('pickQ', { value: 'Order the coil' });
+    await addNeedNew(duct.id);
+    __stubEl('pickQ', null);
+    ck('place: and something nobody listed can be added straight onto the line that needs it',
+      planItems(currentPlan()).some(x => x.name === 'Order the coil' && x.parent === duct.id));
+  }
+
   // a plan somebody else deleted must not be put back by a save already on its way
   { var put = null;
     FB.setDoc = async (ref, data) => { put = data; };

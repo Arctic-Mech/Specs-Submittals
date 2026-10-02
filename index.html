@@ -510,6 +510,18 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-act .x:hover { color: var(--accent); }
 .out-add { display: flex; align-items: center; gap: 6px; padding: 9px 10px; flex-wrap: wrap;
   background: var(--surface-2); }
+.pick-wrap { padding: 0 10px 10px calc(10px + var(--d) * 22px + 24px); background: var(--surface-2);
+  border-bottom: 1px solid var(--border); }
+.pick { border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); padding: 10px; }
+.pick-head { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 7px; }
+.pick-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 7px;
+  margin-top: 7px; }
+.pick-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; font-size: 13px; cursor: pointer; }
+.pick-row:hover { background: var(--surface-2); }
+.pick-row small { color: var(--text-3); }
+.pick-at { margin-left: auto; font-size: 10.5px; }
+.pick-add { margin-top: 7px; }
+.out-act .x.on { color: var(--accent); }
 /* the list */
 .sch-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .sl-head, .sl-row { display: grid; align-items: center; gap: 10px;
@@ -1574,7 +1586,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.00';
+const APP_VERSION = 'v8.01';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3834,6 +3846,7 @@ let openPlan = null;         // the plan being looked at, if any
 let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
 let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
+let planPick = null;         // the line whose 'what has to happen first' list is open
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
@@ -12973,6 +12986,91 @@ async function lineKey(ev, id) {
   }
 }
 
+/* ── saying what has to happen first ──
+   A list goes in flat and gets placed afterwards, which is how it actually comes out of a meeting:
+   everything anybody can think of, then the order. Open a line and tick what it waits on — the
+   ticked ones move underneath it, which is the same thing said two ways. */
+function planAncestors(p, id) {
+  const byId = planTree(p).byId;
+  const out = Object.create(null);
+  let at = byId[id] && byId[id].parent;
+  for (let i = 0; i < 500 && at; i++) { out[at] = 1; at = byId[at] && byId[at].parent; }
+  return out;
+}
+/* Everything that could go under this one. Its own ancestors cannot: a line cannot wait on
+   something that is already waiting on it. */
+function needCandidates(p, id) {
+  const up = planAncestors(p, id);
+  return planItems(p).filter(x => x.id !== id && !up[x.id])
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+function openNeeds(id) {
+  planPick = (planPick === id) ? null : id;
+  renderSchedule();
+  const b = $('pickQ'); if (b && b.focus) b.focus();
+}
+/* Typed into, the list narrows on the page rather than being redrawn — a repaint would take the
+   caret out of the box you are typing in. */
+function filterNeeds(v) {
+  const q = String(v || '').trim().toLowerCase();
+  const host = $('pickList'); if (!host || !host.querySelectorAll) return;
+  let n = 0;
+  for (const el of host.querySelectorAll('.pick-row')) {
+    const hit = !q || String(el.getAttribute('data-n') || '').indexOf(q) >= 0;
+    el.hidden = !hit;
+    if (hit) n++;
+  }
+  const none = $('pickNone'); if (none) none.hidden = !!n;
+  const add = $('pickAdd'); if (add) { add.hidden = !q; add.textContent = '+ Add "' + v.trim() + '" as a new one'; }
+}
+async function toggleNeed(parentId, childId) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, childId); if (!it) return;
+  if (it.parent === parentId) { it.parent = null; it.order = nextOrder(p, null); }
+  else { it.parent = parentId; it.order = nextOrder(p, parentId); }
+  renderSchedule();
+  await savePlan(p);
+}
+async function addNeedNew(parentId) {
+  const el = $('pickQ');
+  const name = String((el && el.value) || '').trim();
+  if (!name) return;
+  const p = currentPlan(); if (!p) return;
+  const it = blankLine(p, parentId);
+  it.name = autoCap(name);
+  p.items = planItems(p).concat([it]);
+  renderSchedule();
+  await savePlan(p);
+}
+function needsPickerHtml(p, id) {
+  const tr = planTree(p);
+  const mine = Object.create(null);
+  for (const k of (tr.kids[id] || [])) mine[k.id] = 1;
+  const list = needCandidates(p, id);
+  const me = planItemById(p, id) || {};
+  return `
+    <div class="pick" onclick="event.stopPropagation()">
+      <div class="pick-head">
+        <b>What has to happen before "${esc(me.name || 'this')}"?</b>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn sm ghost" onclick="openNeeds('${id}')">Done</button>
+      </div>
+      <input class="input sm" id="pickQ" placeholder="Type to find one, or to add a new one…"
+        oninput="filterNeeds(this.value)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addNeedNew('${id}')}">
+      ${list.length ? `<div class="pick-list" id="pickList">${list.map(x => `
+        <label class="pick-row" data-n="${escAttr(String(x.name || '').toLowerCase())}">
+          <input type="checkbox" ${mine[x.id] ? 'checked' : ''}
+            onchange="toggleNeed('${id}','${x.id}')">
+          <span>${x.milestone ? '◆ ' : ''}${esc(x.name || '(unnamed)')}${
+            x.who ? ' · <small>' + esc(x.who) + '</small>' : ''}</span>
+          ${x.parent && x.parent !== id ? `<small class="pick-at">under ${esc((planItemById(p, x.parent) || {}).name || '')}</small>` : ''}
+        </label>`).join('')}</div>` : ''}
+      <div class="muted pick-none" id="pickNone" hidden style="font-size:12.5px;padding:6px 2px">Nothing by that name yet.</div>
+      <button class="btn sm pick-add" id="pickAdd" hidden onclick="addNeedNew('${id}')"></button>
+    </div>`;
+}
+
 /* ── the rest of a line ──
    The outline holds the name and the shape. Everything else about a line — whose it is, how long it
    takes, what is holding it up — lives behind the pencil, so building the plan is not interrupted
@@ -13127,7 +13225,10 @@ function renderSchedule() {
   for (const r of rows) if (r.item.milestone && r.item.date && r.start && r.start !== r.item.date)
     warn.push('"' + (r.item.name || 'A milestone') + '" is dated ' + shortDate(r.item.date) +
       ', a day this job does not work — everything is worked back from ' + shortDate(r.start) + ' instead');
-  if (res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits' : 's sit') +
+  /* Only once something has a date to work back from. Until then every line is dateless, which is
+     just what a plan looks like while it is being written. */
+  const anyDated = rows.some(r => r.item.milestone && r.item.date);
+  if (anyDated && res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits' : 's sit') +
     ' at the top with no date — put ' + (res.rootless === 1 ? 'it' : 'them') + ' under something, or make ' +
     (res.rootless === 1 ? 'it a milestone' : 'them milestones'));
   if (res.behind) warn.push(res.behind + ' line' + (res.behind === 1 ? '' : 's') + ' should have started already');
@@ -13297,14 +13398,14 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
-          <button class="x" title="Something has to happen before this"
-            onclick="addNeedBefore('${r.id}')">↳</button>
+          <button class="x${planPick === r.id ? ' on' : ''}" title="Say what has to happen before this"
+            onclick="openNeeds('${r.id}')">↳</button>
           <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
           <button class="x" title="Pull it back out (Shift+Tab)" onclick="indentLine('${r.id}',true)">←</button>
           <button class="x" title="Whose it is, how long, what is holding it up" onclick="editPlanLine('${r.id}')">✎</button>
           <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
         </span>
-      </div>`;
+      </div>${planPick === r.id ? `<div class="pick-wrap" style="--d:${r.depth}">${needsPickerHtml(p, r.id)}</div>` : ''}`;
     }).join('')}
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
