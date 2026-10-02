@@ -489,8 +489,28 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-row.is-held { border-left-color: var(--amber); }
 .out-row.is-loose { border-left-color: var(--border-2); }
 .out-row.is-done .out-name { text-decoration: line-through; color: var(--text-3); }
-.out-step { flex: none; min-width: 20px; text-align: right; font-size: 10.5px; color: var(--text-3);
+/* Every field on a row is the field itself. They read as text until you are in them, so the list
+   is a list rather than a page of boxes. */
+.out-step, .out-who, .out-days { border: 1px solid transparent; background: none; font: inherit;
+  color: var(--text-3); border-radius: 5px; padding: 3px 4px; outline: none; }
+.out-step:hover, .out-who:hover, .out-days:hover { border-color: var(--border); }
+.out-step:focus, .out-who:focus, .out-days:focus { border-color: var(--accent);
+  background: var(--surface); color: var(--text); }
+.out-step { flex: none; width: 30px; text-align: right; font-size: 10.5px;
   font-variant-numeric: tabular-nums; }
+.out-who { flex: none; width: 116px; font-size: 11.5px; text-overflow: ellipsis; }
+.out-days { flex: none; width: 46px; font-size: 11.5px; text-align: right; }
+.out-days::-webkit-outer-spin-button, .out-days::-webkit-inner-spin-button { opacity: 0; }
+.out-days:focus::-webkit-outer-spin-button, .out-days:focus::-webkit-inner-spin-button { opacity: 1; }
+.out-when { flex: none; width: 150px; font-size: 11.5px; color: var(--text-3); cursor: pointer;
+  padding: 3px 4px; border: 1px solid transparent; border-radius: 5px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.out-when:hover { border-color: var(--border); }
+.out-when.is-pinned { color: var(--accent); font-weight: 600; }
+.out-when i { color: var(--text-3); opacity: .6; }
+.out-datein { width: 142px; padding: 1px 4px; font-size: 11.5px; }
+.out-row.is-clash { border-left-color: var(--red); }
+.out-tag.is-clash { background: var(--red-sf); color: var(--red); font-weight: 600; }
 .out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
   padding: 0; flex: none; }
 .out-tick:hover { color: var(--accent); }
@@ -1588,7 +1608,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.02';
+const APP_VERSION = 'v8.03';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12632,6 +12652,12 @@ function subWorkDays(iso, n, cal) {
   for (let i = 0; i < Math.max(0, n) && i < 2000; i++) at = prevWorkDay(at, cal);
   return at;
 }
+/* n working days on from a day that is itself worked, counting that day as the first. */
+function addWorkDays(iso, n, cal) {
+  let at = nearestWorkDay(iso, cal, 1);
+  for (let i = 0; i < Math.max(0, n) && i < 2000; i++) at = nearestWorkDay(dShift(at, 1), cal, 1);
+  return at;
+}
 function workDaysBetween(aIso, bIso, cal) {        // both ends counted, a <= b
   if (!aIso || !bIso || aIso > bIso) return 0;
   let n = 0, at = aIso;
@@ -12660,6 +12686,8 @@ function workDaysTo(fromIso, toIso, cal) {
 
    A tree cannot double back on itself, which is why it is a tree — no rings to find, no ordering to
    work out, just a walk down from the milestone. */
+/* A line with a date on it is pinned there. That is all a milestone is. */
+const pinnedDate = it => (it && String(it.date || '').trim()) ? String(it.date).trim() : '';
 function planTree(p) {
   const items = planItems(p);
   const byId = Object.create(null);
@@ -12706,20 +12734,26 @@ function planDates(plan, cal) {
   const out = Object.create(null), seen = Object.create(null);
   const walk = (it, afterStart) => {
     if (seen[it.id]) return; seen[it.id] = 1;
-    let start = '', finish = '', anchored = false;
-    if (it.milestone && it.date) {
-      start = finish = nearestWorkDay(it.date, cal, -1);   // a date of its own always wins
+    let start = '', finish = '', anchored = false, clash = false;
+    if (pinnedDate(it)) {
+      /* A date typed on a line is where that line goes, and everything under it is worked back from
+         there. It wins over what the line above would have given it.
+         On a day the job does not work: a line with a length starts on the next day it does, and a
+         line with none is a date to be done by, so it moves to the last day before it. */
+      start = nearestWorkDay(it.date, cal, dur(it) ? 1 : -1);
+      finish = dur(it) ? addWorkDays(start, dur(it) - 1, cal) : start;
       anchored = true;
+      if (afterStart && finish >= afterStart) clash = true;   // runs into what it has to be done before
     } else if (afterStart) {
       finish = prevWorkDay(afterStart, cal);
       start = dur(it) ? subWorkDays(finish, dur(it) - 1, cal) : finish;
       anchored = true;
     }
-    out[it.id] = { start: start, finish: finish, anchored: anchored };
+    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash };
     for (const k of (tr.kids[it.id] || [])) walk(k, start);
   };
   for (const r of tr.roots) walk(r, '');
-  for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false };
+  for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false };
 
   /* The earliest day anything in a line's own subtree has to start. Following the earliest one down
      from the milestone is the chain that sets when you have to begin. */
@@ -12751,17 +12785,19 @@ function planDates(plan, cal) {
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
     return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
-      start: d.start, finish: d.finish, anchored: d.anchored, days: dur(it),
+      start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
+      pinned: pinnedDate(it), days: dur(it),
       kids: (tr.kids[it.id] || []).length,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
       onDayOff: !isWorkDay(today0, cal),
-      critical: !!critical[it.id] && !it.milestone };
+      critical: !!critical[it.id] && !pinnedDate(it) };
   });
   const by = Object.create(null); rows.forEach(r => by[r.id] = r);
   return { rows: rows, by: by, tree: tr,
-    undated: rows.filter(r => r.item.milestone && !r.start).length,
-    rootless: rows.filter(r => !r.anchored && !r.item.milestone && r.depth === 0).length,
+    dated: rows.filter(r => r.pinned).length,
+    clashes: rows.filter(r => r.clash).length,
+    rootless: rows.filter(r => !r.anchored && r.depth === 0).length,
     strays: rows.filter(r => r.stray).length,
     behind: rows.filter(r => r.late).length };
 }
@@ -12919,10 +12955,9 @@ async function addLineAfter(afterId, asChild) {
   renderSchedule(); focusLine(it.id);
   await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
-async function addPlanLine(isMilestone) {
+async function addPlanLine() {
   const p = currentPlan(); if (!p) return;
   const it = blankLine(p, null);
-  if (isMilestone) { it.milestone = true; it.date = ''; it.days = 0; }
   p.items = planItems(p).concat([it]);
   planFocus = it.id;
   renderSchedule(); focusLine(it.id);
@@ -13094,7 +13129,7 @@ function needsPickerHtml(p, id) {
         <label class="pick-row" data-n="${escAttr(String(x.name || '').toLowerCase())}">
           <input type="checkbox" ${mine[x.id] ? 'checked' : ''}
             onchange="toggleNeed('${id}','${x.id}')">
-          <span>${x.milestone ? '◆ ' : ''}${esc(x.name || '(unnamed)')}${
+          <span>${pinnedDate(x) ? '◆ ' : ''}${esc(x.name || '(unnamed)')}${
             x.who ? ' · <small>' + esc(x.who) + '</small>' : ''}</span>
           ${x.parent && x.parent !== id ? `<small class="pick-at">under ${esc((planItemById(p, x.parent) || {}).name || '')}</small>` : ''}
         </label>`).join('')}</div>` : ''}
@@ -13113,9 +13148,6 @@ async function savePlanLine(id) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) { planEdit = null; renderSchedule(); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
-  it.name = autoCap(v('liName'));
-  it.who = v('liWho');
-  if (it.who) rememberCrew(it.who);          // typed once, on the list from now on
   const held = [];
   const hb = $('liHold');
   if (hb && typeof hb.querySelectorAll === 'function') {
@@ -13123,12 +13155,6 @@ async function savePlanLine(id) {
   }
   it.hold = held;
   it.note = autoCap(v('liNote'));
-  const ms = $('liIsMilestone');
-  it.milestone = !!(ms && ms.checked);
-  /* Keeping both: ticking the box and changing your mind should give you back the duration you had
-     typed, not a 1 the app guessed at. */
-  if (it.milestone) { it.date = v('liDate') || it.date || ''; it.days = 0; }
-  else { it.days = Math.max(0, Math.round(Number(v('liDays')) || 0)); }
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
   planEdit = null;
   renderSchedule();
@@ -13268,12 +13294,14 @@ function renderSchedule() {
 
   const warn = [];
   if (res.undated) warn.push(res.undated + ' milestone' + (res.undated === 1 ? ' has' : 's have') + ' no date yet — nothing can be worked back from ' + (res.undated === 1 ? 'it' : 'them'));
-  for (const r of rows) if (r.item.milestone && r.item.date && r.start && r.start !== r.item.date)
-    warn.push('"' + (r.item.name || 'A milestone') + '" is dated ' + shortDate(r.item.date) +
-      ', a day this job does not work — everything is worked back from ' + shortDate(r.start) + ' instead');
+  for (const r of rows) if (r.pinned && r.start && r.start !== r.item.date)
+    warn.push('"' + (r.item.name || 'A line') + '" is dated ' + shortDate(r.item.date) +
+      ', a day this job does not work — it is taken as ' + shortDate(r.start) + ' instead');
+  if (res.clashes) warn.push(res.clashes + ' dated line' + (res.clashes === 1 ? '' : 's') +
+    ' run' + (res.clashes === 1 ? 's' : '') + ' past what it has to be finished before');
   /* Only once something has a date to work back from. Until then every line is dateless, which is
      just what a plan looks like while it is being written. */
-  const anyDated = rows.some(r => r.item.milestone && r.item.date);
+  const anyDated = res.dated > 0;
   if (anyDated && res.rootless) warn.push(res.rootless + ' line' + (res.rootless === 1 ? ' sits' : 's sit') +
     ' at the top with no date — put ' + (res.rootless === 1 ? 'it' : 'them') + ' under something, or make ' +
     (res.rootless === 1 ? 'it a milestone' : 'them milestones'));
@@ -13304,8 +13332,7 @@ function renderSchedule() {
       <span class="muted sch-cal" title="Durations are counted in these days">
         ${esc(workShiftLabel(cal))}${cal.holidays.length ? ' · ' + cal.holidays.length + ' day' + (cal.holidays.length === 1 ? '' : 's') + ' shut' : ''}
         <button class="x" title="Change the working week" onclick="workWeekModal()">✎</button></span>
-      <button class="btn sm" onclick="addPlanLine(false)">+ Line</button>
-      <button class="btn sm ghost" onclick="addPlanLine(true)">+ Milestone</button>
+      <button class="btn sm" onclick="addPlanLine()">+ Line</button>
     </div>
 
     ${warn.length ? `<div class="sch-warn">${warn.map(w => `<div>⚠ ${esc(w)}</div>`).join('')}</div>` : ''}
@@ -13329,33 +13356,8 @@ function renderSchedule() {
    is a length. */
 function lineForm(p, id, rows) {
   const it = planItemById(p, id); if (!it) return '';
-  const isM = !!it.milestone;
-  const people = jobPeople();
   return `
     <div class="sch-form">
-      <div class="grid2">
-        <div class="field"><label class="fl">What is it</label>
-          <input class="input" id="liName" value="${escAttr(it.name || '')}"
-            placeholder="${isM ? 'e.g. Level 3 ceilings closed' : 'e.g. Set and hang ductwork, Level 3'}"></div>
-        <div class="field"><label class="fl">Whose it is</label>
-          <input class="input" id="liWho" list="schPeople" value="${escAttr(it.who || '')}"
-            placeholder="e.g. Arctic, or the GC"></div>
-      </div>
-      <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
-      <div class="grid2">
-        <div class="field">
-          <label class="ac-done"><input type="checkbox" id="liIsMilestone" ${isM ? 'checked' : ''}
-            onchange="renderMilestoneSwap(this.checked)"> <span>This is a milestone — it has a date of its own</span></label>
-        </div>
-        <div class="field" id="liWhenWrap">${isM
-          ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="${escAttr(it.date || '')}">`
-          : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String(it.days == null ? 1 : it.days))}">`}</div>
-      </div>
-      <div class="field"><label class="fl">Where it sits</label>
-        <div class="muted" style="font-size:13px">${it.parent
-          ? 'Has to be finished before <b>' + esc((planItemById(p, it.parent) || {}).name || 'the line above') + '</b>.'
-          : 'At the top of the plan — nothing on this plan waits on it.'}
-          Move it with the arrows on its line, or with Tab while typing in it.</div></div>
       <div class="field"><label class="fl">What is holding it up</label>
         ${(function () {
           const others = planItems(p).filter(x => x.id !== id);
@@ -13364,9 +13366,7 @@ function lineForm(p, id, rows) {
           return `<div class="pick-list" id="liHold">${others.map(x => `
             <label class="pick-row"><input type="checkbox" class="liHoldBox" value="${x.id}"
               ${on.indexOf(x.id) >= 0 ? 'checked' : ''}>
-              <span>${x.milestone ? '◆ ' : ''}${esc(x.name || '(unnamed)')}</span></label>`).join('')}</div>
-            <div class="muted" style="font-size:12px;margin-top:4px">Tick the lines that are actually
-            stopping this one today. Leave it empty if nothing is.</div>`;
+              <span>${pinnedDate(x) ? '◆ ' : ''}${esc(x.name || '(unnamed)')}</span></label>`).join('')}</div>`;
         })()}</div>
       <div class="field"><label class="fl">Anything else worth knowing</label>
         <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
@@ -13375,22 +13375,10 @@ function lineForm(p, id, rows) {
         <button class="btn sm" onclick="savePlanLine('${id}')">Save</button>
         <button class="btn sm ghost" onclick="cancelPlanLine()">Cancel</button>
         <span class="spacer" style="flex:1"></span>
-        <button class="btn sm ghost" onclick="removePlanLine('${id}')">Remove</button>
+        <button class="btn sm ghost" onclick="removeLine('${id}')">Remove</button>
       </div>
     </div>`;
 }
-/* Swapping the date for the duration without a repaint, so what is already typed in the rest of
-   the form is not thrown away mid-edit. */
-function renderMilestoneSwap(isM) {
-  const wrap = $('liWhenWrap'); if (!wrap) return;
-  /* Seeded from what the line already has, so ticking the box to see what happens and then changing
-     your mind gives you back the date — or the duration — you had typed, not a blank. */
-  const p = currentPlan(), it = (p && planEdit) ? planItemById(p, planEdit) : null;
-  wrap.innerHTML = isM
-    ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="${escAttr((it && it.date) || '')}">`
-    : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String((it && it.days) || 1))}">`;
-}
-
 /* Redraw what is on screen after the working week changes: the panel behind, and the modal itself
    if it is still up — otherwise adding a shut day looks like it did nothing. A line open on its form
    keeps its place, because rebuilding it would seed it from the record and lose what is typed. */
@@ -13435,31 +13423,40 @@ function workWeekModal() {
    an input you can just type into; everything else about a line lives behind the pencil. */
 function planOutlineHtml(p, rows, res) {
   /* Numbered from the bottom. The last line on screen is the first thing anybody does, because the
-     plan is written backwards from the end — so counting up the page reads step 1 to step x. */
+     plan is written backwards from the end — so counting up the page reads step 1 to step x.
+     Everything on a row is the field itself: click it and type. */
   const n = rows.length;
+  const people = jobPeople();
   return `<div class="out-list">
+    <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
     ${rows.map((r, i) => {
       const it = r.item;
       const step = n - i;
-      const when = it.milestone
-        ? (it.date ? esc(shortDate(r.start)) : '<i>no date yet</i>')
-        : (r.anchored ? esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) : '');
+      const dates = r.anchored
+        ? (r.days > 1 ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
+        : '';
       return `
-      <div class="out-row${planRowClass(r)}" style="--d:${r.depth}">
-        <span class="out-step" title="Step ${step} of ${n} — counting up from the first thing done">${step}</span>
+      <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}" style="--d:${r.depth}">
+        <input class="out-step" value="${step}" title="Step ${step} — type another number to move it there"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+          onchange="moveToStep('${r.id}',this.value)">
         <button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
           onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>
-        ${it.milestone ? '<span class="out-ms" title="A milestone — it has a date of its own">◆</span>' : ''}
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
           placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
           onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
+        <input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
+          onchange="setLineWho('${r.id}',this.value)">
+        <input class="out-days" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
+          title="Working days" onchange="setLineDays('${r.id}',this.value)">
+        <span class="out-when${r.pinned ? ' is-pinned' : ''}" onclick="editLineDate('${r.id}')"
+          title="${r.pinned ? 'Set to this date — click to change or clear it' : 'Click to set a date'}"
+          id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
-          ${it.who ? `<span class="out-who">${esc(it.who)}</span>` : ''}
-          ${it.milestone ? '' : `<span class="out-days">${r.days}d</span>`}
-          ${when ? `<span class="out-when">${when}</span>` : ''}
           ${holdIds(it).length ? `<span class="out-tag is-hold"
             title="${escAttr('Held up by: ' + holdNames(p, it).join(', '))}">held up by ${
               holdNames(p, it).length === 1 ? esc(holdNames(p, it)[0]) : holdNames(p, it).length + ' lines'}</span>` : ''}
+          ${r.clash ? `<span class="out-tag is-clash" title="This date runs past what it has to be finished before">clashes</span>` : ''}
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
@@ -13467,21 +13464,83 @@ function planOutlineHtml(p, rows, res) {
             onclick="openNeeds('${r.id}')">↳</button>
           <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
           <button class="x" title="Pull it back out (Shift+Tab)" onclick="indentLine('${r.id}',true)">←</button>
-          <button class="x" title="Whose it is, how long, what is holding it up" onclick="editPlanLine('${r.id}')">✎</button>
+          <button class="x" title="What is holding it up, and anything else worth knowing"
+            onclick="editPlanLine('${r.id}')">✎</button>
           <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
         </span>
       </div>${planPick === r.id ? `<div class="pick-wrap" style="--d:${r.depth}">${needsPickerHtml(p, r.id)}</div>` : ''}`;
     }).join('')}
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
-      <button class="btn sm ghost" onclick="addPlanLine(true)">+ Milestone</button>
       <button class="btn sm ghost" onclick="pasteListModal()">Type or paste a list…</button>
       <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab puts it under the one above · Shift+Tab pulls it back out</span>
     </div>
   </div>`;
 }
 
-/* ── list ──
+/* ── editing a line where it sits ── */
+async function setLineWho(id, v) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  it.who = String(v || '').trim();
+  if (it.who) await rememberCrew(it.who);
+  renderSchedule();
+  await savePlan(p);
+}
+async function setLineDays(id, v) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  it.days = Math.max(0, Math.round(Number(v) || 0));
+  renderSchedule();
+  await savePlan(p);
+}
+/* The date cell is text until you click it, because most lines get theirs worked out and a row of
+   empty date boxes reads as a form to fill in. */
+function editLineDate(id) {
+  const cell = $('dt_' + id); if (!cell) return;
+  const p = currentPlan(); if (!p) return;
+  const r = (planDates(p, workCal(job)).by || {})[id] || {};
+  const it = planItemById(p, id) || {};
+  cell.innerHTML = `<input class="input sm out-datein" type="date" id="dtin_${id}"
+    value="${escAttr(pinnedDate(it) || r.start || '')}"
+    onchange="setLineDate('${id}',this.value)" onblur="renderSchedule()">`;
+  const b = $('dtin_' + id); if (b && b.focus) b.focus();
+}
+async function setLineDate(id, v) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  const d = String(v || '').trim();
+  if (d) { it.date = d; it.milestone = true; }
+  else { delete it.date; delete it.milestone; }
+  renderSchedule();
+  await savePlan(p);
+}
+/* Type a number to put the line where that number is. It takes that line's place, and its level,
+   so moving something is one keystroke rather than a drag. */
+async function moveToStep(id, v) {
+  const p = currentPlan(); if (!p) return;
+  const flat = planFlat(p);
+  const n = flat.length;
+  const want = Math.round(Number(v) || 0);
+  if (!want || want < 1 || want > n) { renderSchedule(); return; }
+  const from = flat.findIndex(f => f.item.id === id);
+  const toIdx = n - want;
+  if (from < 0 || toIdx === from) { renderSchedule(); return; }
+  const target = flat[toIdx];
+  if (!target) { renderSchedule(); return; }
+  /* Nothing can be put underneath something that is already underneath it. */
+  const below = Object.create(null);
+  const mark = x => { below[x.item.id] = 1; };
+  for (let i = from + 1; i < flat.length && flat[i].depth > flat[from].depth; i++) mark(flat[i]);
+  if (below[target.item.id]) { toast('That one is already under this line', true); renderSchedule(); return; }
+  const it = planItemById(p, id);
+  it.parent = target.item.parent || null;
+  it.order = (Number(target.item.order) || 0) - (toIdx > from ? -1 : 1) * 0.5;
+  renderSchedule();
+  await savePlan(p);
+}
+
+/* ── list ──/* ── list ──
    Every line, in the order the work actually happens: by the day it has to start. */
 function planListHtml(p, shown, res) {
   const order = shown.slice().sort((a, b) => {
@@ -13496,16 +13555,16 @@ function planListHtml(p, shown, res) {
       <span>Must finish</span><span>Runway</span><span>Comes before</span><span></span></div>
     ${order.map(r => `
       <div class="sl-row${planRowClass(r)}">
-        <span class="sl-name">${r.item.milestone ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
+        <span class="sl-name">${r.pinned ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
           ${r.critical ? '<span class="sl-tag is-crit" title="The longest run of days back from the milestone — if this slips, the date slips">drives the date</span>' : ''}
           ${holdIds(r.item).length ? `<span class="sl-tag is-hold"
             title="${escAttr('Held up by: ' + holdNames(p, r.item).join(', '))}">held up</span>` : ''}
-          ${!r.anchored && !r.item.milestone ? '<span class="sl-tag is-loose">no date — put it under something</span>' : ''}
+          ${!r.anchored ? '<span class="sl-tag is-loose">no date — put it under something</span>' : ''}
           ${r.item.note ? `<small class="muted sl-note">${esc(r.item.note)}</small>` : ''}</span>
         <span>${esc(r.item.who || '')}</span>
-        <span>${r.item.milestone ? '' : r.days}</span>
+        <span>${r.days || ''}</span>
         <span>${esc(shortDate(r.start))}</span>
-        <span>${r.item.milestone ? '' : esc(shortDate(r.finish))}</span>
+        <span>${esc(shortDate(r.finish))}</span>
         <span class="sl-run">${esc(runwayLabel(r))}</span>
         <span class="sl-dep">${r.item.parent ? esc(nameOf(r.item.parent)) : ''}</span>
         <span class="sl-act">
@@ -13555,8 +13614,8 @@ function planWallHtml(p, shown, cal) {
       ${cells.map(list => `<div class="wall-cell">${list.map(r => `
         <div class="sticky${planRowClass(r)}" onclick="editPlanLine('${r.id}')"
           title="${escAttr((r.item.name || '') + (holdIds(r.item).length ? ' — held up by: ' + holdNames(p, r.item).join(', ') : ''))}">
-          <span class="st-name">${r.item.milestone ? '◆ ' : ''}${esc(r.item.name || '(unnamed)')}</span>
-          <small>${r.item.milestone ? esc(shortDate(r.start))
+          <span class="st-name">${r.pinned ? '◆ ' : ''}${esc(r.item.name || '(unnamed)')}</span>
+          <small>${r.pinned && !r.days ? esc(shortDate(r.start))
             : esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) + ' · ' + r.days + 'd'}</small>
           ${holdIds(r.item).length ? `<small class="st-hold">held up by ${esc(holdNames(p, r.item).join(', '))}</small>` : ''}
         </div>`).join('')}</div>`).join('')}
@@ -13586,7 +13645,7 @@ function planCalendarHtml(p, shown, cal) {
   const onDay = Object.create(null);
   for (const r of shown) {
     if (!r.start) continue;
-    if (r.item.milestone) { (onDay[r.start] = onDay[r.start] || []).push({ r: r, ms: true }); continue; }
+    if (r.pinned && !r.days) { (onDay[r.start] = onDay[r.start] || []).push({ r: r, ms: true }); continue; }
     let d = r.start;
     for (let i = 0; i < 400 && d <= r.finish; i++) {
       if (isWorkDay(d, cal)) (onDay[d] = onDay[d] || []).push({ r: r, first: d === r.start });

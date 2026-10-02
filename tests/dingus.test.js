@@ -238,7 +238,7 @@ const testCode = `
              Duct on site
              Hangers in           <- two things the duct work waits on   */
   var plan = { id:'p1', name:'L3', items: [
-    { id:'m', name:'Ceilings closed', milestone:true, date:'2026-12-18', who:'GC', parent:null, order:10 },
+    { id:'m', name:'Ceilings closed', date:'2026-12-18', who:'GC', parent:null, order:10 },
     { id:'t', name:'Trim out',   who:'Arctic', days:5,  parent:'m', order:10 },
     { id:'h', name:'Hang duct',  who:'Arctic', days:10, parent:'t', order:10 },
     { id:'d', name:'Duct on site', who:'Supply', days:1, parent:'h', order:10 },
@@ -274,12 +274,13 @@ const testCode = `
   var odd = { items: [
     { id:'a', name:'Floating', who:'Arctic', days:3, parent:null, order:10 },
     { id:'b', name:'Under it', who:'Arctic', days:2, parent:'a', order:10 },
-    { id:'m', name:'No date yet', milestone:true, date:'', parent:null, order:20 }
+    { id:'m', name:'No date yet', date:'', parent:null, order:20 }
   ]};
   var ro = planDates(odd, five);
   ck('pull: a line at the top with no date gets none, and nor does what sits under it',
-    ro.by['a'].anchored === false && ro.by['b'].anchored === false && ro.rootless === 1);
-  ck('pull: a milestone with no date on it yet is counted, so you can be told', ro.undated === 1);
+    ro.by['a'].anchored === false && ro.by['b'].anchored === false && ro.rootless === 2);
+  ck('pull: a line with no date and nothing above it anchors nothing, and is counted',
+    ro.rootless >= 1 && ro.dated === 0);
 
   // a bad write that made two lines each other's parent must not cost the page
   var ring = { items: [
@@ -321,7 +322,7 @@ const testCode = `
     wrote.workCal.holidays.join() === '2026-11-26');
 
   schedules = [{ id:'p1', name:'L3', created:1, items: [
-    { id:'m', name:'Ceilings closed', milestone:true, date:'2026-12-18', who:'GC', parent:null, order:10 },
+    { id:'m', name:'Ceilings closed', date:'2026-12-18', who:'GC', parent:null, order:10 },
     { id:'t', name:'Trim out', who:'Arctic', days:5, parent:'m', order:10 }
   ]}];
   openPlan = 'p1'; planWho = ''; planHot = false; planEdit = null; planFocus = null;
@@ -358,7 +359,7 @@ const testCode = `
     keep.days === 5 && keep.parent === 'm');
 
   // pasting a list
-  schedules[0].items = [{ id:'m', name:'End', milestone:true, date:'2026-12-18', parent:null, order:10 }];
+  schedules[0].items = [{ id:'m', name:'End', date:'2026-12-18', parent:null, order:10 }];
   __stubEl('pasteBox', { value: ['Alpha', TAB + 'Bravo',
     TAB + TAB + 'Charlie', 'Delta'].join(NL) });
   await takePastedList();
@@ -469,20 +470,71 @@ const testCode = `
 
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
-      { id:'m', name:'Ceilings closed', milestone:true, date:'2026-12-18', parent:null, order:10 },
+      { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },
       { id:'t', name:'Trim out', who:'Arctic', days:2, parent:'m', order:10 },
       { id:'h', name:'Hang duct', who:'Arctic', days:3, parent:'t', order:10 } ];
     var rows3 = planDates(currentPlan(), workCal(job)).rows;
     var oh = planOutlineHtml(currentPlan(), rows3.filter(keepRow), {});
     // the number the row shows, not the one in its tooltip
-    var steps = oh.split('out-step').slice(1).map(function (c) {
-      var gt = c.indexOf('>'), lt = c.indexOf('<', gt);
-      return c.slice(gt + 1, lt).trim();
+    // the number the row shows: out-step is an input now, so it is the value, not the text
+    var steps = oh.split('class="out-step" value="').slice(1).map(function (c) {
+      return c.slice(0, c.indexOf(Q));
     });
     ck('steps: the list is numbered with one at the bottom, so it reads step one upwards',
       steps.join() === '3,2,1');
-    ck('steps: and the bottom line is the first thing done, the top one the milestone',
+    ck('steps: and the bottom line is the first thing done, the top one the dated line',
       rows3[rows3.length - 1].item.id === 'h' && rows3[0].item.id === 'm'); }
+
+  // a date typed on any line pins it, and what sits under it works back from there
+  { schedules[0].items = [
+      { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },
+      { id:'t', name:'Trim out', who:'Arctic', days:5, parent:'m', order:10 },
+      { id:'h', name:'Hang duct', who:'Arctic', days:3, parent:'t', order:10 } ];
+    await setLineDate('t', '2026-11-02');
+    var rd = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('pinned: a date typed on a line is where that line goes',
+      rd.by['t'].start === '2026-11-02' && rd.by['t'].pinned === '2026-11-02');
+    ck('pinned: its duration runs forward from that date, not back from what it feeds',
+      rd.by['t'].finish === '2026-11-06');
+    ck('pinned: and what sits under it is worked back from the date, not from the line above',
+      rd.by['h'].finish === '2026-10-30' && rd.by['h'].start === '2026-10-28');
+    await setLineDate('t', '');
+    var rd2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('pinned: clearing the date puts the line back to being worked out',
+      !rd2.by['t'].pinned && rd2.by['t'].finish === '2026-12-17');
+  }
+
+  // a date that runs past what the line has to be finished before is said out loud
+  { schedules[0].items = [
+      { id:'m', name:'End', date:'2026-11-06', parent:null, order:10 },
+      { id:'t', name:'Too late', days:2, date:'2026-11-10', parent:'m', order:10 } ];
+    var rc = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('pinned: a date that lands after what it has to be done before is flagged, not hidden',
+      rc.by['t'].clash === true && rc.clashes === 1); }
+
+  // typing a number moves the line to that step
+  { schedules[0].items = [
+      { id:'a', name:'A', days:1, parent:null, order:10 },
+      { id:'b', name:'B', days:1, parent:null, order:20 },
+      { id:'c', name:'C', days:1, parent:null, order:30 } ];
+    // display order is A,B,C so steps read 3,2,1
+    await moveToStep('a', 1);
+    ck('steps: typing a number puts the line at that step',
+      planFlat(currentPlan()).map(f => f.item.name).join() === 'B,C,A');
+    await moveToStep('a', 3);
+    ck('steps: and back again',
+      planFlat(currentPlan()).map(f => f.item.name).join() === 'A,B,C');
+    await moveToStep('a', 99);
+    ck('steps: a number that is not a step leaves the list alone',
+      planFlat(currentPlan()).map(f => f.item.name).join() === 'A,B,C'); }
+
+  // a line cannot be put underneath something that is already underneath it
+  { schedules[0].items = [
+      { id:'p', name:'Parent', days:1, parent:null, order:10 },
+      { id:'k', name:'Kid', days:1, parent:'p', order:10 } ];
+    await moveToStep('p', 1);
+    ck('steps: a line is not moved under something that is already under it',
+      planItemById(currentPlan(), 'p').parent === null); }
 
   // a plan somebody else deleted must not be put back by a save already on its way
   { var put = null;
@@ -492,7 +544,7 @@ const testCode = `
     ck('build: a save in flight does not recreate a plan that has been deleted', put === null); }
 
   // a milestone on a day nobody works is said out loud, not quietly moved
-  { schedules[0].items = [{ id:'m', name:'Shut day', milestone:true, date:'2026-11-26',
+  { schedules[0].items = [{ id:'m', name:'Shut day', date:'2026-11-26',
                             parent:null, order:10 }];
     var rr = planDates(currentPlan(), workCal(job));
     ck('build: a milestone on a day the job is shut is worked back from the last day it works',
