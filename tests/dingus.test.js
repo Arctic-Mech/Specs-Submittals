@@ -256,12 +256,11 @@ const testCode = `
     r.by['t'].finish === '2026-12-17' && r.by['t'].start === '2026-12-11');
   ck('pull: and so on down the tree',
     r.by['h'].finish === '2026-12-10' && r.by['h'].start === '2026-11-27');
-  ck('pull: two lines under one both have to be done before it, so they share the finish',
-    r.by['d'].finish === '2026-11-26' && r.by['g'].finish === '2026-11-26');
-  ck('pull: the longer of the two reaches further back',
-    r.by['g'].start === '2026-11-23' && r.by['d'].start === '2026-11-26');
-  ck('pull: and that longer one is the chain that drives the date',
-    r.by['g'].critical === true && r.by['d'].critical === false);
+  ck('pull: lines under one run one after another, in the order they are numbered',
+    r.by['d'].finish === '2026-11-26' && r.by['d'].start === '2026-11-26' &&
+    r.by['g'].finish === '2026-11-25');
+  ck('pull: so the bottom one is step one and happens first',
+    r.by['g'].start === '2026-11-20' && r.by['g'].start < r.by['d'].start);
   ck('pull: nothing is behind when the milestone is a year out', r.behind === 0);
 
   var r4 = planDates(plan, four);
@@ -452,21 +451,42 @@ const testCode = `
     ck('whose: and can be taken off again', jobPeople().length === 0);
     contracts = []; ledgerData = { quotes: [], pos: [] }; }
 
-  // what is holding a line up is other lines, named
+  // what is holding a line up is what sits under it and is not done
   { schedules[0].items = [
-      { id:'a', name:'Hang duct', who:'Arctic', days:2, parent:null, order:10, hold:['b','c'] },
-      { id:'b', name:'Deck poured', who:'Concrete', days:1, parent:null, order:20 },
-      { id:'c', name:'Crane available', who:'Hillside', days:1, parent:null, order:30 } ];
+      { id:'a', name:'Hang duct', who:'Arctic', days:2, parent:null, order:10 },
+      { id:'b', name:'Deck poured', who:'Concrete', days:1, parent:'a', order:10 },
+      { id:'c', name:'Crane available', who:'Hillside', days:1, parent:'a', order:20, done:true } ];
     var p2 = currentPlan();
-    ck('held: what is holding a line up is read back as the lines it names',
-      holdNames(p2, planItemById(p2, 'a')).join() === 'Deck poured,Crane available');
-    ck('held: a line with something holding it up is marked held, not late',
-      planRowClass({ item: planItemById(p2, 'a'), anchored: true, late: false }).indexOf('is-held') > 0);
-    ck('held: and one with nothing holding it up is not',
-      planRowClass({ item: planItemById(p2, 'b'), anchored: true, late: false }) === '');
-    ck('held: a line naming something since taken off does not show a blank',
-      (function () { planItemById(p2, 'a').hold = ['b', 'gone'];
-        return holdNames(p2, planItemById(p2, 'a')).join() === 'Deck poured'; })()); }
+    ck('held: what is holding a line up is read off what sits under it',
+      holdNames(p2, planItemById(p2, 'a')).join() === 'Deck poured');
+    ck('held: and what is done is no longer holding anything up',
+      holdNames(p2, planItemById(p2, 'a')).indexOf('Crane available') < 0);
+    ck('held: a line with nothing under it is held up by nothing',
+      holdNames(p2, planItemById(p2, 'b')).length === 0); }
+
+  // something not on the list: a submittal or an order with a lead time
+  { schedules[0].items = [
+      { id:'m', name:'Install TUs', date:'2026-11-02', days:0, parent:null, order:10 } ];
+    __stubEl('pickQ', { value: "Release TU's" });
+    __stubEl('pickKind', { value: 'order' });
+    __stubEl('pickWeeks', { value: '4' });
+    await addNeedNew('m');
+    __stubEl('pickQ', null); __stubEl('pickKind', null); __stubEl('pickWeeks', null);
+    var made = planItems(currentPlan()).find(x => x.name.indexOf('Release') === 0);
+    ck('holding: something not on the list goes on the plan as a line of its own',
+      !!made && made.parent === 'm' && made.kind === 'order');
+    ck('holding: four weeks of lead is four weeks of working days on this job',
+      made.days === 4 * workCal(job).days.length);
+    var rl = planDates(currentPlan(), workCal(job));
+    ck('holding: so it has to be started four calendar weeks before the line it holds up',
+      rl.by[made.id].start === '2026-10-05' &&        // the parent starts Nov 2
+      rl.by[made.id].finish === '2026-10-29');        // the working day before it
+    ck('holding: and it is dated, so it turns up in the calendar and the list with the rest',
+      rl.by[made.id].anchored === true); }
+
+  { var cal4 = { days:[1,2,3,4], holidays:[] };
+    ck('holding: four weeks is still four weeks on a job running four tens',
+      weeksToDays(4, cal4) === 16 && weeksToDays(4, { days:[1,2,3,4,5], holidays:[] }) === 20); }
 
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
