@@ -446,6 +446,111 @@ textarea.autosize[rows="1"] { min-height: 0; }
 /* which section a filing lands on, kept in view rather than buried in a dropdown option */
 .asg-on { font-size: 12.5px; color: var(--text-2); background: var(--surface-2);
   border-radius: 7px; padding: 7px 10px; margin-top: 8px; }
+/* ── the Schedule tab ───────────────────────────────────────────────────── */
+.sch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.sch-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.sch-tab { border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+  padding: 5px 13px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.sch-tab:hover { border-color: var(--border-2); color: var(--text); }
+.sch-tab.on { background: var(--accent-sf); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sch-tab .n { font-size: 11px; color: var(--text-3); margin-left: 6px; }
+.sch-tab.on .n { color: var(--accent); }
+.sch-tab.add { border-style: dashed; color: var(--text-3); }
+.sch-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.sch-cal { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+.sch-cal .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; }
+.sch-cal .x:hover { color: var(--accent); }
+.sch-warn { background: var(--amber-sf); border: 1px solid var(--amber); border-radius: 8px;
+  padding: 9px 12px; font-size: 12.5px; color: var(--text-2); margin-bottom: 12px; display: grid; gap: 3px; }
+.sch-form { border: 1px solid var(--accent); border-radius: var(--radius); padding: 14px;
+  background: var(--surface); margin-bottom: 14px; }
+.sch-form-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.sch-deps { border: 1px solid var(--border); border-radius: 7px; padding: 4px 2px;
+  max-height: 190px; overflow-y: auto; }
+.sch-deps .tick-row { margin-top: 0; padding: 4px 9px; }
+.sch-hols { display: flex; flex-wrap: wrap; gap: 6px; }
+.sch-hols .hol { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 4px 2px 10px; }
+.sch-hols .hol .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 10px; }
+/* the list */
+.sch-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.sl-head, .sl-row { display: grid; align-items: center; gap: 10px;
+  grid-template-columns: minmax(180px, 2.4fr) 1fr 48px 92px 92px 92px 1.2fr 74px; padding: 8px 12px; }
+.sl-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
+  background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.sl-row { font-size: 13px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent; }
+.sl-row:last-child { border-bottom: none; }
+.sl-row:hover { background: var(--surface-2); }
+.sl-row.is-late { border-left-color: var(--red); }
+.sl-row.is-held { border-left-color: var(--amber); }
+.sl-row.is-loop, .sl-row.is-loose { border-left-color: var(--text-3); }
+.sl-row.is-done { opacity: .55; }
+.sl-row.is-done .sl-name { text-decoration: line-through; }
+/* The name, its badges and its note read as one paragraph, not as a stack of stretched blocks:
+   a pill that fills the column stops looking like a pill. */
+.sl-name { min-width: 0; }
+.sl-name .sl-note { display: block; margin-top: 2px; }
+.sl-ms { color: var(--accent); }
+.sl-note { font-size: 11px; }
+.sl-dep, .sl-run { font-size: 11.5px; color: var(--text-3); }
+.sl-row.is-late .sl-run { color: var(--red); font-weight: 600; }
+.sl-tag { display: inline-block; font-size: 10px; border-radius: 999px; padding: 1px 7px;
+  margin-left: 6px; white-space: nowrap; vertical-align: 1px; }
+.sl-tag.is-crit { background: var(--accent-sf); color: var(--accent); font-weight: 600; }
+.sl-tag.is-hold { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
+.sl-tag.is-loop, .sl-tag.is-loose { background: var(--surface-3); color: var(--text-3); }
+.sl-act { display: flex; gap: 2px; justify-content: flex-end; }
+.sl-act .x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.sl-act .x:hover { color: var(--text); }
+/* the wall */
+.wall-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.wall { display: grid; grid-auto-rows: min-content; min-width: max-content; }
+.wall-row { display: grid; grid-template-columns: 150px repeat(var(--cols), minmax(168px, 1fr)); }
+.wall-row + .wall-row { border-top: 1px solid var(--border); }
+.wall-head { position: sticky; top: 0; background: var(--surface-2); z-index: 1; }
+.wall-head .wall-cell { padding: 7px 10px; color: var(--text-3); font-size: 11px; }
+/* The lane stays put while the weeks scroll under it, or you lose track of whose line you are
+   looking at the moment the wall is wider than the screen — which it is by the second milestone. */
+.wall-lane { position: sticky; left: 0; z-index: 2; padding: 10px; border-right: 1px solid var(--border);
+  background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.wall-head .wall-lane { z-index: 3; }
+.wall-lane small { font-size: 10.5px; color: var(--text-3); }
+.wall-cell { padding: 7px; border-right: 1px solid var(--border); display: flex;
+  flex-direction: column; gap: 6px; min-height: 52px; }
+.sticky { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 7px; padding: 7px 9px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.sticky:hover { border-color: var(--border-2); border-left-color: var(--accent); background: var(--surface-3); }
+.sticky small { font-size: 10.5px; color: var(--text-3); }
+.sticky .st-name { font-size: 12.5px; font-weight: 600; }
+.sticky .st-hold { color: var(--amber); }
+.sticky.is-late { border-left-color: var(--red); }
+.sticky.is-held { border-left-color: var(--amber); }
+.sticky.is-loop, .sticky.is-loose { border-left-color: var(--text-3); }
+.sticky.is-done { opacity: .5; }
+.sticky.is-done .st-name { text-decoration: line-through; }
+/* the calendar */
+.cal-wrap { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.cal-month h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-3); margin: 0 0 7px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.cal-dow { background: var(--surface-2); color: var(--text-3); font-size: 10px; text-align: center; padding: 4px 0; }
+.cal-day { background: var(--surface); min-height: 72px; padding: 3px 4px; display: flex;
+  flex-direction: column; gap: 2px; }
+.cal-day.is-off { background: var(--surface-2); }
+.cal-day.is-out { background: var(--surface-2); opacity: .5; }
+.cal-day.is-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cd-n { font-size: 10.5px; color: var(--text-3); }
+.cd-item { font-size: 10.5px; background: var(--accent-sf); color: var(--accent); border-radius: 4px;
+  padding: 1px 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-item.is-ms { background: var(--accent); color: #fff; font-weight: 700; }
+.cd-item.is-late { background: var(--red-sf); color: var(--red); }
+.cd-item.is-held { background: var(--amber-sf); color: var(--amber); }
+.cd-item.is-done { opacity: .5; text-decoration: line-through; }
+@media (max-width: 760px) {
+  .sl-head { display: none; }
+  .sl-row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
+}
 .nt-sort { font-size: 11px; color: var(--text-3); background: none; border: 1px solid var(--border);
   border-radius: 999px; padding: 2px 6px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 .nt-sort:hover { color: var(--text); border-color: var(--border-2); }
@@ -1406,6 +1511,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <!-- CONTRACTS / VENDOR QUOTES / PO's / ESTIMATES TABS (rendered by JS) -->
     <div id="tab-contracts" hidden></div>
     <div id="tab-drawings" hidden></div>
+    <div id="tab-schedule" hidden><div id="schedPanel"></div></div>
     <div id="tab-quotes" hidden></div>
     <div id="tab-pos" hidden></div>
     <div id="tab-estimates" hidden></div>
@@ -1430,7 +1536,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v7.98';
+const APP_VERSION = 'v7.99';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2530,6 +2636,8 @@ const specDataRef = (jobId, key) => FB.doc(FB.db, 'jobs', jobId, 'specdata', Str
 const rfisCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'rfis');
 const rfiRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'rfis', String(id));
 const drawingsCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'drawings');
+const schedulesCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'schedules');
+const scheduleRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'schedules', String(id));
 const drawingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'drawings', String(id));
 const trackingCol = jobId => FB.collection(FB.db, 'jobs', jobId, 'tracking');
 const trackingRef = (jobId, id) => FB.doc(FB.db, 'jobs', jobId, 'tracking', String(id));
@@ -2584,6 +2692,10 @@ async function saveJobMeta(j) {
     sfFolderName: target.sfFolderName || '',
     ignoredFiles: target.ignoredFiles || [],
     contractAmount: target.contractAmount || '',
+    /* The working week is what turns "ten days" into a date. Leaving it out of the write dropped it
+       on every save, and every plan on the job would quietly recompute on a Mon-Fri week it was
+       never set to. */
+    workCal: target.workCal || {},
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -3671,8 +3783,15 @@ let openRfi = null;          // RFI open in the drawer
 let drawings = [];           // drawing sets for the open job, newest issue first
 let openDrawing = null;      // the set open in the drawer
 let drawingQuery = '';
+let unsubSchedules = null;
 let unsubDrawings = null;
 let rfiQuery = '', rfiStatusFilter = null;
+let schedules = [];          // pull plans on this job, each with its own items
+let openPlan = null;         // the plan being looked at, if any
+let planView = 'wall';       // 'wall' | 'list' | 'calendar'
+let planEdit = null;         // the line open on its form, if any
+let planWho = '';            // filter: only this contractor's lines
+let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
 /* Which way the notes run. Newest at the top is what you want nine times in ten — the last thing
    that happened is the thing you are looking for — but a log you are reading from the start wants
@@ -3766,6 +3885,7 @@ function watchJobs() {
             job.sfFolderName = fresh.sfFolderName || '';
             job.ignoredFiles = fresh.ignoredFiles || [];
             job.contractAmount = fresh.contractAmount || '';
+            job.workCal = fresh.workCal || {};
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -3824,6 +3944,25 @@ function watchSections(jobId) {
         if (openKey && !(ae && ae.closest && ae.closest('.drawer'))) renderDrawer();
       }
       if (jobFolder) { maybeAutoOrganize(); fileStagedUploads(); scheduleFolderSave(); }   // sections arrived / changed after the folder loaded
+    },
+    err => setSync('error', ' — ' + (err && err.message || err)));
+}
+
+function watchSchedules(jobId) {
+  if (unsubSchedules) { unsubSchedules(); unsubSchedules = null; }
+  unsubSchedules = FB.onSnapshot(schedulesCol(jobId),
+    snap => {
+      if (!job || job.id !== jobId) return;
+      schedules = snap.docs.map(d => d.data());
+      schedules.sort((a, b) => String(a.created || '').localeCompare(String(b.created || '')));
+      if (openPlan && !schedules.some(p => p.id === openPlan)) openPlan = null;
+      if (!openPlan && schedules.length) openPlan = schedules[0].id;
+      if (view === 'job' && jobTab === 'schedule') {
+        /* Re-rendering while a line is open on its form would throw away what is half typed. */
+        const ae = document.activeElement;
+        if (!(planEdit && ae && ae.closest && ae.closest('.sch-form'))) renderJob();
+      }
+      if (jobFolder) scheduleFolderSave();
     },
     err => setSync('error', ' — ' + (err && err.message || err)));
 }
@@ -4068,6 +4207,7 @@ function go(where, id) {
     if (unsubSections) { unsubSections(); unsubSections = null; }
     if (unsubRfis) { unsubRfis(); unsubRfis = null; }
     if (unsubDrawings) { unsubDrawings(); unsubDrawings = null; }
+    if (unsubSchedules) { unsubSchedules(); unsubSchedules = null; }
     if (unsubTracking) { unsubTracking(); unsubTracking = null; }
     if (unsubCos) { unsubCos(); unsubCos = null; }
     if (window._unsub_quotes) { window._unsub_quotes(); window._unsub_quotes = null; }
@@ -4093,6 +4233,7 @@ async function openJob(id) {
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
   statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = []; drawings = []; drawingQuery = '';
+  schedules = []; openPlan = null; planEdit = null; planView = 'wall'; planWho = ''; planHot = false;
   ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
   openRfi = null; trackCat = null; trackItem = null; openCo = null; openDrawing = null; estCompare = [];
   rfiQuery = ''; rfiStatusFilter = null; coQuery = ''; coStatusFilter = null;
@@ -4102,6 +4243,7 @@ async function openJob(id) {
   watchSections(job.id);          // sections stream in and re-render
   watchRfis(job.id);              // RFIs for this job
   watchDrawings(job.id);          // drawing sets and their revisions
+  watchSchedules(job.id);         // pull plans
   watchTracking(job.id);          // job-tracking categories
   watchCos(job.id);               // change orders
   watchLedger('quotes'); watchLedger('pos'); watchContracts(job.id);   // vendor quotes, POs, contracts
@@ -4398,6 +4540,7 @@ function renderJob() {
   if (jobTab === 'pos') { renderLedger('pos'); return; }
   if (jobTab === 'contracts') { renderContracts(); return; }
   if (jobTab === 'estimates') { renderEstimates(); if (jobFolder) reconcileEstimateFiles().catch(() => {}); return; }
+  if (jobTab === 'schedule') { renderSchedule(); return; }
   if (jobTab === 'tracking') { renderTracking(); return; }
   if (jobTab === 'billing') { renderBilling(); return; }
 
@@ -4455,6 +4598,7 @@ function renderJobTabs() {
     { id: 'quotes',       label: 'Vendor Quotes', n: litems('quotes').length },
     { id: 'pos',          label: "PO's",          n: litems('pos').length },
     { id: 'estimates',    label: 'Estimates',     n: (estimates || []).length },
+    { id: 'schedule',     label: 'Schedule',      n: schedules.length },
     { id: 'tracking',     label: 'Job Tracking',  n: tracking.length },
     { id: 'billing',      label: 'Billing',       n: null }
   ];
@@ -4470,7 +4614,8 @@ const TAB_ACTIONS = {
   quotes:       '+ New quote',
   pos:          '+ New PO',
   estimates:    '+ New estimate',
-  tracking:     '+ New category'
+  tracking:     '+ New category',
+  schedule:     '+ New pull plan'
 };
 function applyTabVisibility() {
   $('tab-submittals').hidden   = jobTab !== 'submittals';
@@ -4481,6 +4626,7 @@ function applyTabVisibility() {
   $('tab-pos').hidden          = jobTab !== 'pos';
   $('tab-contracts').hidden    = jobTab !== 'contracts';
   $('tab-estimates').hidden    = jobTab !== 'estimates';
+  $('tab-schedule').hidden     = jobTab !== 'schedule';
   $('tab-tracking').hidden     = jobTab !== 'tracking';
   $('tab-billing').hidden      = jobTab !== 'billing';
   const act = $('tabAction');
@@ -4504,6 +4650,7 @@ function tabAction() {
   else if (jobTab === 'quotes') newLedger('quotes');
   else if (jobTab === 'pos') newLedger('pos');
   else if (jobTab === 'estimates') newEstimate();
+  else if (jobTab === 'schedule') newPullPlan();
   else if (jobTab === 'tracking') newTrackCategory();
 }
 
@@ -12359,7 +12506,629 @@ function watchLedger(lk) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   6e. BILLING  —  placeholder; we’ll design this out with the user later
+   6e. SCHEDULE  —  pull planning: start at the milestone, work backwards
+
+   A pull plan is not a bar chart somebody drew. It is the crew at the wall saying "to hit that
+   date I need the walls closed, and for that I need my hangers in, and for that the steel has to
+   be done" — backwards from the end, each trade naming what it needs and from whom.
+
+   So the only date typed in is the milestone's. Everything else falls out of how long each line
+   takes and what it is waiting on, and it comes out as the LATEST that line can start and still
+   make the date. A line whose latest start is already behind you is this morning's problem.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the working week ──
+   Durations are in working days, so the app has to know which days this job works. Four tens is
+   Monday to Thursday: ten days of work then runs over two and a half weeks, not two, and a plan
+   that counted Fridays would promise a date the crew is not there for. */
+const WORK_SHIFTS = [
+  { id: '5x8',   label: '5 × 8s · Mon–Fri',   days: [1, 2, 3, 4, 5] },
+  { id: '4x10',  label: '4 × 10s · Mon–Thu',  days: [1, 2, 3, 4] },
+  { id: '4x10f', label: '4 × 10s · Tue–Fri',  days: [2, 3, 4, 5] },
+  { id: '6x8',   label: '6 days · Mon–Sat',   days: [1, 2, 3, 4, 5, 6] },
+  { id: '7',     label: '7 days · every day', days: [0, 1, 2, 3, 4, 5, 6] }
+];
+const DOW_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function workCal(j) {
+  const w = ((j || job || {}).workCal) || {};
+  const days = (Array.isArray(w.days) && w.days.length) ? w.days.slice() : [1, 2, 3, 4, 5];
+  return { days: days, holidays: (w.holidays || []).slice(), shift: w.shift || '5x8' };
+}
+function workShiftLabel(cal) {
+  const hit = WORK_SHIFTS.find(x => x.days.join() === (cal.days || []).join());
+  return hit ? hit.label : ((cal.days || []).map(d => DOW_NAMES[d]).join(', ') || 'no days set');
+}
+/* Noon, always. Parsing a bare date as midnight and stepping a day lands on the day before in
+   half the world's time zones, and a schedule that loses a day is worse than no schedule. */
+const dAt = iso => new Date(String(iso) + 'T12:00:00');
+function dISO(d) {
+  const p = n => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+const dShift = (iso, n) => { const d = dAt(iso); d.setDate(d.getDate() + n); return dISO(d); };
+const dDow = iso => dAt(iso).getDay();
+const isWorkDay = (iso, cal) =>
+  (cal.days || []).indexOf(dDow(iso)) >= 0 && (cal.holidays || []).indexOf(iso) < 0;
+/* Step to a working day. Guarded: a calendar with no working days would otherwise spin. */
+function nearestWorkDay(iso, cal, dir) {
+  if (!(cal.days || []).length) return iso;
+  let at = iso;
+  for (let i = 0; i < 400; i++) { if (isWorkDay(at, cal)) return at; at = dShift(at, dir); }
+  return iso;
+}
+const prevWorkDay = (iso, cal) => nearestWorkDay(dShift(iso, -1), cal, -1);
+/* n working days back from a day that is itself worked, counting that day as the first: one day
+   of work finishing Friday starts Friday. */
+function subWorkDays(iso, n, cal) {
+  let at = nearestWorkDay(iso, cal, -1);
+  for (let i = 0; i < Math.max(0, n) && i < 2000; i++) at = prevWorkDay(at, cal);
+  return at;
+}
+function workDaysBetween(aIso, bIso, cal) {        // both ends counted, a <= b
+  if (!aIso || !bIso || aIso > bIso) return 0;
+  let n = 0, at = aIso;
+  for (let i = 0; i < 2000 && at <= bIso; i++) { if (isWorkDay(at, cal)) n++; at = dShift(at, 1); }
+  return n;
+}
+
+/* ── the backward pass ──
+   A milestone is the only line with a date of its own. Everything else finishes the working day
+   before whatever it feeds starts, and starts its own duration before that. Where a line feeds
+   two things the earlier one wins — that is the whole point of pulling.
+
+   Three things it says out loud rather than guesses at: a line nothing pulls gets no date and is
+   told so; a ring of lines waiting on each other is named rather than hung on; and the longest
+   run of days back from a milestone is the chain that moves the date if it slips. */
+function planDates(plan, cal) {
+  const items = (plan && plan.items) || [];
+  /* Null-prototype throughout. These are keyed on ids and on names someone typed, and a plain
+     object already answers to "constructor" and "__proto__" before anything is put in it — which
+     turns a lookup into a function and the next line into a crash. */
+  const byId = Object.create(null), succ = Object.create(null);
+  for (const it of items) { byId[it.id] = it; succ[it.id] = []; }
+  for (const it of items) for (const a of (it.after || [])) if (succ[a]) succ[a].push(it.id);
+  const out = Object.create(null), mark = Object.create(null), looped = Object.create(null);
+  const dur = it => Math.max(0, Math.round(Number(it.days) || 0));
+  function solve(id) {
+    if (mark[id] === 2) return out[id];
+    if (mark[id] === 1) { looped[id] = true; return null; }
+    mark[id] = 1;
+    const it = byId[id];
+    let r;
+    if (it.milestone) {
+      const d = it.date ? nearestWorkDay(it.date, cal, -1) : '';
+      r = { start: d, finish: d, chain: 0, anchored: !!d };
+    } else {
+      let finish = '', chain = -1;
+      for (const sid of succ[id]) {
+        const sv = solve(sid);
+        if (!sv || !sv.anchored) continue;
+        const f = prevWorkDay(sv.start, cal);
+        if (!finish || f < finish) finish = f;
+        if (sv.chain > chain) chain = sv.chain;
+      }
+      r = finish
+        ? { start: subWorkDays(finish, Math.max(1, dur(it)) - 1, cal), finish: finish,
+            chain: Math.max(0, chain) + dur(it), anchored: true }
+        : { start: '', finish: '', chain: 0, anchored: false };
+    }
+    mark[id] = 2; out[id] = r;
+    return r;
+  }
+  for (const it of items) solve(it.id);
+  /* Everything in the ring, not just the line the walk happened to come back to — naming one of
+     three is not telling you where the loop is. */
+  const inLoop = Object.create(null);
+  if (Object.keys(looped).length) {
+    const seen = Object.create(null);
+    const back = id => {
+      if (seen[id]) return; seen[id] = 1; inLoop[id] = true;
+      for (const a of ((byId[id] || {}).after || [])) if (byId[a]) back(a);
+    };
+    for (const id of Object.keys(looped)) back(id);
+  }
+  const today0 = today();
+  let deepest = 0;
+  for (const it of items) if (out[it.id] && out[it.id].anchored) deepest = Math.max(deepest, out[it.id].chain);
+  const rows = items.map(it => {
+    const d = out[it.id] || { start: '', finish: '', chain: 0, anchored: false };
+    return Object.assign({}, d, { item: it, id: it.id, loop: !!inLoop[it.id], days: dur(it),
+      late: !!(d.start && !it.done && d.start < today0),
+      /* working days left before this one has to be moving; 0 is today, below 0 is behind */
+      runway: d.start ? workDaysBetween(today0, d.start, cal) - 1 : null,
+      critical: !!(d.anchored && !it.milestone && deepest && d.chain === deepest) });
+  });
+  const by = Object.create(null); rows.forEach(r => by[r.id] = r);
+  return { rows: rows, by: by,
+    loops: rows.filter(r => r.loop).length,
+    orphans: rows.filter(r => !r.anchored && !r.loop && !r.item.milestone).length,
+    undated: rows.filter(r => r.item.milestone && !r.start).length,
+    behind: rows.filter(r => r.late).length };
+}
+
+
+/* ── the plans themselves ── */
+function planById(id) { return (schedules || []).find(p => p.id === id) || null; }
+function currentPlan() { return planById(openPlan) || (schedules || [])[0] || null; }
+function planItems(p) { return (p && p.items) || []; }
+function planItemById(p, id) { return planItems(p).find(x => x.id === id) || null; }
+async function savePlan(p) {
+  if (!job || !p) return;
+  p.updated = Date.now();
+  try { await FB.setDoc(scheduleRef(job.id, p.id), clean(p)); }
+  catch (e) { toast(writeError(e), true); }
+}
+async function newPullPlan() {
+  if (!job) return;
+  const name = prompt('What is this plan for?  (e.g. "Level 3 MEP rough-in", "Boiler room")');
+  if (!name || !name.trim()) return;
+  /* A plan with nothing to pull towards is a list. It starts with the milestone, because that is
+     where a pull plan starts in the room too. */
+  const p = { id: uid('pln'), name: autoCap(name.trim()), items: [
+    { id: uid('li'), name: autoCap(name.trim()), milestone: true, date: '', who: '', days: 0, after: [] }
+  ], created: Date.now(), updated: Date.now(), by: meName() || '' };
+  schedules = schedules.concat([p]);
+  openPlan = p.id; planEdit = p.items[0].id;
+  renderSchedule();
+  await savePlan(p);
+}
+async function renamePullPlan(id) {
+  const p = planById(id); if (!p) return;
+  const name = prompt('Name for this plan:', p.name || '');
+  if (name == null || !name.trim()) return;
+  p.name = autoCap(name.trim());
+  renderSchedule(); await savePlan(p);
+}
+async function deletePullPlan(id) {
+  const p = planById(id); if (!p) return;
+  const n = planItems(p).length;
+  if (!confirm('Delete "' + (p.name || 'this plan') + '"?\n\n' +
+      (n ? 'Its ' + n + ' line' + (n === 1 ? '' : 's') + ' go with it. ' : '') +
+      'This cannot be undone.')) return;
+  schedules = schedules.filter(x => x.id !== id);
+  if (openPlan === id) openPlan = (schedules[0] || {}).id || null;
+  renderSchedule();
+  try { await FB.deleteDoc(scheduleRef(job.id, id)); }
+  catch (e) { toast(writeError(e), true); }
+}
+function pickPlan(id) { openPlan = id; planEdit = null; planWho = ''; renderSchedule(); }
+function setPlanView(v) { planView = v; renderSchedule(); }
+function setPlanWho(v) { planWho = v || ''; renderSchedule(); }
+function togglePlanHot() { planHot = !planHot; renderSchedule(); }
+
+/* ── the working week, set on the job ── */
+async function setWorkShift(v) {
+  if (!job) return;
+  const hit = WORK_SHIFTS.find(x => x.id === v);
+  job.workCal = Object.assign({}, job.workCal || {}, { shift: v, days: hit ? hit.days.slice() : [1,2,3,4,5] });
+  renderSchedule();
+  try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+}
+async function addHoliday() {
+  if (!job) return;
+  const d = prompt('Day the job is shut (YYYY-MM-DD):', today());
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) { if (d) toast('Give it as YYYY-MM-DD', true); return; }
+  const cal = workCal(job);
+  if (cal.holidays.indexOf(d.trim()) >= 0) return;
+  job.workCal = Object.assign({}, job.workCal || {}, { holidays: cal.holidays.concat([d.trim()]).sort() });
+  renderSchedule();
+  try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+}
+async function removeHoliday(d) {
+  if (!job) return;
+  const cal = workCal(job);
+  job.workCal = Object.assign({}, job.workCal || {}, { holidays: cal.holidays.filter(x => x !== d) });
+  renderSchedule();
+  try { await saveJobMeta(); } catch (e) { toast(writeError(e), true); }
+}
+
+/* ── the lines ── */
+function planPeople(p) {
+  const seen = Object.create(null), out = [];
+  for (const it of planItems(p)) { const w = String(it.who || '').trim(); if (w && !seen[w.toLowerCase()]) { seen[w.toLowerCase()] = 1; out.push(w); } }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+function jobPeople() {
+  /* Names already on the job, so a contractor is picked rather than spelled three ways. */
+  const seen = Object.create(null), out = [];
+  const add = n => { const v = String(n || '').trim(); if (v && !seen[v.toLowerCase()]) { seen[v.toLowerCase()] = 1; out.push(v); } };
+  for (const c of (contracts || [])) add(c.party || c.name);
+  for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) add(it.vendor || it.party);
+  for (const s of sectionsOf(job)) add(s.vendor);
+  for (const p of (schedules || [])) for (const it of planItems(p)) add(it.who);
+  return out.sort((a, b) => a.localeCompare(b));
+}
+async function addPlanLine(isMilestone) {
+  const p = currentPlan(); if (!p) return;
+  const it = { id: uid('li'), name: '', who: '', days: isMilestone ? 0 : 1,
+    after: [], hold: '', note: '', done: false };
+  if (isMilestone) { it.milestone = true; it.date = ''; }
+  p.items = planItems(p).concat([it]);
+  planEdit = it.id;
+  renderSchedule();
+  const b = $('liName'); if (b && b.focus) b.focus();
+  await savePlan(p);
+}
+function editPlanLine(id) { planEdit = id; renderSchedule();
+  const b = $('liName'); if (b && b.focus) b.focus(); }
+function cancelPlanLine() { planEdit = null; renderSchedule(); }
+async function savePlanLine(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) { planEdit = null; renderSchedule(); return; }
+  const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
+  it.name = autoCap(v('liName'));
+  it.who = v('liWho');
+  it.hold = autoCap(v('liHold'));
+  it.note = autoCap(v('liNote'));
+  const ms = $('liIsMilestone');
+  it.milestone = !!(ms && ms.checked);
+  if (it.milestone) { it.date = v('liDate'); it.days = 0; }
+  else { delete it.date; it.days = Math.max(0, Math.round(Number(v('liDays')) || 0)); }
+  const after = [];
+  const box = $('liAfter');
+  if (box && typeof box.querySelectorAll === 'function') {
+    for (const el of box.querySelectorAll('input.liDep')) if (el.checked) after.push(el.value);
+  }
+  it.after = after;
+  const dn = $('liDone'); it.done = !!(dn && dn.checked);
+  planEdit = null;
+  renderSchedule();
+  await savePlan(p);
+}
+async function removePlanLine(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  const feeds = planItems(p).filter(x => (x.after || []).indexOf(id) >= 0);
+  if (!confirm('Take "' + (it.name || 'this line') + '" off the plan?' +
+      (feeds.length ? '\n\n' + feeds.length + ' line' + (feeds.length === 1 ? ' that waits' : 's that wait') +
+       ' on it will stop waiting on it.' : ''))) return;
+  /* Nothing is left pointing at a line that is gone, or the backward pass would wait on a ghost. */
+  p.items = planItems(p).filter(x => x.id !== id)
+    .map(x => Object.assign({}, x, { after: (x.after || []).filter(a => a !== id) }));
+  if (planEdit === id) planEdit = null;
+  renderSchedule();
+  await savePlan(p);
+}
+async function togglePlanDone(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  it.done = !it.done;
+  renderSchedule();
+  await savePlan(p);
+}
+
+/* ── drawing it ── */
+const WEEK_MS = 7 * 864e5;
+function mondayOf(iso) { const d = dAt(iso); const n = (d.getDay() + 6) % 7; d.setDate(d.getDate() - n); return dISO(d); }
+function weekSpan(rows) {
+  const all = [];
+  for (const r of rows) { if (r.start) all.push(r.start); if (r.finish) all.push(r.finish); }
+  if (!all.length) return [];
+  all.sort();
+  const out = [];
+  let at = mondayOf(all[0]);
+  const last = mondayOf(all[all.length - 1]);
+  for (let i = 0; i < 200 && at <= last; i++) { out.push(at); at = dShift(at, 7); }
+  return out;
+}
+const shortDate = iso => iso ? fmtDate(iso + 'T00:00:00') : '';
+function runwayLabel(r) {
+  if (r.item.done) return 'done';
+  if (!r.anchored) return '';
+  if (r.runway == null) return '';
+  if (r.runway < 0) return Math.abs(r.runway) + 'd behind';
+  if (r.runway === 0) return 'starts today';
+  return r.runway + 'd to go';
+}
+function planRowClass(r) {
+  if (r.item.done) return ' is-done';
+  if (r.loop) return ' is-loop';
+  if (!r.anchored) return ' is-loose';
+  if (r.late) return ' is-late';
+  if (String(r.item.hold || '').trim()) return ' is-held';
+  return '';
+}
+function keepRow(r) {
+  if (planWho && String(r.item.who || '').trim() !== planWho) return false;
+  if (planHot && !(r.late || r.loop || !r.anchored || String(r.item.hold || '').trim())) return false;
+  return true;
+}
+
+function renderSchedule() {
+  const host = $('schedPanel'); if (!host) return;
+  if (!schedules.length) {
+    host.innerHTML = `<div class="empty" style="max-width:620px">
+      <div style="font-size:30px;margin-bottom:6px">\u{1F5D3}\u{FE0F}</div>
+      <b>No pull plan yet</b><br>
+      <span class="muted">A pull plan starts at the end: put in the milestone and the date it has to
+      be met, then work backwards — each line is a piece of work, how long it takes, and what has to
+      be finished before it can start. The app works out the latest each one can start and still
+      make the date.</span><br><br>
+      <button class="btn primary" onclick="newPullPlan()">+ New pull plan</button>
+    </div>`;
+    return;
+  }
+  const p = currentPlan();
+  const cal = workCal(job);
+  const res = planDates(p, cal);
+  const rows = res.rows;
+  const people = planPeople(p);
+  const shown = rows.filter(keepRow);
+
+  const tabs = schedules.map(x => `<button class="sch-tab${x.id === p.id ? ' on' : ''}"
+      onclick="pickPlan('${x.id}')">${esc(x.name || 'Untitled')}<span class="n">${planItems(x).length}</span></button>`).join('');
+
+  const warn = [];
+  if (res.undated) warn.push(res.undated + ' milestone' + (res.undated === 1 ? ' has' : 's have') + ' no date yet — nothing can be worked back from ' + (res.undated === 1 ? 'it' : 'them'));
+  if (res.loops) warn.push(res.loops + ' lines are waiting on each other in a ring');
+  if (res.orphans) warn.push(res.orphans + ' line' + (res.orphans === 1 ? '' : 's') + ' nothing pulls — say what ' + (res.orphans === 1 ? 'it feeds' : 'they feed'));
+  if (res.behind) warn.push(res.behind + ' line' + (res.behind === 1 ? '' : 's') + ' should have started already');
+
+  host.innerHTML = `
+    <div class="sch-head">
+      <div class="sch-tabs">${tabs}<button class="sch-tab add" onclick="newPullPlan()">+ Plan</button></div>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn sm ghost" onclick="renamePullPlan('${p.id}')">Rename</button>
+      <button class="btn sm ghost" onclick="deletePullPlan('${p.id}')">Delete</button>
+    </div>
+
+    <div class="sch-bar">
+      <div class="seg">
+        <button class="${planView === 'wall' ? 'on' : ''}" onclick="setPlanView('wall')">Wall</button>
+        <button class="${planView === 'list' ? 'on' : ''}" onclick="setPlanView('list')">List</button>
+        <button class="${planView === 'calendar' ? 'on' : ''}" onclick="setPlanView('calendar')">Calendar</button>
+      </div>
+      <select class="input sm" style="max-width:190px" onchange="setPlanWho(this.value)">
+        <option value="">Everyone</option>
+        ${people.map(w => `<option value="${escAttr(w)}"${planWho === w ? ' selected' : ''}>${esc(w)}</option>`).join('')}
+      </select>
+      <button class="btn sm${planHot ? ' primary' : ' ghost'}" onclick="togglePlanHot()"
+        title="Only what is behind, blocked, in a ring, or that nothing pulls">Needs attention</button>
+      <span class="spacer" style="flex:1"></span>
+      <span class="muted sch-cal" title="Durations are counted in these days">
+        ${esc(workShiftLabel(cal))}${cal.holidays.length ? ' · ' + cal.holidays.length + ' day' + (cal.holidays.length === 1 ? '' : 's') + ' shut' : ''}
+        <button class="x" title="Change the working week" onclick="workWeekModal()">✎</button></span>
+      <button class="btn sm" onclick="addPlanLine(false)">+ Line</button>
+      <button class="btn sm ghost" onclick="addPlanLine(true)">+ Milestone</button>
+    </div>
+
+    ${warn.length ? `<div class="sch-warn">${warn.map(w => `<div>⚠ ${esc(w)}</div>`).join('')}</div>` : ''}
+    ${planEdit ? lineForm(p, planEdit, rows) : ''}
+    ${!planItems(p).length ? `<div class="muted" style="font-size:13px;padding:10px 2px">
+       Nothing on this plan yet. Put the milestone in first — the date it has to be met — then add
+       the work that leads up to it.</div>`
+     : !shown.length ? `<div class="muted" style="font-size:13px;padding:10px 2px">Nothing matches that filter.</div>`
+     : planView === 'list' ? planListHtml(p, shown, res)
+     : planView === 'calendar' ? planCalendarHtml(p, shown, cal)
+     : planWallHtml(p, shown, cal)}`;
+  autosizeAll(host);
+}
+
+
+/* The form for one line. It is the same form for a milestone and for a piece of work — ticking
+   "this is a milestone" swaps the duration for the date, because a milestone is a date and work
+   is a length. */
+function lineForm(p, id, rows) {
+  const it = planItemById(p, id); if (!it) return '';
+  const others = planItems(p).filter(x => x.id !== id);
+  const isM = !!it.milestone;
+  const people = jobPeople();
+  return `
+    <div class="sch-form">
+      <div class="grid2">
+        <div class="field"><label class="fl">What is it</label>
+          <input class="input" id="liName" value="${escAttr(it.name || '')}"
+            placeholder="${isM ? 'e.g. Level 3 ceilings closed' : 'e.g. Set and hang ductwork, Level 3'}"></div>
+        <div class="field"><label class="fl">Whose it is</label>
+          <input class="input" id="liWho" list="schPeople" value="${escAttr(it.who || '')}"
+            placeholder="e.g. Arctic, or the GC"></div>
+      </div>
+      <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
+      <div class="grid2">
+        <div class="field">
+          <label class="ac-done"><input type="checkbox" id="liIsMilestone" ${isM ? 'checked' : ''}
+            onchange="renderMilestoneSwap(this.checked)"> <span>This is a milestone — it has a date of its own</span></label>
+        </div>
+        <div class="field" id="liWhenWrap">${isM
+          ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="${escAttr(it.date || '')}">`
+          : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String(it.days == null ? 1 : it.days))}">`}</div>
+      </div>
+      <div class="field"><label class="fl">What has to be finished first</label>
+        ${others.length ? `<div class="sch-deps" id="liAfter">${others.map(o => `
+          <label class="tick-row"><input type="checkbox" class="liDep" value="${o.id}"
+            ${(it.after || []).indexOf(o.id) >= 0 ? 'checked' : ''}>
+            <span>${o.milestone ? '◆ ' : ''}${esc(o.name || '(unnamed)')}${o.who ? ' · ' + esc(o.who) : ''}</span></label>`).join('')}</div>`
+          : `<div class="muted" style="font-size:13px">Nothing else on the plan yet.</div>`}
+        <div class="muted" style="font-size:12px;margin-top:4px">Tick what this one waits on. It will
+          be worked back from whatever it feeds, so a line in the middle wants both.</div></div>
+      <div class="grid2">
+        <div class="field"><label class="fl">What is holding it up</label>
+          <input class="input" id="liHold" value="${escAttr(it.hold || '')}"
+            placeholder="leave empty if nothing is"></div>
+        <div class="field"><label class="fl">Anything else worth knowing</label>
+          <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
+      </div>
+      <div class="field"><label class="ac-done"><input type="checkbox" id="liDone" ${it.done ? 'checked' : ''}> <span>Done</span></label></div>
+      <div class="sch-form-foot">
+        <button class="btn sm" onclick="savePlanLine('${id}')">Save</button>
+        <button class="btn sm ghost" onclick="cancelPlanLine()">Cancel</button>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn sm ghost" onclick="removePlanLine('${id}')">Remove</button>
+      </div>
+    </div>`;
+}
+/* Swapping the date for the duration without a repaint, so what is already typed in the rest of
+   the form is not thrown away mid-edit. */
+function renderMilestoneSwap(isM) {
+  const wrap = $('liWhenWrap'); if (!wrap) return;
+  wrap.innerHTML = isM
+    ? `<label class="fl">Date it has to be met</label><input class="input" type="date" id="liDate" value="">`
+    : `<label class="fl">How long it takes (working days)</label><input class="input" type="number" min="0" step="1" id="liDays" value="1">`;
+}
+
+function workWeekModal() {
+  const cal = workCal(job);
+  $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
+    <div class="modal-head"><h3>The working week on this job</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <div class="muted" style="margin-bottom:10px">Durations are counted in working days, so this is
+        what turns "ten days" into a date. On four tens, ten days of work runs over two and a half
+        weeks rather than two.</div>
+      <div class="field"><label class="fl">Days worked</label>
+        <select class="input" onchange="setWorkShift(this.value)">
+          ${WORK_SHIFTS.map(s => `<option value="${s.id}"${s.days.join() === cal.days.join() ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label class="fl">Days the job is shut</label>
+        ${cal.holidays.length ? `<div class="sch-hols">${cal.holidays.map(d => `
+          <span class="hol">${esc(shortDate(d))}<button class="x" title="Take it off"
+            onclick="removeHoliday('${esc(d)}')">✕</button></span>`).join('')}</div>`
+          : `<div class="muted" style="font-size:13px">None set — holidays and shutdowns go here.</div>`}
+        <button class="btn sm" style="margin-top:8px" onclick="addHoliday()">+ Add a day</button></div>
+    </div>
+    <div class="modal-foot"><button class="btn primary" onclick="closePdf();renderSchedule()">Done</button></div>
+  </div></div>`;
+}
+
+/* ── list ──
+   Every line, in the order the work actually happens: by the day it has to start. */
+function planListHtml(p, shown, res) {
+  const order = shown.slice().sort((a, b) => {
+    if (a.start && b.start && a.start !== b.start) return a.start < b.start ? -1 : 1;
+    if (a.start && !b.start) return -1;
+    if (!a.start && b.start) return 1;
+    return String(a.item.name || '').localeCompare(String(b.item.name || ''));
+  });
+  const nameOf = id => { const o = planItemById(p, id); return o ? (o.name || '(unnamed)') : '(gone)'; };
+  return `<div class="sch-list">
+    <div class="sl-head"><span>Line</span><span>Whose</span><span>Days</span><span>Latest start</span>
+      <span>Must finish</span><span>Runway</span><span>Waiting on</span><span></span></div>
+    ${order.map(r => `
+      <div class="sl-row${planRowClass(r)}">
+        <span class="sl-name">${r.item.milestone ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
+          ${r.critical ? '<span class="sl-tag is-crit" title="The longest run of days back from the milestone — if this slips, the date slips">drives the date</span>' : ''}
+          ${r.item.hold ? `<span class="sl-tag is-hold" title="${escAttr(r.item.hold)}">held up</span>` : ''}
+          ${r.loop ? '<span class="sl-tag is-loop">in a ring</span>' : ''}
+          ${!r.anchored && !r.loop && !r.item.milestone ? '<span class="sl-tag is-loose">nothing pulls it</span>' : ''}
+          ${r.item.note ? `<small class="muted sl-note">${esc(r.item.note)}</small>` : ''}</span>
+        <span>${esc(r.item.who || '')}</span>
+        <span>${r.item.milestone ? '' : r.days}</span>
+        <span>${esc(shortDate(r.start))}</span>
+        <span>${r.item.milestone ? '' : esc(shortDate(r.finish))}</span>
+        <span class="sl-run">${esc(runwayLabel(r))}</span>
+        <span class="sl-dep">${(r.item.after || []).map(a => esc(nameOf(a))).join(', ')}</span>
+        <span class="sl-act">
+          <button class="x" title="${r.item.done ? 'Not done after all' : 'Mark it done'}"
+            onclick="togglePlanDone('${r.id}')">${r.item.done ? '↺' : '✓'}</button>
+          <button class="x" title="Edit" onclick="editPlanLine('${r.id}')">✎</button>
+          <button class="x" title="Remove" onclick="removePlanLine('${r.id}')">✕</button></span>
+      </div>`).join('')}
+  </div>`;
+}
+
+/* ── the wall ──
+   The sticky-note wall, as it is done in the room: a lane per contractor, a column per week, and
+   each line sitting in the week it has to start. */
+function planWallHtml(p, shown, cal) {
+  const weeks = weekSpan(shown);
+  if (!weeks.length) return `<div class="muted" style="font-size:13px;padding:10px 2px">
+    Nothing has a date yet. Put a date on the milestone and the rest falls into place.</div>`;
+  const lanes = Object.create(null);     // keyed on a name someone typed
+  const laneOrder = [];
+  for (const r of shown) {
+    const who = String(r.item.who || '').trim() || 'Nobody named yet';
+    if (!lanes[who]) { lanes[who] = []; laneOrder.push(who); }
+    lanes[who].push(r);
+  }
+  laneOrder.sort((a, b) => a.localeCompare(b));
+  const weekIdx = iso => {
+    if (!iso) return -1;
+    const m = mondayOf(iso);
+    for (let i = 0; i < weeks.length; i++) if (weeks[i] === m) return i;
+    return -1;
+  };
+  const cols = weeks.length;
+  const head = `<div class="wall-row wall-head"><div class="wall-lane"></div>${weeks.map(w => `
+      <div class="wall-cell"><small>${esc(shortDate(w))}</small></div>`).join('')}</div>`;
+  const body = laneOrder.map(who => {
+    const cells = [];
+    for (let i = 0; i < cols; i++) cells.push([]);
+    const loose = [];
+    for (const r of lanes[who]) {
+      const i = weekIdx(r.start);
+      if (i < 0) loose.push(r); else cells[i].push(r);
+    }
+    return `<div class="wall-row">
+      <div class="wall-lane"><b>${esc(who)}</b><small>${lanes[who].length} line${lanes[who].length === 1 ? '' : 's'}</small>
+        ${loose.length ? `<small class="muted">${loose.length} with no date</small>` : ''}</div>
+      ${cells.map(list => `<div class="wall-cell">${list.map(r => `
+        <div class="sticky${planRowClass(r)}" onclick="editPlanLine('${r.id}')"
+          title="${escAttr((r.item.name || '') + (r.item.hold ? ' — held up: ' + r.item.hold : ''))}">
+          <span class="st-name">${r.item.milestone ? '◆ ' : ''}${esc(r.item.name || '(unnamed)')}</span>
+          <small>${r.item.milestone ? esc(shortDate(r.start))
+            : esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) + ' · ' + r.days + 'd'}</small>
+          ${r.item.hold ? `<small class="st-hold">${esc(r.item.hold)}</small>` : ''}
+        </div>`).join('')}</div>`).join('')}
+    </div>`;
+  }).join('');
+  return `<div class="wall-scroll"><div class="wall" style="--cols:${cols}">${head}${body}</div></div>`;
+}
+
+/* ── calendar ──
+   The months the plan runs through, with each line on the days it is meant to be worked. */
+function planCalendarHtml(p, shown, cal) {
+  const all = [];
+  for (const r of shown) { if (r.start) all.push(r.start); if (r.finish) all.push(r.finish); }
+  if (!all.length) return `<div class="muted" style="font-size:13px;padding:10px 2px">
+    Nothing has a date yet. Put a date on the milestone and the rest falls into place.</div>`;
+  all.sort();
+  const months = [];
+  let at = all[0].slice(0, 7);
+  const last = all[all.length - 1].slice(0, 7);
+  for (let i = 0; i < 60 && at <= last; i++) {
+    months.push(at);
+    const d = dAt(at + '-01'); d.setMonth(d.getMonth() + 1); at = dISO(d).slice(0, 7);
+  }
+  const onDay = Object.create(null);
+  for (const r of shown) {
+    if (!r.start) continue;
+    if (r.item.milestone) { (onDay[r.start] = onDay[r.start] || []).push({ r: r, ms: true }); continue; }
+    let d = r.start;
+    for (let i = 0; i < 400 && d <= r.finish; i++) {
+      if (isWorkDay(d, cal)) (onDay[d] = onDay[d] || []).push({ r: r, first: d === r.start });
+      d = dShift(d, 1);
+    }
+  }
+  const today0 = today();
+  return `<div class="cal-wrap">${months.map(mo => {
+    const first = mo + '-01';
+    const lead = (dAt(first).getDay() + 6) % 7;           // Monday-first grid
+    const dim = new Date(dAt(first).getFullYear(), dAt(first).getMonth() + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push('<div class="cal-day is-out"></div>');
+    for (let d = 1; d <= dim; d++) {
+      const iso = mo + '-' + (d < 10 ? '0' : '') + d;
+      const list = onDay[iso] || [];
+      const work = isWorkDay(iso, cal);
+      cells.push(`<div class="cal-day${work ? '' : ' is-off'}${iso === today0 ? ' is-today' : ''}">
+        <span class="cd-n">${d}</span>
+        ${list.slice(0, 4).map(x => `<div class="cd-item${planRowClass(x.r)}${x.ms ? ' is-ms' : ''}"
+          onclick="editPlanLine('${x.r.id}')" title="${escAttr((x.r.item.name || '') + (x.r.item.who ? ' · ' + x.r.item.who : ''))}"
+          >${x.ms ? '◆ ' : ''}${esc(x.r.item.name || '(unnamed)')}</div>`).join('')}
+        ${list.length > 4 ? `<small class="muted">+${list.length - 4} more</small>` : ''}
+      </div>`);
+    }
+    return `<div class="cal-month">
+      <h4>${esc(dAt(first).toLocaleDateString([], { month: 'long', year: 'numeric' }))}</h4>
+      <div class="cal-grid">
+        ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+        ${cells.join('')}
+      </div></div>`;
+  }).join('')}</div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6f. BILLING  —  placeholder; we’ll design this out with the user later
    ═══════════════════════════════════════════════════════════════════════════ */
 function renderBilling() {
   $('billingPanel').innerHTML = `
@@ -15452,7 +16221,10 @@ function closePdf() {
    so we parse them and show sender/subject/body in a modal, with a Download
    fallback for anything we can't read. */
 function isEmailName(n) { return /\.(eml|msg)$/i.test(n || ''); }
-const escAttr = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+/* Quotes keep it inside the attribute; the angle brackets are escaped too so what comes back out
+   of a title or a value is the text that went in, not something a browser might read as markup. */
+const escAttr = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 async function openEmailBlob(blob, name) {
   let mail = null;
   try {

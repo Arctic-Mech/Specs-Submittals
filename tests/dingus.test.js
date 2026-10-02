@@ -169,11 +169,202 @@ sandbox.ck = (name, cond) => {
   if (ok) PASS++; else FAILED.push(name);
 };
 sandbox.skip = (name, why) => { console.log('  skipped: ' + name + ' (' + why + ')'); };
+sandbox.Q = Q;                       // a double quote, for checks that cannot contain one
 sandbox.HAVE_XLSX = !!XLSXLib;
 sandbox.HAVE_PDF = !!jsPDFLib;
 
 const testCode = `
 (async () => {
+
+// ══ the pull plan: working week, backward pass ════════════════════════════
+{
+  var five = { days: [1,2,3,4,5], holidays: [] };
+  var four = { days: [1,2,3,4],   holidays: [] };          // four tens, Mon-Thu
+
+  ck('week: a job on five eights works Friday, one on four tens does not',
+    isWorkDay('2026-10-02', five) === true && isWorkDay('2026-10-02', four) === false);
+  ck('week: nobody works the weekend unless the job says so',
+    isWorkDay('2026-10-03', five) === false &&
+    isWorkDay('2026-10-03', { days:[1,2,3,4,5,6], holidays: [] }) === true);
+  ck('week: a holiday is not a working day however the week is set up',
+    isWorkDay('2026-10-01', { days:[1,2,3,4,5], holidays:['2026-10-01'] }) === false);
+
+  ck('week: one day of work finishing Friday starts Friday',
+    subWorkDays('2026-10-02', 0, five) === '2026-10-02');
+  ck('week: five days finishing Friday starts Monday',
+    subWorkDays('2026-10-02', 4, five) === '2026-09-28');
+  ck('week: on four tens the same five days reach back into the week before',
+    subWorkDays('2026-10-01', 4, four) === '2026-09-24');
+  ck('week: the day before Monday is the Friday before, not Sunday',
+    prevWorkDay('2026-10-05', five) === '2026-10-02');
+  ck('week: on four tens it is the Thursday',
+    prevWorkDay('2026-10-05', four) === '2026-10-01');
+  ck('week: a holiday is stepped over rather than landed on',
+    prevWorkDay('2026-10-05', { days:[1,2,3,4,5], holidays:['2026-10-02'] }) === '2026-10-01');
+  ck('week: counting days between two dates counts both ends and skips the rest',
+    workDaysBetween('2026-10-05', '2026-10-09', five) === 5 &&
+    workDaysBetween('2026-10-05', '2026-10-09', four) === 4);
+  ck('week: a calendar with no working days on it does not spin for ever',
+    nearestWorkDay('2026-10-05', { days: [], holidays: [] }, -1) === '2026-10-05');
+
+  // one chain: install pulls material, material pulls the order
+  var plan = { id:'p1', name:'Level 3', items: [
+    { id:'m',  name:'Level 3 ceilings closed', milestone:true, date:'2026-12-18' },
+    { id:'a',  name:'Install ductwork', who:'Arctic', days:10, after:['b'] },
+    { id:'b',  name:'Material on site',  who:'Arctic', days:1,  after:['c'] },
+    { id:'c',  name:'Release to vendor', who:'Arctic', days:2,  after:[] }
+  ]};
+  plan.items[1].after = ['b']; plan.items.find(x => x.id==='a').after = ['b'];
+  // a feeds the milestone
+  plan.items.find(x => x.id==='m').after = [];
+  plan.items.find(x => x.id==='a').after = ['b'];
+  // wire it the way the app does: the thing that comes AFTER lists what it waits on
+  plan.items = [
+    { id:'m', name:'Level 3 ceilings closed', milestone:true, date:'2026-12-18', after:['a'] },
+    { id:'a', name:'Install ductwork', who:'Arctic', days:10, after:['b'] },
+    { id:'b', name:'Material on site',  who:'Vendor', days:1,  after:['c'] },
+    { id:'c', name:'Release to vendor', who:'Arctic', days:2,  after:[] }
+  ];
+  var r = planDates(plan, five);
+  ck('pull: the milestone keeps the date you typed',
+    r.by['m'].start === '2026-12-18' && r.by['m'].finish === '2026-12-18');
+  ck('pull: the line feeding it finishes the working day before, not the same day',
+    r.by['a'].finish === '2026-12-17');
+  ck('pull: and starts its own duration before that, in working days',
+    r.by['a'].start === '2026-12-04');
+  ck('pull: the chain keeps going back, each one finishing before the next starts',
+    r.by['b'].finish === '2026-12-03' && r.by['b'].start === '2026-12-03' &&
+    r.by['c'].finish === '2026-12-02' && r.by['c'].start === '2026-12-01');
+  ck('pull: and nothing is behind when the milestone is a year out', r.behind === 0);
+
+  var r4 = planDates(plan, four);
+  ck('pull: a milestone landing on a day the job does not work is pulled to the last day it does',
+    r4.by['m'].start === '2026-12-17');          // Friday the 18th, on a Mon-Thu job
+  ck('pull: the same plan on four tens starts earlier, because there are fewer days in a week',
+    r4.by['a'].start < r.by['a'].start && r4.by['a'].finish === '2026-12-16');
+
+  // a line that feeds two things is pulled by whichever needs it first
+  var two = { items: [
+    { id:'m1', name:'Early', milestone:true, date:'2026-11-06', after:['x'] },
+    { id:'m2', name:'Late',  milestone:true, date:'2026-12-18', after:['x'] },
+    { id:'x',  name:'Shared hoisting', who:'Arctic', days:2, after:[] }
+  ]};
+  var rt = planDates(two, five);
+  ck('pull: a line feeding two dates is pulled to the earlier one',
+    rt.by['x'].finish === '2026-11-05' && rt.by['x'].start === '2026-11-04');
+
+  // things it refuses to guess at
+  var odd = { items: [
+    { id:'m', name:'End', milestone:true, date:'2026-12-18', after:[] },
+    { id:'loose', name:'Nothing pulls this', who:'Arctic', days:3, after:[] },
+    { id:'p', name:'Round one', days:2, after:['q'] },
+    { id:'q', name:'Round two', days:2, after:['p'] }
+  ]};
+  var ro = planDates(odd, five);
+  ck('pull: a line nothing pulls gets no date, and is counted so you can be told',
+    ro.by['loose'].anchored === false && ro.by['loose'].start === '' && ro.orphans === 1);
+  ck('pull: two lines waiting on each other are named rather than hung on',
+    ro.by['p'].loop === true && ro.by['q'].loop === true && ro.loops === 2);
+  ck('pull: a milestone with no date on it yet is counted too', 
+    planDates({ items: [{ id:'m', name:'TBD', milestone:true, date:'' }] }, five).undated === 1);
+
+  // what you are meant to act on
+  var past = { items: [
+    { id:'m', name:'End', milestone:true, date: dShift(today(), 3), after:['a'] },
+    { id:'a', name:'Twenty days of work', who:'Arctic', days:20, after:[] }
+  ]};
+  var rp = planDates(past, five);
+  ck('pull: a line whose latest start has already gone by is called behind',
+    rp.by['a'].late === true && rp.behind === 1 && rp.by['a'].runway < 0);
+  ck('pull: and the chain that moves the date is marked',
+    rp.by['a'].critical === true && rp.by['m'].critical === false);
+
+  ck('pull: a job with nothing on it yet is not an error', planDates({ items: [] }, five).rows.length === 0);
+  ck('week: the shift is named back in the words the job was set up with',
+    workShiftLabel({ days:[1,2,3,4] }).indexOf('4') === 0 &&
+    workShiftLabel({ days:[1,2,3,4,5] }).indexOf('5') === 0);
+}
+
+// ══ the plan: lines, plans, and the week that has to survive a save ═══════════
+{
+  var wrote = null;
+  var realFB = FB;
+  FB = { db: {}, doc: () => ({}), collection: () => ({}),
+         setDoc: async (ref, data) => { wrote = data; },
+         deleteDoc: async () => {} };
+  job = { id: 'jp', name: 'T', number: '1', specs: [], ignoredFiles: [], sections: [],
+          workCal: { shift: '4x10', days: [1,2,3,4], holidays: ['2026-11-26'] } };
+  jobs = [job]; contracts = []; ledgerData = { quotes: [], pos: [] };
+
+  await saveJobMeta();
+  ck('week: the working week is written with the job, or every date on every plan goes wrong',
+    !!wrote && !!wrote.workCal && wrote.workCal.days.join() === '1,2,3,4' &&
+    wrote.workCal.holidays.join() === '2026-11-26');
+  FB = realFB;
+
+  schedules = [{ id:'p1', name:'Level 3', created:1, items: [
+    { id:'m', name:'Ceilings closed', milestone:true, date:'2026-12-18', who:'GC', after:['b'] },
+    { id:'b', name:'Hang duct', who:'Arctic', days:5, after:['a'] },
+    { id:'a', name:'Deliver duct', who:'Supply Co', days:2, after:[], hold:'ship date not confirmed' }
+  ]}];
+  openPlan = 'p1'; planWho = ''; planHot = false; planEdit = null;
+
+  ck('plan: the plan you are looking at is the one that is open', (currentPlan() || {}).id === 'p1');
+  ck('plan: the people on it are the ones named on its lines, once each and in order',
+    planPeople(currentPlan()).join() === 'Arctic,GC,Supply Co');
+
+  // taking a line off must not leave anything waiting on a ghost
+  var realConfirm = confirm;
+  await removePlanLine('a');
+  ck('plan: a line that is taken off stops being waited on by anything else',
+    planItems(currentPlan()).length === 2 &&
+    !planItems(currentPlan()).some(x => (x.after || []).indexOf('a') >= 0));
+  ck('plan: and the backward pass still works afterwards, rather than waiting on a ghost',
+    planDates(currentPlan(), workCal(job)).by['b'].anchored === true);
+
+  // filters
+  schedules[0].items.push({ id:'c', name:'Paint', who:'Painter', days:3, after:['b'] });
+  var rows = planDates(currentPlan(), workCal(job)).rows;
+  planWho = 'Arctic';
+  ck('plan: filtering to one contractor keeps only their lines',
+    rows.filter(keepRow).map(r => r.item.name).join() === 'Hang duct');
+  planWho = '';
+  planHot = true;
+  ck('plan: needs-attention keeps what is late, blocked, in a ring or unpulled — and nothing else',
+    rows.filter(keepRow).every(r => r.late || r.loop || !r.anchored || r.item.hold));
+  planHot = false;
+
+  // a name that is also a property of every object must not break the lanes
+  schedules[0].items.push({ id:'d', name:'Odd one', who:'constructor', days:1, after:[] });
+  schedules[0].items.push({ id:'e', name:'Odder',   who:'__proto__',   days:1, after:[] });
+  planItemById(currentPlan(), 'm').after = ['b', 'd', 'e'];   // so they are pulled and get dates
+  var rows2 = planDates(currentPlan(), workCal(job)).rows;
+  var wallHtml = planWallHtml(currentPlan(), rows2.filter(keepRow), workCal(job));
+  ck('plan: a contractor called constructor or __proto__ gets a lane like anyone else',
+    wallHtml.indexOf('Odd one') > 0 && wallHtml.indexOf('Odder') > 0);
+  ck('plan: and the same text is not run as part of the page',
+    wallHtml.indexOf('<script') < 0);
+
+  // text that would break out of the HTML
+  schedules[0].items.push({ id:'x', name: 'Say ' + Q + 'hi' + Q + ' & go', who: "O'Brien Mechanical",
+    days: 1, after: [], hold: '<b>not</b> ok' });
+  planItemById(currentPlan(), 'm').after = ['b', 'd', 'e', 'x'];
+  var rows3 = planDates(currentPlan(), workCal(job)).rows;
+  var listHtml = planListHtml(currentPlan(), rows3.filter(keepRow), { rows: rows3 });
+  ck('plan: a name with quotes and an ampersand in it comes out as text, not as markup',
+    listHtml.indexOf('&amp;') > 0 && listHtml.indexOf('&lt;b&gt;not&lt;/b&gt;') > 0 &&
+    listHtml.indexOf('<b>not</b>') < 0);
+  ck('plan: and an apostrophe in a name does not break the button beside it',
+    listHtml.indexOf('O&#39;Brien') > 0 || listHtml.indexOf('O&apos;Brien') > 0);
+
+  var calHtml = planCalendarHtml(currentPlan(), rows3.filter(keepRow), workCal(job));
+  ck('plan: the calendar draws the months the work runs through',
+    calHtml.indexOf('cal-month') > 0 && calHtml.indexOf('December') > 0);
+  ck('plan: a day the job is shut is drawn as a day off',
+    calHtml.indexOf('is-off') > 0);
+
+  schedules = []; openPlan = null;
+}
 
 // ══ change order log ══════════════════════════════════════════════
 {
