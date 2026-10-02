@@ -532,7 +532,11 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-act .x:hover { color: var(--accent); }
 .out-add { display: flex; align-items: center; gap: 6px; padding: 9px 10px; flex-wrap: wrap;
   background: var(--surface-2); }
-.pick-new { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.pick-new { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+  border-top: 1px solid var(--border); padding-top: 9px; }
+.pick-new > small { color: var(--text-3); font-size: 11.5px; }
+.pick-step { flex: none; min-width: 20px; text-align: right; font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; }
 .pick-new .input { width: auto; }
 .pick-lead { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
 .pick-lead .input { width: 64px; }
@@ -1614,7 +1618,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.04';
+const APP_VERSION = 'v8.05';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12766,7 +12770,11 @@ function planDates(plan, cal) {
       cursor = (out[k.id] && out[k.id].start) || cursor;
     }
   };
-  for (const r of tr.roots) walk(r, '');
+  /* The top level is a sequence like any other: the line above is what the next one has to be
+     finished before. Chaining only the lines underneath a parent left a pasted list — which is all
+     top level — with nothing to work from, so every row but the dated one asked for a date. */
+  let top = '';
+  for (const r of tr.roots) { walk(r, top); top = (out[r.id] && out[r.id].start) || top; }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false };
 
   /* The earliest day anything in a line's own subtree has to start. Following the earliest one down
@@ -13113,7 +13121,7 @@ function filterNeeds(v) {
     if (hit) n++;
   }
   const none = $('pickNone'); if (none) none.hidden = !!n;
-  const nw = $('pickNew'); if (nw) nw.hidden = !q;
+
 }
 async function toggleNeed(parentId, childId) {
   const p = currentPlan(); if (!p) return;
@@ -13146,28 +13154,37 @@ function needsPickerHtml(p, id) {
   const tr = planTree(p);
   const mine = Object.create(null);
   for (const k of (tr.kids[id] || [])) mine[k.id] = 1;
-  const list = needCandidates(p, id);
+  /* In the order the work happens, with the step each one is at — the same numbers as the outline,
+     so ticking something does not move it out of a sequence you were reading. */
+  const flat = planFlat(p), n = flat.length;
+  const stepOf = Object.create(null);
+  flat.forEach((f, i) => { stepOf[f.item.id] = n - i; });
+  const up = planAncestors(p, id);
+  const list = flat.map(f => f.item).filter(x => x.id !== id && !up[x.id])
+    .sort((a, b) => (stepOf[a.id] || 0) - (stepOf[b.id] || 0));
   const me = planItemById(p, id) || {};
   return `
     <div class="pick" onclick="event.stopPropagation()">
       <div class="pick-head">
-        <b>What is holding "${esc(me.name || 'this')}" up?</b>
+        <b>What needs to happen first, before "${esc(me.name || 'this')}"?</b>
         <span class="spacer" style="flex:1"></span>
         <button class="btn sm ghost" onclick="openNeeds('${id}')">Done</button>
       </div>
-      <input class="input sm" id="pickQ" placeholder="Find one on the plan, or name a new one…"
+      <input class="input sm" id="pickQ" placeholder="Find one on the plan, or type a new one’s name…"
         oninput="filterNeeds(this.value)"
         onkeydown="if(event.key==='Enter'){event.preventDefault();addNeedNew('${id}')}">
       ${list.length ? `<div class="pick-list" id="pickList">${list.map(x => `
         <label class="pick-row" data-n="${escAttr(String(x.name || '').toLowerCase())}">
           <input type="checkbox" ${mine[x.id] ? 'checked' : ''}
             onchange="toggleNeed('${id}','${x.id}')">
+          <span class="pick-step">${stepOf[x.id] || ''}</span>
           <span>${pinnedDate(x) ? '◆ ' : ''}${esc(x.name || '(unnamed)')}${
             x.kind ? ' <small>' + esc(kindLabel(x.kind)) + '</small>' : ''}</span>
           ${x.parent && x.parent !== id ? `<small class="pick-at">under ${esc((planItemById(p, x.parent) || {}).name || '')}</small>` : ''}
         </label>`).join('')}</div>` : ''}
       <div class="muted" id="pickNone" hidden style="font-size:12.5px;padding:6px 2px">Nothing on the plan by that name.</div>
-      <div class="pick-new" id="pickNew" hidden>
+      <div class="pick-new" id="pickNew">
+        <small>Not on the plan?</small>
         <select class="input sm" id="pickKind">${LINE_KINDS.map(k =>
           `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
         <span class="pick-lead"><input class="input sm" id="pickWeeks" type="number" min="0" step="1"

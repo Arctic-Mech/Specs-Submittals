@@ -464,6 +464,42 @@ const testCode = `
     ck('held: a line with nothing under it is held up by nothing',
       holdNames(p2, planItemById(p2, 'b')).length === 0); }
 
+  // a pasted list is all top level, and that is the case that has to date itself
+  { schedules[0].items = [
+      { id:'a', name:'Turn on new SU 131', date:'2026-10-21', days:0, parent:null, order:10 },
+      { id:'b', name:'Shut down to tie into duct', days:1, parent:null, order:20 },
+      { id:'c', name:'Pressure test', days:1, parent:null, order:30 },
+      { id:'d', name:'Tie in to TUs', days:2, parent:null, order:40 } ];
+    var rf = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('flat: one date at the top and a length on each line dates the whole list',
+      rf.rows.filter(x => !x.anchored).length === 0);
+    ck('flat: and they run one before another up the page, not all at once',
+      rf.by['b'].finish === '2026-10-20' && rf.by['b'].start === '2026-10-20' &&
+      rf.by['c'].finish === '2026-10-19' && rf.by['d'].finish === '2026-10-16' &&
+      rf.by['d'].start === '2026-10-15');
+    ck('flat: nothing is asking for a date it should have worked out',
+      rf.rows.every(x => x.start && x.finish)); }
+
+  // the picker: in the order the work happens, numbered the way the outline numbers it
+  { schedules[0].items = [
+      { id:'a', name:'Zulu', days:1, parent:null, order:10 },
+      { id:'b', name:'Alpha', days:1, parent:null, order:20 },
+      { id:'c', name:'Mike', days:1, parent:null, order:30 } ];
+    var ph = needsPickerHtml(currentPlan(), 'a');
+    var order = ph.split('pick-row').slice(1).map(function (c) {
+      var i = c.indexOf('pick-step'); var gt = c.indexOf('>', i); var lt = c.indexOf('<', gt);
+      return c.slice(gt + 1, lt).trim();
+    });
+    ck('picker: the lines are offered in step order, not alphabetically',
+      order.join() === '1,2');
+    ck('picker: and each carries the step number the outline gives it',
+      ph.indexOf('pick-step') > 0);
+    ck('picker: it asks what needs to happen first',
+      ph.indexOf('What needs to happen first') > 0);
+    ck('picker: and the way to name something not on the plan is there without having to type first',
+      ph.indexOf('id="pickKind"') > 0 && ph.indexOf('weeks lead') > 0 &&
+      ph.indexOf('pick-new" id="pickNew"') > 0); }
+
   // something not on the list: a submittal or an order with a lead time
   { schedules[0].items = [
       { id:'m', name:'Install TUs', date:'2026-11-02', days:0, parent:null, order:10 } ];
