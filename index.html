@@ -502,13 +502,13 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-days { flex: none; width: 46px; font-size: 11.5px; text-align: right; }
 .out-days::-webkit-outer-spin-button, .out-days::-webkit-inner-spin-button { opacity: 0; }
 .out-days:focus::-webkit-outer-spin-button, .out-days:focus::-webkit-inner-spin-button { opacity: 1; }
-.out-when { flex: none; width: 150px; font-size: 11.5px; color: var(--text-3); cursor: pointer;
+.out-when { flex: none; width: 182px; font-size: 11.5px; color: var(--text-3); cursor: pointer;
   padding: 3px 4px; border: 1px solid transparent; border-radius: 5px;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .out-when:hover { border-color: var(--border); }
 .out-when.is-pinned { color: var(--accent); font-weight: 600; }
 .out-when i { color: var(--text-3); opacity: .6; }
-.out-datein { width: 142px; padding: 1px 4px; font-size: 11.5px; }
+.out-datein { width: 174px; padding: 1px 4px; font-size: 11.5px; }
 .out-row.is-clash { border-left-color: var(--red); }
 .out-tag.is-clash { background: var(--red-sf); color: var(--red); font-weight: 600; }
 .out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
@@ -532,27 +532,39 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-act .x:hover { color: var(--accent); }
 .out-add { display: flex; align-items: center; gap: 6px; padding: 9px 10px; flex-wrap: wrap;
   background: var(--surface-2); }
-.pick-new { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;
-  border-top: 1px solid var(--border); padding-top: 9px; }
-.pick-new > small { color: var(--text-3); font-size: 11.5px; }
-.pick-step { flex: none; min-width: 20px; text-align: right; font-size: 10.5px; color: var(--text-3);
-  font-variant-numeric: tabular-nums; }
-.pick-new .input { width: auto; }
+.pick-row { display: flex; align-items: center; gap: 8px; padding: 4px 9px; font-size: 13px; }
+.pick-row:hover { background: var(--surface-2); }
+.pick-name { min-width: 170px; flex: 1; }
+.out-days.is-rolled { color: var(--text-3); font-style: italic; cursor: default;
+  flex: none; width: 46px; text-align: right; font-size: 11.5px; padding: 3px 4px; }
+.out-tag.is-ov { background: var(--surface-3); color: var(--text-3); }
+/* the bar that is up while you say what has to happen first */
+.pick-bar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; padding: 9px 12px; font-size: 13px; background: var(--accent-sf);
+  border-bottom: 1px solid var(--accent); }
+.pick-bar > small { color: var(--text-3); font-size: 11.5px; margin-left: 4px; }
+.pick-bar .input { width: auto; }
+.out-list.is-picking .out-row { cursor: default; }
+.out-list.is-picking .out-act, .out-list.is-picking .out-step { opacity: .35; }
+.out-row.is-picked { background: var(--accent-sf); }
+.out-tick.is-sel { color: var(--accent); font-size: 14px; }
+.out-tick.is-me { color: var(--accent); cursor: default; }
+.out-tick.is-off { color: var(--text-3); opacity: .5; cursor: default; }
+.out-who.is-none { flex: none; width: 116px; }
+.out-tag.is-slack { background: var(--surface-3); color: var(--text-3); }
+.out-tag.is-over { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
+button.out-tag { border: none; cursor: pointer; font-family: inherit; }
+button.out-tag.is-ov { opacity: .55; }
+button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(--accent); font-weight: 600; }
+.out-days.in-cell { width: 100%; border-color: var(--accent); }
+.out-row.is-lead .out-name { font-style: italic; }
 .pick-lead { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
 .pick-lead .input { width: 64px; }
 .out-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
+.sl-tag.is-slack { background: var(--surface-3); color: var(--text-3); }
+.sl-tag.is-over { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
+.cd-item.is-lead { font-style: italic; }
 .sl-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
-.pick-wrap { padding: 0 10px 10px calc(10px + var(--d) * 22px + 24px); background: var(--surface-2);
-  border-bottom: 1px solid var(--border); }
-.pick { border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); padding: 10px; }
-.pick-head { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 7px; }
-.pick-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 7px;
-  margin-top: 7px; }
-.pick-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; font-size: 13px; cursor: pointer; }
-.pick-row:hover { background: var(--surface-2); }
-.pick-row small { color: var(--text-3); }
-.pick-at { margin-left: auto; font-size: 10.5px; }
-.pick-add { margin-top: 7px; }
 .out-act .x.on { color: var(--accent); }
 /* the list */
 .sch-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
@@ -611,20 +623,28 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .sticky.is-done { opacity: .5; }
 .sticky.is-done .st-name { text-decoration: line-through; }
 /* the calendar */
-.cal-wrap { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+/* Two months abreast at most. Three fitted on a wide screen, and every line on them read
+   "Install …" — a month you cannot read the names in is not worth the width it saves. */
+.cal-wrap { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); }
 .cal-month h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--text-3); margin: 0 0 7px; }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+/* minmax(0, 1fr), not 1fr: a grid column will not shrink below its longest unbroken word unless
+   it is told it may, and one line named "Remove or relocate existing controls, sensors, VFDs and
+   devices required for renovation" was pushing four days of the week off the side of the month. */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px;
   background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .cal-dow { background: var(--surface-2); color: var(--text-3); font-size: 10px; text-align: center; padding: 4px 0; }
-.cal-day { background: var(--surface); min-height: 72px; padding: 3px 4px; display: flex;
+.cal-day { background: var(--surface); min-height: 78px; padding: 3px 4px; display: flex;
   flex-direction: column; gap: 2px; }
 .cal-day.is-off { background: var(--surface-2); }
 .cal-day.is-out { background: var(--surface-2); opacity: .5; }
 .cal-day.is-today { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cd-n { font-size: 10.5px; color: var(--text-3); }
+/* The name wraps rather than being cut off at "Install …", because the whole use of the calendar
+   is reading what it is you are meant to start that day. */
 .cd-item { font-size: 10.5px; background: var(--accent-sf); color: var(--accent); border-radius: 4px;
-  padding: 1px 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  padding: 1px 4px; cursor: pointer; overflow: hidden; line-height: 1.3;
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .cd-item.is-ms { background: var(--accent); color: #fff; font-weight: 700; }
 .cd-item.is-late { background: var(--red-sf); color: var(--red); }
 .cd-item.is-held { background: var(--amber-sf); color: var(--amber); }
@@ -1618,7 +1638,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.05';
+const APP_VERSION = 'v8.06';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12698,6 +12718,10 @@ function workDaysTo(fromIso, toIso, cal) {
    work out, just a walk down from the milestone. */
 /* A line with a date on it is pinned there. That is all a milestone is. */
 const pinnedDate = it => (it && String(it.date || '').trim()) ? String(it.date).trim() : '';
+/* Lines that are not field work: something ordered, or sent out and waiting to come back. They are
+   kept on the plan because they are what makes the dates, but they are not a slot in the sequence. */
+const LEAD_KINDS = { submittal: 1, rfi: 1, order: 1 };
+const isLead = it => !!LEAD_KINDS[String((it && it.kind) || '')];
 function planTree(p) {
   const items = planItems(p);
   const byId = Object.create(null);
@@ -12734,57 +12758,108 @@ function planFlat(p) {
 const planDepth = (p, id) => { const f = planFlat(p).find(x => x.item.id === id); return f ? f.depth : 0; };
 
 /* ── the backward pass ──
-   Start at the milestone and walk down. Everything under a line finishes the working day before
-   that line starts, and starts its own duration before that. Where several lines sit under one,
-   they all have to be done before it — so they all finish on the same day and the longest one
-   reaches furthest back. That is the chain that drives the date. */
+   A line with things under it IS those things: its length is what they add up to, and they fill its
+   window. Fifteen days of temp duct is the taps, the mains and the tie-in laid end to end — not
+   fifteen typed next to a list that also comes to fifteen.
+
+   Within a window the lines run one after another in the order they are numbered, the bottom one
+   first. One marked as overlapping does not take its own slice of the window — it goes on while
+   something else does — so it adds nothing to what the line above it comes to.
+
+   Only a line with nothing under it carries a length you type. */
 function planDates(plan, cal) {
   const tr = planTree(plan);
   const dur = it => Math.max(0, Math.round(Number(it.days) || 0));
+  const kidsOf = it => tr.kids[it.id] || [];
+  /* Ordering a pump or waiting on a submittal back is not field work. It runs on the calendar
+     rather than on the crew's week — four weeks of lead is four weeks whether or not the job works
+     Fridays — and it takes no slot in the sequence. All it asks of the plan is to be finished
+     before the work it holds up starts, and to say so early enough to be worth knowing. */
+  const fieldKids = it => kidsOf(it).filter(k => !isLead(k));
+  const leadKids = it => kidsOf(it).filter(k => isLead(k));
+  /* What a line comes to. A line with work under it comes to what that work comes to — fifteen days
+     of temp duct is the taps, the mains and the tie-in. A length typed on a line like that is a
+     target to hit rather than more work to do, and the plan says whether it fits. An overlapping
+     line adds nothing: it goes on while something else does. */
+  const memo = Object.create(null);
+  const span = (it, guard) => {
+    if (memo[it.id] != null) return memo[it.id];
+    if (guard[it.id]) return 0;
+    guard[it.id] = 1;
+    const ks = fieldKids(it);
+    const v = ks.length ? ks.reduce((a, k) => a + (k.overlap ? 0 : span(k, guard)), 0) : dur(it);
+    memo[it.id] = v;
+    return v;
+  };
   const out = Object.create(null), seen = Object.create(null);
-  const walk = (it, afterStart) => {
+  /* Lead time counts down in plain days to the morning the work starts. */
+  const walkLead = (it, endBy) => {
     if (seen[it.id]) return; seen[it.id] = 1;
+    const n = Math.max(1, dur(it));
     let start = '', finish = '', anchored = false, clash = false;
     if (pinnedDate(it)) {
-      /* A date typed on a line is where that line goes, and everything under it is worked back from
-         there. It wins over what the line above would have given it.
-         On a day the job does not work: a line with a length starts on the next day it does, and a
-         line with none is a date to be done by, so it moves to the last day before it. */
-      start = nearestWorkDay(it.date, cal, dur(it) ? 1 : -1);
-      finish = dur(it) ? addWorkDays(start, dur(it) - 1, cal) : start;
+      finish = String(it.date).trim(); anchored = true;
+      if (endBy && finish > endBy) clash = true;
+    } else if (endBy) { finish = endBy; anchored = true; }
+    if (finish) start = n > 1 ? dShift(finish, -(n - 1)) : finish;
+    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash,
+      total: n, lead: true };
+    const before = start ? dShift(start, -1) : '';
+    for (const k of kidsOf(it)) walkLead(k, before);
+  };
+  /* endBy is the last day this line may run to. */
+  const walk = (it, endBy) => {
+    if (seen[it.id]) return; seen[it.id] = 1;
+    const total = span(it, Object.create(null));
+    let start = '', finish = '', anchored = false, clash = false;
+    if (pinnedDate(it)) {
+      /* A date typed on a line is the day it has to be done by — they are end targets, which is what
+         a plan written backwards is made of. The line is fitted to end there and everything under it
+         works back from that, so pinning a date part way down moves its own branch and nothing else.
+         A deadline cannot fall on a day the job does not work, so it moves to the last one that it
+         does, and the plan says it has. */
+      finish = nearestWorkDay(it.date, cal, -1);
+      start = total ? subWorkDays(finish, total - 1, cal) : finish;
       anchored = true;
-      if (afterStart && finish >= afterStart) clash = true;   // runs into what it has to be done before
-    } else if (afterStart) {
-      finish = prevWorkDay(afterStart, cal);
-      start = dur(it) ? subWorkDays(finish, dur(it) - 1, cal) : finish;
+      if (endBy && finish > endBy) clash = true;
+    } else if (endBy) {
+      finish = endBy;
+      start = total ? subWorkDays(finish, total - 1, cal) : finish;
       anchored = true;
     }
-    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash };
-    /* The lines under one run one after another, in the order they are numbered: the bottom one is
-       step 1 and happens first, the one above it next, and the top one finishes the day before the
-       line they all sit under starts. So a list with one date on it and a length on each line dates
-       itself, which is the whole point of typing the lengths in. */
-    let cursor = start;
-    for (const k of (tr.kids[it.id] || [])) {
-      walk(k, cursor);
-      cursor = (out[k.id] && out[k.id].start) || cursor;
+    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash, total: total };
+    /* What is under it fills its window, the top one last and each one before it earlier, so the
+       page reads in the order the work happens. An overlapping line is fitted into the window
+       without moving the next one along, and is held to the window rather than running out of it. */
+    let cur = finish;
+    for (const k of fieldKids(it)) {
+      walk(k, cur);
+      const o = out[k.id];
+      if (!o || !o.start) continue;
+      if (k.overlap) { if (start && o.start < start) { o.start = start; o.clash = true; } }
+      else cur = prevWorkDay(o.start, cal);
     }
+    for (const k of leadKids(it)) walkLead(k, start ? prevWorkDay(start, cal) : '');
   };
   /* The top level is a sequence like any other: the line above is what the next one has to be
-     finished before. Chaining only the lines underneath a parent left a pasted list — which is all
-     top level — with nothing to work from, so every row but the dated one asked for a date. */
-  let top = '';
-  for (const r of tr.roots) { walk(r, top); top = (out[r.id] && out[r.id].start) || top; }
-  for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false };
+     finished before. Something on order at the top level waits on nothing, so it does not take a
+     turn in that sequence. */
+  let bound = '';
+  for (const r of tr.roots) {
+    if (isLead(r)) { walkLead(r, ''); continue; }
+    walk(r, bound ? prevWorkDay(bound, cal) : '');
+    bound = (out[r.id] && out[r.id].start) || bound;
+  }
+  for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
   /* The earliest day anything in a line's own subtree has to start. Following the earliest one down
-     from the milestone is the chain that sets when you have to begin. */
+     from the top is the chain that sets when you have to begin. */
   const earliest = Object.create(null);
   const deep = (it, guard) => {
     if (guard[it.id]) return '';
     guard[it.id] = 1;
     let best = out[it.id].start || '';
-    for (const k of (tr.kids[it.id] || [])) {
+    for (const k of kidsOf(it)) {
       const e = deep(k, guard);
       if (e && (!best || e < best)) best = e;
     }
@@ -12795,7 +12870,7 @@ function planDates(plan, cal) {
   const critical = Object.create(null);
   const markDown = it => {
     critical[it.id] = true;
-    const ks = tr.kids[it.id] || [];
+    const ks = kidsOf(it);
     let pick = null;
     for (const k of ks) if (earliest[k.id] && (!pick || earliest[k.id] < earliest[pick.id])) pick = k;
     if (pick) markDown(pick);
@@ -12806,10 +12881,15 @@ function planDates(plan, cal) {
   const flat = planFlat(plan);
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
+    const fk = fieldKids(it).length, ks = kidsOf(it).length;
+    /* A length typed on a line that has work under it is what you hoped it would take. */
+    const target = fk ? dur(it) : 0;
     return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
-      pinned: pinnedDate(it), days: dur(it),
-      kids: (tr.kids[it.id] || []).length,
+      pinned: pinnedDate(it), days: d.total, own: dur(it), kids: ks, rolled: fk > 0,
+      lead: !!d.lead, kind: String(it.kind || ''),
+      target: target, slack: target ? target - d.total : null,
+      overlap: !!it.overlap,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
       onDayOff: !isWorkDay(today0, cal),
@@ -12821,6 +12901,7 @@ function planDates(plan, cal) {
     clashes: rows.filter(r => r.clash).length,
     rootless: rows.filter(r => !r.anchored && r.depth === 0).length,
     strays: rows.filter(r => r.stray).length,
+    over: rows.filter(r => r.slack != null && r.slack < 0).length,
     behind: rows.filter(r => r.late).length };
 }
 
@@ -13097,31 +13178,18 @@ function planAncestors(p, id) {
   for (let i = 0; i < 500 && at; i++) { out[at] = 1; at = byId[at] && byId[at].parent; }
   return out;
 }
-/* Everything that could go under this one. Its own ancestors cannot: a line cannot wait on
-   something that is already waiting on it. */
-function needCandidates(p, id) {
-  const up = planAncestors(p, id);
-  return planItems(p).filter(x => x.id !== id && !up[x.id])
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-}
 function openNeeds(id) {
   planPick = (planPick === id) ? null : id;
   renderSchedule();
-  const b = $('pickQ'); if (b && b.focus) b.focus();
 }
-/* Typed into, the list narrows on the page rather than being redrawn — a repaint would take the
-   caret out of the box you are typing in. */
-function filterNeeds(v) {
-  const q = String(v || '').trim().toLowerCase();
-  const host = $('pickList'); if (!host || !host.querySelectorAll) return;
-  let n = 0;
-  for (const el of host.querySelectorAll('.pick-row')) {
-    const hit = !q || String(el.getAttribute('data-n') || '').indexOf(q) >= 0;
-    el.hidden = !hit;
-    if (hit) n++;
-  }
-  const none = $('pickNone'); if (none) none.hidden = !!n;
-
+/* Something that goes on while something else does. It still takes as long as it takes; it just
+   does not lengthen the thing it sits under. */
+async function toggleOverlap(id) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  if (it.overlap) delete it.overlap; else it.overlap = true;
+  renderSchedule();
+  await savePlan(p);
 }
 async function toggleNeed(parentId, childId) {
   const p = currentPlan(); if (!p) return;
@@ -13131,10 +13199,9 @@ async function toggleNeed(parentId, childId) {
   renderSchedule();
   await savePlan(p);
 }
-/* Lead time is given in weeks because that is how a vendor quotes it, and kept as working days so
-   it sits on the plan like everything else. A week is however many days this job works, so four
-   weeks lands four weeks earlier whether the job runs five eights or four tens. */
-const weeksToDays = (w, cal) => Math.max(0, Math.round(Number(w) || 0)) * Math.max(1, (cal.days || []).length);
+/* Lead time is given in weeks because that is how a vendor quotes it. A vendor's week is seven days
+   whatever the job works, so four weeks lands four weeks earlier either way. */
+const weeksToDays = (w, cal) => Math.max(0, Math.round(Number(w) || 0)) * 7;
 async function addNeedNew(parentId) {
   const p = currentPlan(); if (!p) return;
   const name = String((($('pickQ') || {}).value) || '').trim();
@@ -13150,47 +13217,23 @@ async function addNeedNew(parentId) {
   renderSchedule();
   await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
-function needsPickerHtml(p, id) {
-  const tr = planTree(p);
-  const mine = Object.create(null);
-  for (const k of (tr.kids[id] || [])) mine[k.id] = 1;
-  /* In the order the work happens, with the step each one is at — the same numbers as the outline,
-     so ticking something does not move it out of a sequence you were reading. */
-  const flat = planFlat(p), n = flat.length;
-  const stepOf = Object.create(null);
-  flat.forEach((f, i) => { stepOf[f.item.id] = n - i; });
-  const up = planAncestors(p, id);
-  const list = flat.map(f => f.item).filter(x => x.id !== id && !up[x.id])
-    .sort((a, b) => (stepOf[a.id] || 0) - (stepOf[b.id] || 0));
-  const me = planItemById(p, id) || {};
+/* The bar that comes up while you are saying what has to happen first. The ticks down the outline
+   do the choosing — there is no second list to scroll — so all this holds is the way out and a way
+   to put something on the plan that is not on it yet. */
+function pickBarHtml(p, me) {
   return `
-    <div class="pick" onclick="event.stopPropagation()">
-      <div class="pick-head">
-        <b>What needs to happen first, before "${esc(me.name || 'this')}"?</b>
-        <span class="spacer" style="flex:1"></span>
-        <button class="btn sm ghost" onclick="openNeeds('${id}')">Done</button>
-      </div>
-      <input class="input sm" id="pickQ" placeholder="Find one on the plan, or type a new one’s name…"
-        oninput="filterNeeds(this.value)"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();addNeedNew('${id}')}">
-      ${list.length ? `<div class="pick-list" id="pickList">${list.map(x => `
-        <label class="pick-row" data-n="${escAttr(String(x.name || '').toLowerCase())}">
-          <input type="checkbox" ${mine[x.id] ? 'checked' : ''}
-            onchange="toggleNeed('${id}','${x.id}')">
-          <span class="pick-step">${stepOf[x.id] || ''}</span>
-          <span>${pinnedDate(x) ? '◆ ' : ''}${esc(x.name || '(unnamed)')}${
-            x.kind ? ' <small>' + esc(kindLabel(x.kind)) + '</small>' : ''}</span>
-          ${x.parent && x.parent !== id ? `<small class="pick-at">under ${esc((planItemById(p, x.parent) || {}).name || '')}</small>` : ''}
-        </label>`).join('')}</div>` : ''}
-      <div class="muted" id="pickNone" hidden style="font-size:12.5px;padding:6px 2px">Nothing on the plan by that name.</div>
-      <div class="pick-new" id="pickNew">
-        <small>Not on the plan?</small>
-        <select class="input sm" id="pickKind">${LINE_KINDS.map(k =>
-          `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
-        <span class="pick-lead"><input class="input sm" id="pickWeeks" type="number" min="0" step="1"
-          placeholder="0"><small>weeks lead</small></span>
-        <button class="btn sm" onclick="addNeedNew('${id}')">Add it</button>
-      </div>
+    <div class="pick-bar">
+      <b>Tick what has to happen first, before "${esc(me.name || 'this')}"</b>
+      <span class="spacer" style="flex:1"></span>
+      <small>Not on the plan?</small>
+      <input class="input sm pick-name" id="pickQ" placeholder="Name it…"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addNeedNew('${me.id}')}">
+      <select class="input sm" id="pickKind">${LINE_KINDS.map(k =>
+        `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
+      <span class="pick-lead"><input class="input sm" id="pickWeeks" type="number" min="0" step="1"
+        placeholder="0"><small>weeks lead</small></span>
+      <button class="btn sm" onclick="addNeedNew('${me.id}')">Add it</button>
+      <button class="btn sm primary" onclick="openNeeds('${me.id}')">Done</button>
     </div>`;
 }
 
@@ -13205,6 +13248,7 @@ async function savePlanLine(id) {
   const it = planItemById(p, id); if (!it) { planEdit = null; renderSchedule(); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   it.kind = v('liKind');
+  if ($('liDays')) it.days = Math.max(0, Math.round(Number(v('liDays')) || 0));
   it.note = autoCap(v('liNote'));
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
   planEdit = null;
@@ -13319,7 +13363,20 @@ function keepRow(r) {
   return true;
 }
 
+/* Redrawing must not throw away where you were on the page: ticking the twentieth thing that has to
+   happen first should leave you looking at the twentieth thing, not back at the top. */
 function renderSchedule() {
+  const doc = document.scrollingElement || document.documentElement;
+  const host0 = $('schedPanel');
+  const y = (doc && doc.scrollTop) || 0, hy = (host0 && host0.scrollTop) || 0;
+  const act = document.activeElement;
+  const aid = (act && act.id && String(act.id).indexOf('sel_') === 0) ? act.id : '';
+  renderScheduleInner();
+  if (doc) doc.scrollTop = y;
+  const host1 = $('schedPanel'); if (host1 && hy) host1.scrollTop = hy;
+  if (aid) { const b = $(aid); if (b && b.focus) { try { b.focus(); } catch (e) {} } }
+}
+function renderScheduleInner() {
   const host = $('schedPanel'); if (!host) return;
   if (!schedules.length) {
     host.innerHTML = `<div class="empty" style="max-width:620px">
@@ -13408,6 +13465,12 @@ function lineForm(p, id, rows) {
   const it = planItemById(p, id); if (!it) return '';
   return `
     <div class="sch-form">
+      ${(planTree(p).kids[id] || []).some(k => !isLead(k)) ? `<div class="field">
+        <label class="fl">How long you want this to take, all in (working days)</label>
+        <input class="input" type="number" min="0" step="1" id="liDays" value="${escAttr(String(it.days == null ? 0 : it.days))}">
+        <div class="muted" style="font-size:12px;margin-top:4px">What is under it is what it actually
+          comes to. Put a number here and the row says how many days that leaves you, or how many
+          you are out by. Leave it at 0 and it just takes as long as its parts.</div></div>` : ''}
       <div class="field"><label class="fl">What kind of thing it is</label>
         <select class="input" id="liKind">${LINE_KINDS.map(k =>
           `<option value="${k.id}"${(it.kind || '') === k.id ? ' selected' : ''}>${esc(k.label)}</option>`).join('')}</select></div>
@@ -13470,33 +13533,65 @@ function planOutlineHtml(p, rows, res) {
      Everything on a row is the field itself: click it and type. */
   const n = rows.length;
   const people = jobPeople();
-  return `<div class="out-list">
+  /* While you are saying what has to happen first, the ticks stop meaning done and start meaning
+     chosen. It is the same list in the same order in the same place, so picking the twentieth thing
+     and then the twenty-first is two clicks next to each other. */
+  const me = planPick ? planItemById(p, planPick) : null;
+  const up = me ? planAncestors(p, planPick) : null;
+  const picked = Object.create(null);
+  if (me) for (const k of (planTree(p).kids[planPick] || [])) picked[k.id] = 1;
+  return `<div class="out-list${me ? ' is-picking' : ''}">
     <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
+    ${me ? pickBarHtml(p, me) : ''}
     ${rows.map((r, i) => {
       const it = r.item;
       const step = n - i;
       const dates = r.anchored
         ? (r.days > 1 ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
         : '';
+      const tick = me
+        ? (r.id === planPick
+            ? `<span class="out-tick is-me" title="This is the line you are filling in">↳</span>`
+            : (up[r.id]
+                ? `<span class="out-tick is-off" title="This one is already waiting on it">·</span>`
+                : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="toggleNeed('${planPick}','${r.id}')"
+                     title="${picked[r.id] ? 'Take it back off' : 'It has to happen first'}">${picked[r.id] ? '☑' : '☐'}</button>`))
+        : `<button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
+             onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>`;
       return `
-      <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}" style="--d:${r.depth}">
+      <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
+          r.id === planPick ? ' is-picked' : ''}" style="--d:${r.depth}">
         <input class="out-step" value="${step}" title="Step ${step} — type another number to move it there"
           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
           onchange="moveToStep('${r.id}',this.value)">
-        <button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
-          onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>
+        ${tick}
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
           placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
           onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
-        <input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
-          onchange="setLineWho('${r.id}',this.value)">
-        <input class="out-days" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
-          title="Working days" onchange="setLineDays('${r.id}',this.value)">
+        ${r.rolled
+          ? `<span class="out-who is-none" title="Whose it is is on the lines underneath"></span>`
+          : `<input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
+               onchange="setLineWho('${r.id}',this.value)">`}
+        ${r.rolled
+          ? `<span class="out-days is-rolled" id="dy_${r.id}" onclick="editLineTarget('${r.id}')"
+               title="${escAttr(r.days + ' days, what the ' + r.kids + ' line' + (r.kids === 1 ? '' : 's') +
+                 ' under it come to. Click to say how long you want it to take.')}">${r.days}</span>`
+          : `<input class="out-days" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
+               title="${r.lead ? 'Days of lead time' : 'Working days'}" onchange="setLineDays('${r.id}',this.value)">`}
         <span class="out-when${r.pinned ? ' is-pinned' : ''}" onclick="editLineDate('${r.id}')"
           title="${r.pinned ? 'Set to this date — click to change or clear it' : 'Click to set a date'}"
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
           ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
+          ${me && picked[r.id]
+            ? `<button class="out-tag is-ov${r.overlap ? ' on' : ''}" onclick="toggleOverlap('${r.id}')"
+                 title="It goes on while something else does, so it does not add to how long this takes">overlaps</button>`
+            : (r.overlap ? `<span class="out-tag is-ov on" title="Goes on while something else does — it does not add to how long the line above takes">overlaps</span>` : '')}
+          ${r.slack != null && r.slack !== 0
+            ? `<span class="out-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}"
+                 title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${
+                 r.slack < 0 ? (0 - r.slack) + 'd over' : r.slack + 'd left'}</span>`
+            : ''}
           ${r.clash ? `<span class="out-tag is-clash" title="This date runs past what it has to be finished before">clashes</span>` : ''}
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
@@ -13509,7 +13604,7 @@ function planOutlineHtml(p, rows, res) {
             onclick="editPlanLine('${r.id}')">✎</button>
           <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
         </span>
-      </div>${planPick === r.id ? `<div class="pick-wrap" style="--d:${r.depth}">${needsPickerHtml(p, r.id)}</div>` : ''}`;
+      </div>`;
     }).join('')}
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
@@ -13520,6 +13615,18 @@ function planOutlineHtml(p, rows, res) {
 }
 
 /* ── editing a line where it sits ── */
+/* A length on a line that has work under it is a target, not more work: what is under it is what it
+   actually comes to, and the row says how many days that leaves you, or how many you are out by. */
+function editLineTarget(id) {
+  const cell = $('dy_' + id); if (!cell) return;
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  cell.innerHTML = `<input class="out-days in-cell" type="number" min="0" step="1" id="dyi_${id}"
+    value="${escAttr(String(it.days || ''))}" placeholder="0" title="How long you want it to take, all in"
+    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}else if(event.key==='Escape'){renderSchedule()}"
+    onblur="setLineDays('${id}',this.value)">`;
+  const b = $('dyi_' + id); if (b && b.focus) { b.focus(); if (b.select) b.select(); }
+}
 async function setLineWho(id, v) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) return;
@@ -13599,10 +13706,13 @@ function planListHtml(p, shown, res) {
         <span class="sl-name">${r.pinned ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
           ${r.critical ? '<span class="sl-tag is-crit" title="The longest run of days back from the milestone — if this slips, the date slips">drives the date</span>' : ''}
           ${r.item.kind ? `<span class="sl-tag is-kind">${esc(kindLabel(r.item.kind))}</span>` : ''}
+          ${r.slack != null && r.slack !== 0
+            ? `<span class="sl-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}">${
+                r.slack < 0 ? (0 - r.slack) + 'd over' : r.slack + 'd left'}</span>` : ''}
           ${!r.anchored ? '<span class="sl-tag is-loose">no date — put it under something</span>' : ''}
           ${r.item.note ? `<small class="muted sl-note">${esc(r.item.note)}</small>` : ''}</span>
-        <span>${esc(r.item.who || '')}</span>
-        <span>${r.days || ''}</span>
+        <span>${r.rolled ? '' : esc(r.item.who || '')}</span>
+        <span>${r.days || ''}${r.lead ? '<small class="muted"> lead</small>' : ''}</span>
         <span>${esc(shortDate(r.start))}</span>
         <span>${esc(shortDate(r.finish))}</span>
         <span class="sl-run">${esc(runwayLabel(r))}</span>
@@ -13682,15 +13792,16 @@ function planCalendarHtml(p, shown, cal) {
     months.push(at);
     const d = dAt(at + '-01'); d.setMonth(d.getMonth() + 1); at = dISO(d).slice(0, 7);
   }
+  /* A line turns up once, on the day it has to be started. Drawing it on every day it runs over
+     filled three weeks of August with "Order Pumps" — the calendar is what to set going today, and
+     a thing repeated twenty times is a thing nobody reads. How long it then takes is on the line. */
   const onDay = Object.create(null);
   for (const r of shown) {
     if (!r.start) continue;
-    if (r.pinned && !r.days) { (onDay[r.start] = onDay[r.start] || []).push({ r: r, ms: true }); continue; }
-    let d = r.start;
-    for (let i = 0; i < 400 && d <= r.finish; i++) {
-      if (isWorkDay(d, cal)) (onDay[d] = onDay[d] || []).push({ r: r, first: d === r.start });
-      d = dShift(d, 1);
-    }
+    /* A line with work under it is that work, so it would put itself on the same day as its first
+       part and say the same thing twice. The date it has to be done by still shows. */
+    if (r.rolled && !r.pinned) continue;
+    (onDay[r.start] = onDay[r.start] || []).push({ r: r, ms: r.pinned && !r.days });
   }
   const today0 = today();
   return `<div class="cal-wrap">${months.map(mo => {
@@ -13705,9 +13816,14 @@ function planCalendarHtml(p, shown, cal) {
       const work = isWorkDay(iso, cal);
       cells.push(`<div class="cal-day${work ? '' : ' is-off'}${iso === today0 ? ' is-today' : ''}">
         <span class="cd-n">${d}</span>
-        ${list.slice(0, 4).map(x => `<div class="cd-item${planRowClass(x.r)}${x.ms ? ' is-ms' : ''}"
-          onclick="editPlanLine('${x.r.id}')" title="${escAttr((x.r.item.name || '') + (x.r.item.who ? ' · ' + x.r.item.who : ''))}"
-          >${x.ms ? '◆ ' : ''}${esc(x.r.item.name || '(unnamed)')}</div>`).join('')}
+        ${list.slice(0, 4).map(x => `<div class="cd-item${planRowClass(x.r)}${x.ms ? ' is-ms' : ''}${
+            x.r.lead ? ' is-lead' : ''}"
+          onclick="editPlanLine('${x.r.id}')" title="${escAttr((x.r.item.name || '') +
+            (x.r.item.who ? ' · ' + x.r.item.who : '') +
+            (x.r.days > 1 ? ' · ' + x.r.days + (x.r.lead ? ' days of lead, needed by ' : ' days, to ')
+              + shortDate(x.r.finish) : ''))}"
+          >${x.ms ? '◆ ' : ''}${x.r.lead ? '⏳ ' : ''}${esc(x.r.item.name || '(unnamed)')}${
+            x.r.days > 1 ? ' <small>' + x.r.days + 'd</small>' : ''}</div>`).join('')}
         ${list.length > 4 ? `<small class="muted">+${list.length - 4} more</small>` : ''}
       </div>`);
     }

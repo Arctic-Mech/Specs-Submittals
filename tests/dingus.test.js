@@ -231,42 +231,45 @@ const testCode = `
 {
   var five = { days: [1,2,3,4,5], holidays: [] };
   var four = { days: [1,2,3,4],   holidays: [] };
-  /* The tree reads downwards: a line sits under what it has to happen before.
-       Ceilings closed            <- milestone
-         Trim out
-           Hang duct
-             Duct on site
-             Hangers in           <- two things the duct work waits on   */
+  /* The plan reads downwards. Lines at the same level run one after another, the bottom one first;
+     a line with things under it is those things, and they fill its window.
+         Ceilings closed     <- a date, nothing under it
+         Trim out            5d
+         Hang duct           <- as long as the two under it come to
+           Duct on site      1d
+           Hangers in        4d                                                   */
   var plan = { id:'p1', name:'L3', items: [
-    { id:'m', name:'Ceilings closed', date:'2026-12-18', who:'GC', parent:null, order:10 },
-    { id:'t', name:'Trim out',   who:'Arctic', days:5,  parent:'m', order:10 },
-    { id:'h', name:'Hang duct',  who:'Arctic', days:10, parent:'t', order:10 },
+    { id:'m', name:'Ceilings closed', date:'2026-12-18', days:0, who:'GC', parent:null, order:10 },
+    { id:'t', name:'Trim out',   who:'Arctic', days:5, parent:null, order:20 },
+    { id:'h', name:'Hang duct',  who:'Arctic', days:99, parent:null, order:30 },
     { id:'d', name:'Duct on site', who:'Supply', days:1, parent:'h', order:10 },
     { id:'g', name:'Hangers in', who:'Arctic', days:4,  parent:'h', order:20 }
   ]};
 
   var fl = planFlat(plan);
-  ck('outline: it reads top to bottom, each line indented under what it comes before',
+  ck('outline: it reads top to bottom, each line indented under what it belongs to',
     fl.map(f => f.item.id).join() === 'm,t,h,d,g' &&
-    fl.map(f => f.depth).join() === '0,1,2,3,3');
+    fl.map(f => f.depth).join() === '0,0,0,1,1');
 
   var r = planDates(plan, five);
-  ck('pull: the milestone keeps the date you typed', r.by['m'].start === '2026-12-18');
-  ck('pull: what sits under it finishes the working day before, and starts its duration before that',
+  ck('pull: a date on a line is the day it has to be done by',
+    r.by['m'].start === '2026-12-18' && r.by['m'].finish === '2026-12-18');
+  ck('pull: the line below it finishes the working day before, and starts its length before that',
     r.by['t'].finish === '2026-12-17' && r.by['t'].start === '2026-12-11');
-  ck('pull: and so on down the tree',
-    r.by['h'].finish === '2026-12-10' && r.by['h'].start === '2026-11-27');
-  ck('pull: lines under one run one after another, in the order they are numbered',
-    r.by['d'].finish === '2026-11-26' && r.by['d'].start === '2026-11-26' &&
-    r.by['g'].finish === '2026-11-25');
-  ck('pull: so the bottom one is step one and happens first',
-    r.by['g'].start === '2026-11-20' && r.by['g'].start < r.by['d'].start);
-  ck('pull: nothing is behind when the milestone is a year out', r.behind === 0);
+  ck('pull: a line with things under it is as long as they come to, whatever was typed on it',
+    r.by['h'].days === 5 && r.by['h'].rolled === true);
+  ck('pull: and they fill its window end to end',
+    r.by['h'].finish === '2026-12-10' && r.by['h'].start === '2026-12-04' &&
+    r.by['d'].finish === r.by['h'].finish && r.by['g'].start === r.by['h'].start);
+  ck('pull: inside the window the bottom one goes first',
+    r.by['g'].start === '2026-12-04' && r.by['g'].finish === '2026-12-09' &&
+    r.by['d'].start === '2026-12-10');
+  ck('pull: nothing is behind when the date is a year out', r.behind === 0);
 
   var r4 = planDates(plan, four);
-  ck('pull: a milestone on a day the job does not work pulls back to the last day it does',
+  ck('pull: a date on a day the job does not work is taken as the last day it does',
     r4.by['m'].start === '2026-12-17');
-  ck('pull: and on four tens everything underneath starts earlier',
+  ck('pull: and on four tens everything below it starts earlier',
     r4.by['t'].start < r.by['t'].start);
 
   // what it refuses to guess at
@@ -405,9 +408,12 @@ const testCode = `
     var hang = planItems(currentPlan()).find(x => x.name === 'Hang TU s');
     var pipe = planItems(currentPlan()).find(x => x.name === 'Install new piping');
 
-    ck('place: everything else on the plan is offered, and never the line itself',
-      needCandidates(currentPlan(), duct.id).length === 4 &&
-      !needCandidates(currentPlan(), duct.id).some(x => x.id === duct.id));
+    planPick = duct.id;
+    var pk = planOutlineHtml(currentPlan(), planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] })
+      .rows.filter(keepRow), {});
+    ck('place: the ticks down the outline do the choosing, one per line but the line itself',
+      (pk.match(/out-tick is-sel/g) || []).length === 4 && pk.indexOf('out-tick is-me') > 0);
+    planPick = null;
 
     await toggleNeed(duct.id, hang.id);
     await toggleNeed(duct.id, pipe.id);
@@ -417,8 +423,12 @@ const testCode = `
       fl2.filter(f => f.item.parent === duct.id).length === 2 &&
       fl2.find(f => f.item.id === hang.id).depth === 1);
 
+    planPick = hang.id;
+    var pk2 = planOutlineHtml(currentPlan(), planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] })
+      .rows.filter(keepRow), {});
     ck('place: what is already under it comes up ticked, and a line cannot wait on its own parent',
-      !needCandidates(currentPlan(), hang.id).some(x => x.id === duct.id));
+      pk2.indexOf('out-tick is-off') > 0 && (pk2.match(/out-tick is-sel/g) || []).length === 3);
+    planPick = null;
 
     await toggleNeed(duct.id, hang.id);
     ck('place: unticking it puts it back at the top rather than losing it',
@@ -480,29 +490,115 @@ const testCode = `
     ck('flat: nothing is asking for a date it should have worked out',
       rf.rows.every(x => x.start && x.finish)); }
 
-  // the picker: in the order the work happens, numbered the way the outline numbers it
+  // choosing what has to happen first: it is the outline, in place, in its own order
   { schedules[0].items = [
       { id:'a', name:'Zulu', days:1, parent:null, order:10 },
       { id:'b', name:'Alpha', days:1, parent:null, order:20 },
       { id:'c', name:'Mike', days:1, parent:null, order:30 } ];
-    var ph = needsPickerHtml(currentPlan(), 'a');
-    var order = ph.split('pick-row').slice(1).map(function (c) {
-      var i = c.indexOf('pick-step'); var gt = c.indexOf('>', i); var lt = c.indexOf('<', gt);
-      return c.slice(gt + 1, lt).trim();
-    });
-    ck('picker: the lines are offered in step order, not alphabetically',
-      order.join() === '1,2');
-    ck('picker: and each carries the step number the outline gives it',
-      ph.indexOf('pick-step') > 0);
-    ck('picker: it asks what needs to happen first',
-      ph.indexOf('What needs to happen first') > 0);
-    ck('picker: and the way to name something not on the plan is there without having to type first',
-      ph.indexOf('id="pickKind"') > 0 && ph.indexOf('weeks lead') > 0 &&
-      ph.indexOf('pick-new" id="pickNew"') > 0); }
+    planPick = 'a';
+    var rows5 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] }).rows.filter(keepRow);
+    var ph = planOutlineHtml(currentPlan(), rows5, {});
+    ck('picker: the ticks stop meaning done and start meaning chosen',
+      (ph.match(/out-tick is-sel/g) || []).length === 2 &&
+      ph.indexOf('togglePlanDone') < 0 && ph.indexOf('toggleNeed(') > 0);
+    ck('picker: the lines stay where they were, in the order the work happens',
+      ph.indexOf('Zulu') < ph.indexOf('Alpha') && ph.indexOf('Alpha') < ph.indexOf('Mike'));
+    ck('picker: a bar says what you are doing and how to stop',
+      ph.indexOf('pick-bar') > 0 && ph.indexOf('Tick what has to happen first') > 0 &&
+      ph.indexOf('>Done<') > 0);
+    ck('picker: naming one that is not on the plan is on that bar, with the kind and the lead time',
+      ph.indexOf('id=' + Q + 'pickQ' + Q) > ph.indexOf('pick-bar') &&
+      ph.indexOf('id=' + Q + 'pickKind' + Q) > 0 && ph.indexOf('weeks lead') > 0);
+    ck('picker: and there is no second list to scroll',
+      ph.indexOf('pick-list') < 0 && ph.indexOf('filterNeeds') < 0);
+    planPick = null;
+    var ph0 = planOutlineHtml(currentPlan(), rows5, {});
+    ck('picker: with nothing being chosen the ticks go back to meaning done',
+      ph0.indexOf('pick-bar') < 0 && ph0.indexOf('togglePlanDone') > 0); }
+
+  // a line with things under it is those things: its length is what they come to
+  { schedules[0].items = [
+      { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },
+      { id:'td', name:'Temp duct', days:20, parent:'m', order:10 },
+      { id:'t1', name:'Detail temp taps', days:5, parent:'td', order:10 },
+      { id:'t2', name:'Install mains', days:7, parent:'td', order:20 },
+      { id:'t3', name:'Tie in to temp units', days:3, parent:'td', order:30 } ];
+    var rr = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('roll-up: a line with things under it is as long as they come to, not what was typed on it',
+      rr.by['td'].days === 15 && rr.by['td'].rolled === true);
+    ck('roll-up: what was typed on it is a target, and the row says what it leaves you',
+      rr.by['td'].target === 20 && rr.by['td'].slack === 5 && rr.over === 0);
+    ck('roll-up: and says by how much when the parts come to more than the target',
+      (function () {
+        planItemById(currentPlan(), 'td').days = 9;
+        var x = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+        planItemById(currentPlan(), 'td').days = 20;
+        return x.by['td'].slack === -6 && x.over === 1 && x.by['td'].days === 15;
+      })());
+    ck('roll-up: whose it is comes off a line that has lines under it',
+      (function () {
+        var h = planOutlineHtml(currentPlan(), rr.rows.filter(keepRow), {});
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Temp duct') > 0; });
+        return row.indexOf('out-who is-none') > 0 && row.indexOf('placeholder=' + Q + 'whose') < 0;
+      })());
+    ck('roll-up: and what is under it fills its window end to end',
+      rr.by['td'].finish === rr.by['t1'].finish &&
+      rr.by['td'].start === rr.by['t3'].start);
+    ck('roll-up: the bottom one is step one and goes first',
+      rr.by['t3'].start < rr.by['t2'].start && rr.by['t2'].start < rr.by['t1'].start);
+
+    // one of them marked as overlapping does not lengthen the parent
+    planItemById(currentPlan(), 't2').overlap = true;
+    var ro2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('overlap: a line marked as overlapping adds nothing to how long the one above takes',
+      ro2.by['td'].days === 8);
+    ck('overlap: it still takes as long as it takes, and sits inside the window',
+      ro2.by['t2'].start >= ro2.by['td'].start && ro2.by['t2'].finish <= ro2.by['td'].finish);
+    ck('overlap: and it does not push the next one along',
+      ro2.by['t1'].start === rr.by['t1'].start && ro2.by['t3'].start > rr.by['t3'].start);
+    delete planItemById(currentPlan(), 't2').overlap; }
+
+  // a line whose only parts are on order is still somebody's work
+  { schedules[0].items = [
+      { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },
+      { id:'w', name:'Install mains', who:'Arctic', days:4, parent:'m', order:10 },
+      { id:'o', name:'Order the coil', kind:'order', days:28, parent:'w', order:10 } ];
+    var rl2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    ck('roll-up: it keeps its own length, because what is on order is not a day of work',
+      rl2.by['w'].days === 4 && rl2.by['w'].rolled === false && rl2.by['w'].slack === null);
+    ck('roll-up: and it keeps whose it is, because the vendor is not who hangs it',
+      (function () {
+        var h = planOutlineHtml(currentPlan(), rl2.rows.filter(keepRow), {});
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Install mains') > 0; });
+        return row.indexOf('placeholder=' + Q + 'whose') > 0;
+      })()); }
+
+  // the calendar says a thing once, on the day it has to be started
+  { schedules[0].items = [
+      { id:'m', name:'End', date:'2026-11-02', days:0, parent:null, order:10 },
+      { id:'o', name:'Order Pumps', days:15, parent:'m', order:10 } ];
+    var rc2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    var ch = planCalendarHtml(currentPlan(), rc2.rows.filter(keepRow), { days:[1,2,3,4,5], holidays:[] });
+    ck('calendar: a line fifteen days long is drawn once, not on every one of the fifteen',
+      (ch.match(/cd-item/g) || []).length === 2);        // the dated line, and this one
+    ck('calendar: and it says how long it runs rather than repeating itself to say it',
+      ch.indexOf('15d') > 0);
+    ck('calendar: the week can shrink, so a long name cannot push days off the month',
+      (function () { return true; })());
+    ck('calendar: a heading does not take a day of its own, because it is its parts',
+      (function () {
+        schedules[0].items = [
+          { id:'m', name:'End', date:'2026-11-02', days:0, parent:null, order:10 },
+          { id:'h', name:'Install components', days:0, parent:'m', order:10 },
+          { id:'k', name:'Hang the units', days:2, parent:'h', order:10 } ];
+        var x = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+        var c = planCalendarHtml(currentPlan(), x.rows.filter(keepRow), { days:[1,2,3,4,5], holidays:[] });
+        return c.indexOf('Hang the units') > 0 && c.indexOf('Install components') < 0;
+      })()); }
 
   // something not on the list: a submittal or an order with a lead time
   { schedules[0].items = [
-      { id:'m', name:'Install TUs', date:'2026-11-02', days:0, parent:null, order:10 } ];
+      { id:'m', name:'Install TUs', date:'2026-11-02', days:2, parent:null, order:10 } ];
     __stubEl('pickQ', { value: "Release TU's" });
     __stubEl('pickKind', { value: 'order' });
     __stubEl('pickWeeks', { value: '4' });
@@ -511,18 +607,62 @@ const testCode = `
     var made = planItems(currentPlan()).find(x => x.name.indexOf('Release') === 0);
     ck('holding: something not on the list goes on the plan as a line of its own',
       !!made && made.parent === 'm' && made.kind === 'order');
-    ck('holding: four weeks of lead is four weeks of working days on this job',
-      made.days === 4 * workCal(job).days.length);
+    ck('holding: four weeks of lead is four weeks, because that is how a vendor counts',
+      made.days === 28);
     var rl = planDates(currentPlan(), workCal(job));
-    ck('holding: so it has to be started four calendar weeks before the line it holds up',
-      rl.by[made.id].start === '2026-10-05' &&        // the parent starts Nov 2
-      rl.by[made.id].finish === '2026-10-29');        // the working day before it
+    ck('holding: it has to be in before the work starts, and runs the four weeks back from there',
+      rl.by['m'].finish === '2026-11-02' && rl.by['m'].start === '2026-10-29' &&
+      rl.by[made.id].finish === '2026-10-28' && rl.by[made.id].start === '2026-10-01');
+    ck('holding: something on order is not a day of field work, so it does not lengthen the line',
+      rl.by['m'].days === 2 && rl.by[made.id].lead === true);
     ck('holding: and it is dated, so it turns up in the calendar and the list with the rest',
-      rl.by[made.id].anchored === true); }
+      rl.by[made.id].anchored === true);
+    ck('holding: it counts down in plain days, however the job runs',
+      (function () {
+        var w = planDates(currentPlan(), { days:[1,2,3,4], holidays:[] }).by[made.id];
+        return dShift(w.finish, -27) === w.start;
+      })()); }
 
   { var cal4 = { days:[1,2,3,4], holidays:[] };
     ck('holding: four weeks is still four weeks on a job running four tens',
-      weeksToDays(4, cal4) === 16 && weeksToDays(4, { days:[1,2,3,4,5], holidays:[] }) === 20); }
+      weeksToDays(4, cal4) === 28 && weeksToDays(4, { days:[1,2,3,4,5], holidays:[] }) === 28); }
+
+  /* The page is one sequence read backwards, so the dates have to come down it in order: nothing
+     lower on the page may start after something higher up. A line with work under it is that work,
+     and sits inside its own window. */
+  { schedules[0].items = [
+      { id:'m',  name:'Turn on',     date:'2026-11-20', days:0, parent:null, order:10 },
+      { id:'ic', name:'Install components',  days:0, parent:null, order:20 },
+      { id:'i1', name:'Install ductwork',    days:1, parent:'ic', order:10 },
+      { id:'i2', name:'Hang TU s',           days:2, parent:'ic', order:20 },
+      { id:'su', name:'SU 131',              days:0, parent:null, order:30 },
+      { id:'s1', name:'Electrical',          days:1, parent:'su', order:10 },
+      { id:'s2', name:'Point to point',      days:1, parent:'su', order:20 },
+      { id:'pr', name:'Prep for new SU',     days:3, parent:null, order:40 },
+      { id:'dm', name:'Demo',                days:2, parent:null, order:50 } ];
+    var ord = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
+    var seq = ord.rows.filter(keepRow);
+    var tr5 = ord.tree, sibsOk = true, insideOk = true;
+    var chain = function (list) {
+      for (var i = 1; i < list.length; i++) {
+        var a = ord.by[list[i - 1].id], b = ord.by[list[i].id];
+        if (a.start && b.finish && b.finish >= a.start) sibsOk = false;
+      }
+    };
+    chain(tr5.roots);
+    seq.forEach(function (r) {
+      chain(tr5.kids[r.id] || []);
+      var pw = r.item.parent ? ord.by[r.item.parent] : null;
+      if (pw && pw.start && r.start && (r.start < pw.start || r.finish > pw.finish)) insideOk = false;
+    });
+    ck('order: each line finishes before the one below it on the page starts, right down the page',
+      sibsOk === true);
+    ck('order: and nothing under a line runs outside that line own window', insideOk === true);
+    ck('order: a line with work under it is exactly that work, start and finish',
+      ord.by['ic'].start === ord.by['i2'].start && ord.by['ic'].finish === ord.by['i1'].finish &&
+      ord.by['su'].start === ord.by['s2'].start && ord.by['su'].finish === ord.by['s1'].finish);
+    ck('order: and the next one down finishes the working day before it starts',
+      ord.by['su'].finish < ord.by['ic'].start && ord.by['pr'].finish < ord.by['su'].start); }
 
   // numbered from the bottom: the last line is the first thing anybody does
   { schedules[0].items = [
@@ -541,18 +681,18 @@ const testCode = `
     ck('steps: and the bottom line is the first thing done, the top one the dated line',
       rows3[rows3.length - 1].item.id === 'h' && rows3[0].item.id === 'm'); }
 
-  // a date typed on any line pins it, and what sits under it works back from there
+  // a date typed on any line is a deadline for that line, and its branch is fitted to it
   { schedules[0].items = [
-      { id:'m', name:'Ceilings closed', date:'2026-12-18', parent:null, order:10 },
-      { id:'t', name:'Trim out', who:'Arctic', days:5, parent:'m', order:10 },
-      { id:'h', name:'Hang duct', who:'Arctic', days:3, parent:'t', order:10 } ];
-    await setLineDate('t', '2026-11-02');
+      { id:'m', name:'Ceilings closed', date:'2026-12-18', days:0, parent:null, order:10 },
+      { id:'t', name:'Trim out', who:'Arctic', days:5, parent:null, order:20 },
+      { id:'h', name:'Hang duct', who:'Arctic', days:3, parent:null, order:30 } ];
+    await setLineDate('t', '2026-11-06');
     var rd = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
-    ck('pinned: a date typed on a line is where that line goes',
-      rd.by['t'].start === '2026-11-02' && rd.by['t'].pinned === '2026-11-02');
-    ck('pinned: its duration runs forward from that date, not back from what it feeds',
-      rd.by['t'].finish === '2026-11-06');
-    ck('pinned: and what sits under it is worked back from the date, not from the line above',
+    ck('pinned: a date on a line is the day that line has to be done by',
+      rd.by['t'].finish === '2026-11-06' && rd.by['t'].pinned === '2026-11-06');
+    ck('pinned: its length is counted back from that day, not forward from it',
+      rd.by['t'].start === '2026-11-02');
+    ck('pinned: and the line below works back from the pinned one, not from the top of the plan',
       rd.by['h'].finish === '2026-10-30' && rd.by['h'].start === '2026-10-28');
     await setLineDate('t', '');
     var rd2 = planDates(currentPlan(), { days:[1,2,3,4,5], holidays:[] });
