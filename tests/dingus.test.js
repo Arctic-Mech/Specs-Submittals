@@ -375,13 +375,13 @@ const testCode = `
     })());
 
   // text that would break out of the page
-  schedules[0].items.push({ id:'x', name: 'Say ' + Q + 'hi' + Q + ' & go', who: "O'Brien Mechanical",
-    days: 1, parent: 'm', order: 99, hold: '<b>not</b> ok' });
+  schedules[0].items.push({ id:'x', name: 'Say ' + Q + 'hi' + Q + ' & go <b>no</b>', who: "O'Brien Mechanical",
+    days: 1, parent: 'm', order: 99, hold: [] });
   var rows = planDates(currentPlan(), workCal(job)).rows;
   var html = planOutlineHtml(currentPlan(), rows.filter(keepRow), {});
-  ck('build: a name with quotes and an ampersand comes out as text, not as markup',
-    html.indexOf('&amp;') > 0 && html.indexOf('&lt;b&gt;not&lt;/b&gt;') > 0 &&
-    html.indexOf('<b>not</b>') < 0);
+  ck('build: a name with quotes, angle brackets and an ampersand comes out as text, not as markup',
+    html.indexOf('&amp;') > 0 && html.indexOf('&lt;b&gt;no&lt;/b&gt;') > 0 &&
+    html.indexOf('<b>no</b>') < 0);
   ck('build: and a contractor called constructor does not break the wall',
     (function () {
       schedules[0].items.push({ id:'z', name:'Odd', who:'constructor', days:1, parent:'m', order:98 });
@@ -431,6 +431,58 @@ const testCode = `
     ck('place: and something nobody listed can be added straight onto the line that needs it',
       planItems(currentPlan()).some(x => x.name === 'Order the coil' && x.parent === duct.id));
   }
+
+  // the companies on this job, and only this job's plans
+  { job.crews = []; contracts = [{ id:'ct1', party:'Some Insulation Co' }];
+    ledgerData = { quotes: [{ id:'q1', vendor:'A Damper Vendor', docs:[] }], pos: [] };
+    schedules[0].items = [{ id:'a', name:'Hang duct', who:'Arctic', days:1, parent:null, order:10 }];
+    ck('whose: a vendor who quoted something is not somebody you hand a line of the plan to',
+      jobPeople().join() === 'Arctic');
+    await rememberCrew('Hillside Crane');
+    ck('whose: a company typed on a line joins the list for next time',
+      jobPeople().join() === 'Arctic,Hillside Crane');
+    await rememberCrew('hillside crane');
+    ck('whose: and typing it again, spelled differently, does not put it on twice',
+      jobPeople().filter(x => x.toLowerCase() === 'hillside crane').length === 1);
+    schedules[0].items = [];
+    ck('whose: it stays on the list after the line it was typed on is gone',
+      jobPeople().join() === 'Hillside Crane');
+    await forgetCrew('Hillside Crane');
+    ck('whose: and can be taken off again', jobPeople().length === 0);
+    contracts = []; ledgerData = { quotes: [], pos: [] }; }
+
+  // what is holding a line up is other lines, named
+  { schedules[0].items = [
+      { id:'a', name:'Hang duct', who:'Arctic', days:2, parent:null, order:10, hold:['b','c'] },
+      { id:'b', name:'Deck poured', who:'Concrete', days:1, parent:null, order:20 },
+      { id:'c', name:'Crane available', who:'Hillside', days:1, parent:null, order:30 } ];
+    var p2 = currentPlan();
+    ck('held: what is holding a line up is read back as the lines it names',
+      holdNames(p2, planItemById(p2, 'a')).join() === 'Deck poured,Crane available');
+    ck('held: a line with something holding it up is marked held, not late',
+      planRowClass({ item: planItemById(p2, 'a'), anchored: true, late: false }).indexOf('is-held') > 0);
+    ck('held: and one with nothing holding it up is not',
+      planRowClass({ item: planItemById(p2, 'b'), anchored: true, late: false }) === '');
+    ck('held: a line naming something since taken off does not show a blank',
+      (function () { planItemById(p2, 'a').hold = ['b', 'gone'];
+        return holdNames(p2, planItemById(p2, 'a')).join() === 'Deck poured'; })()); }
+
+  // numbered from the bottom: the last line is the first thing anybody does
+  { schedules[0].items = [
+      { id:'m', name:'Ceilings closed', milestone:true, date:'2026-12-18', parent:null, order:10 },
+      { id:'t', name:'Trim out', who:'Arctic', days:2, parent:'m', order:10 },
+      { id:'h', name:'Hang duct', who:'Arctic', days:3, parent:'t', order:10 } ];
+    var rows3 = planDates(currentPlan(), workCal(job)).rows;
+    var oh = planOutlineHtml(currentPlan(), rows3.filter(keepRow), {});
+    // the number the row shows, not the one in its tooltip
+    var steps = oh.split('out-step').slice(1).map(function (c) {
+      var gt = c.indexOf('>'), lt = c.indexOf('<', gt);
+      return c.slice(gt + 1, lt).trim();
+    });
+    ck('steps: the list is numbered with one at the bottom, so it reads step one upwards',
+      steps.join() === '3,2,1');
+    ck('steps: and the bottom line is the first thing done, the top one the milestone',
+      rows3[rows3.length - 1].item.id === 'h' && rows3[0].item.id === 'm'); }
 
   // a plan somebody else deleted must not be put back by a save already on its way
   { var put = null;

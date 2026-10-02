@@ -489,6 +489,8 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-row.is-held { border-left-color: var(--amber); }
 .out-row.is-loose { border-left-color: var(--border-2); }
 .out-row.is-done .out-name { text-decoration: line-through; color: var(--text-3); }
+.out-step { flex: none; min-width: 20px; text-align: right; font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; }
 .out-tick { border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-3);
   padding: 0; flex: none; }
 .out-tick:hover { color: var(--accent); }
@@ -1586,7 +1588,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.01';
+const APP_VERSION = 'v8.02';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2751,6 +2753,9 @@ async function saveJobMeta(j) {
        on every save, and every plan on the job would quietly recompute on a Mon-Fri week it was
        never set to. */
     workCal: target.workCal || {},
+    /* The companies typed on this job's plans. Kept here so one typed once is still on the list
+       after the line it was typed on is gone. */
+    crews: target.crews || [],
     created: target.created,
     updated: target.updated,
     specs: target.specs || [],
@@ -3943,6 +3948,7 @@ function watchJobs() {
             job.ignoredFiles = fresh.ignoredFiles || [];
             job.contractAmount = fresh.contractAmount || '';
             job.workCal = fresh.workCal || {};
+            job.crews = fresh.crews || [];
             job.specs = fresh.specs || []; job.summary = fresh.summary; job.updated = fresh.updated;
           }
           if (view === 'job') { $('crumbJob').textContent = job.name; renderJob(); }
@@ -12764,14 +12770,22 @@ function planById(id) { return (schedules || []).find(p => p.id === id) || null;
 function currentPlan() { return planById(openPlan) || (schedules || [])[0] || null; }
 function planItems(p) { return (p && p.items) || []; }
 function planItemById(p, id) { return planItems(p).find(x => x.id === id) || null; }
+/* Says whether it landed. A caller that has just put something on screen needs to know, or the
+   page shows a line that is not in the job and nobody finds out until tomorrow. */
 async function savePlan(p) {
-  if (!job || !p) return;
+  if (!job || !p) return false;
   /* Gone means gone. A save already on its way would otherwise put the plan back, because a set
      creates the document it cannot find. */
-  if (!schedules.some(x => x.id === p.id)) return;
+  if (!schedules.some(x => x.id === p.id)) return false;
   p.updated = Date.now();
-  try { await FB.setDoc(scheduleRef(job.id, p.id), clean(p)); }
-  catch (e) { toast(writeError(e), true); }
+  try { await FB.setDoc(scheduleRef(job.id, p.id), clean(p)); return true; }
+  catch (e) { toast(writeError(e), true); return false; }
+}
+/* Put back what was just added, when the write it belonged to did not land. */
+async function saveOrUndo(p, undo) {
+  const ok = await savePlan(p);
+  if (!ok) { undo(); renderSchedule(); }
+  return ok;
 }
 async function newPullPlan() {
   if (!job) return;
@@ -12785,7 +12799,12 @@ async function newPullPlan() {
   schedules = schedules.concat([p]);
   openPlan = p.id; planEdit = p.items[0].id;
   renderSchedule();
-  await savePlan(p);
+  const ok = await savePlan(p);
+  if (!ok) {
+    schedules = schedules.filter(x => x.id !== p.id);
+    openPlan = (schedules[0] || {}).id || null; planEdit = null;
+    renderSchedule();
+  }
 }
 async function renamePullPlan(id) {
   const p = planById(id); if (!p) return;
@@ -12843,15 +12862,28 @@ function planPeople(p) {
   for (const it of planItems(p)) { const w = String(it.who || '').trim(); if (w && !seen[w.toLowerCase()]) { seen[w.toLowerCase()] = 1; out.push(w); } }
   return out.sort((a, b) => a.localeCompare(b));
 }
+/* The companies on the schedule, and only those. A vendor who quoted a damper is not somebody you
+   hand a line of the programme to, and a list of everyone the job has ever bought from is a list
+   you have to read past rather than pick from. One typed here joins it for next time. */
 function jobPeople() {
-  /* Names already on the job, so a contractor is picked rather than spelled three ways. */
   const seen = Object.create(null), out = [];
   const add = n => { const v = String(n || '').trim(); if (v && !seen[v.toLowerCase()]) { seen[v.toLowerCase()] = 1; out.push(v); } };
-  for (const c of (contracts || [])) add(c.party || c.name);
-  for (const lk of ['quotes', 'pos']) for (const it of litems(lk)) add(it.vendor || it.party);
-  for (const s of sectionsOf(job)) add(s.vendor);
+  for (const n of ((job && job.crews) || [])) add(n);
   for (const p of (schedules || [])) for (const it of planItems(p)) add(it.who);
   return out.sort((a, b) => a.localeCompare(b));
+}
+async function rememberCrew(name) {
+  const v = String(name || '').trim();
+  if (!v || !job) return;
+  if (((job.crews) || []).some(x => String(x).trim().toLowerCase() === v.toLowerCase())) return;
+  job.crews = ((job.crews) || []).concat([v]);
+  try { await saveJobMeta(); } catch (e) { console.warn('company not remembered:', e); }
+}
+async function forgetCrew(name) {
+  if (!job) return;
+  job.crews = ((job.crews) || []).filter(x => String(x).trim().toLowerCase() !== String(name).trim().toLowerCase());
+  renderSchedule();
+  try { await saveJobMeta(); } catch (e) {}
 }
 /* ── building the outline ──
    The whole point is that it is quick: Enter puts the next line in, Tab pushes a line under the one
@@ -12885,7 +12917,7 @@ async function addLineAfter(afterId, asChild) {
   p.items = planItems(p).concat([it]);
   planFocus = it.id;
   renderSchedule(); focusLine(it.id);
-  await savePlan(p);
+  await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
 async function addPlanLine(isMilestone) {
   const p = currentPlan(); if (!p) return;
@@ -12894,7 +12926,7 @@ async function addPlanLine(isMilestone) {
   p.items = planItems(p).concat([it]);
   planFocus = it.id;
   renderSchedule(); focusLine(it.id);
-  await savePlan(p);
+  await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
 /* "Something has to happen before this" — a new line, already sitting under the one you clicked. */
 async function addNeedBefore(id) { await addLineAfter(id, true); }
@@ -13040,7 +13072,7 @@ async function addNeedNew(parentId) {
   it.name = autoCap(name);
   p.items = planItems(p).concat([it]);
   renderSchedule();
-  await savePlan(p);
+  await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
 function needsPickerHtml(p, id) {
   const tr = planTree(p);
@@ -13083,7 +13115,13 @@ async function savePlanLine(id) {
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   it.name = autoCap(v('liName'));
   it.who = v('liWho');
-  it.hold = autoCap(v('liHold'));
+  if (it.who) rememberCrew(it.who);          // typed once, on the list from now on
+  const held = [];
+  const hb = $('liHold');
+  if (hb && typeof hb.querySelectorAll === 'function') {
+    for (const el of hb.querySelectorAll('input.liHoldBox')) if (el.checked) held.push(el.value);
+  }
+  it.hold = held;
   it.note = autoCap(v('liNote'));
   const ms = $('liIsMilestone');
   it.milestone = !!(ms && ms.checked);
@@ -13158,8 +13196,9 @@ async function takePastedList() {
   }
   closePdf();
   renderSchedule();
-  await savePlan(p);
-  toast(made.length + ' line' + (made.length === 1 ? '' : 's') + ' added');
+  const ids = Object.create(null); made.forEach(x => ids[x.id] = 1);
+  const ok = await saveOrUndo(p, () => { p.items = planItems(p).filter(x => !ids[x.id]); });
+  if (ok) toast(made.length + ' line' + (made.length === 1 ? '' : 's') + ' added');
 }
 
 /* ── drawing it ── */
@@ -13174,6 +13213,7 @@ function weekSpan(rows) {
   let at = mondayOf(all[0]);
   const last = mondayOf(all[all.length - 1]);
   for (let i = 0; i < 200 && at <= last; i++) { out.push(at); at = dShift(at, 7); }
+  out.cut = at <= last;        // ran past four years of weeks; the caller says so rather than hiding it
   return out;
 }
 const shortDate = iso => iso ? fmtDate(iso + 'T00:00:00') : '';
@@ -13184,16 +13224,22 @@ function runwayLabel(r) {
   if (r.runway === 0) return r.onDayOff ? 'starts next working day' : 'starts today';
   return r.runway + 'd to go';
 }
+/* What is holding a line up is other lines on the plan, named rather than described — so the thing
+   that is blocking you is a row you can go and look at. */
+const holdIds = it => (it && Array.isArray(it.hold)) ? it.hold : [];
+function holdNames(p, it) {
+  return holdIds(it).map(id => (planItemById(p, id) || {}).name || '').filter(Boolean);
+}
 function planRowClass(r) {
   if (r.item.done) return ' is-done';
   if (!r.anchored) return ' is-loose';
   if (r.late) return ' is-late';
-  if (String(r.item.hold || '').trim()) return ' is-held';
+  if (holdIds(r.item).length) return ' is-held';
   return '';
 }
 function keepRow(r) {
   if (planWho && String(r.item.who || '').trim() !== planWho) return false;
-  if (planHot && !(r.late || !r.anchored || String(r.item.hold || '').trim())) return false;
+  if (planHot && !(r.late || !r.anchored || holdIds(r.item).length)) return false;
   return true;
 }
 
@@ -13310,13 +13356,20 @@ function lineForm(p, id, rows) {
           ? 'Has to be finished before <b>' + esc((planItemById(p, it.parent) || {}).name || 'the line above') + '</b>.'
           : 'At the top of the plan — nothing on this plan waits on it.'}
           Move it with the arrows on its line, or with Tab while typing in it.</div></div>
-      <div class="grid2">
-        <div class="field"><label class="fl">What is holding it up</label>
-          <input class="input" id="liHold" value="${escAttr(it.hold || '')}"
-            placeholder="leave empty if nothing is"></div>
-        <div class="field"><label class="fl">Anything else worth knowing</label>
-          <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
-      </div>
+      <div class="field"><label class="fl">What is holding it up</label>
+        ${(function () {
+          const others = planItems(p).filter(x => x.id !== id);
+          if (!others.length) return `<div class="muted" style="font-size:13px">Nothing else on the plan yet.</div>`;
+          const on = holdIds(it);
+          return `<div class="pick-list" id="liHold">${others.map(x => `
+            <label class="pick-row"><input type="checkbox" class="liHoldBox" value="${x.id}"
+              ${on.indexOf(x.id) >= 0 ? 'checked' : ''}>
+              <span>${x.milestone ? '◆ ' : ''}${esc(x.name || '(unnamed)')}</span></label>`).join('')}</div>
+            <div class="muted" style="font-size:12px;margin-top:4px">Tick the lines that are actually
+            stopping this one today. Leave it empty if nothing is.</div>`;
+        })()}</div>
+      <div class="field"><label class="fl">Anything else worth knowing</label>
+        <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
       <div class="field"><label class="ac-done"><input type="checkbox" id="liDone" ${it.done ? 'checked' : ''}> <span>Done</span></label></div>
       <div class="sch-form-foot">
         <button class="btn sm" onclick="savePlanLine('${id}')">Save</button>
@@ -13361,6 +13414,11 @@ function workWeekModal() {
         <select class="input" onchange="setWorkShift(this.value)">
           ${WORK_SHIFTS.map(s => `<option value="${s.id}"${s.days.join() === cal.days.join() ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}
         </select></div>
+      <div class="field"><label class="fl">Companies on this job</label>
+        ${(job.crews || []).length ? `<div class="sch-hols">${(job.crews || []).map(c => `
+          <span class="hol">${esc(c)}<button class="x" title="Take it off the list"
+            onclick="forgetCrew('${jsStr(c)}')">✕</button></span>`).join('')}</div>`
+          : `<div class="muted" style="font-size:13px">None yet — type one on a line and it joins the list.</div>`}</div>
       <div class="field"><label class="fl">Days the job is shut</label>
         ${cal.holidays.length ? `<div class="sch-hols">${cal.holidays.map(d => `
           <span class="hol">${esc(shortDate(d))}<button class="x" title="Take it off"
@@ -13376,14 +13434,19 @@ function workWeekModal() {
    The plan as you build it: a line each, indented under what it has to happen before. The name is
    an input you can just type into; everything else about a line lives behind the pencil. */
 function planOutlineHtml(p, rows, res) {
+  /* Numbered from the bottom. The last line on screen is the first thing anybody does, because the
+     plan is written backwards from the end — so counting up the page reads step 1 to step x. */
+  const n = rows.length;
   return `<div class="out-list">
-    ${rows.map(r => {
+    ${rows.map((r, i) => {
       const it = r.item;
+      const step = n - i;
       const when = it.milestone
         ? (it.date ? esc(shortDate(r.start)) : '<i>no date yet</i>')
         : (r.anchored ? esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) : '');
       return `
       <div class="out-row${planRowClass(r)}" style="--d:${r.depth}">
+        <span class="out-step" title="Step ${step} of ${n} — counting up from the first thing done">${step}</span>
         <button class="out-tick" title="${it.done ? 'Not done after all' : 'Mark it done'}"
           onclick="togglePlanDone('${r.id}')">${it.done ? '☑' : '☐'}</button>
         ${it.milestone ? '<span class="out-ms" title="A milestone — it has a date of its own">◆</span>' : ''}
@@ -13394,7 +13457,9 @@ function planOutlineHtml(p, rows, res) {
           ${it.who ? `<span class="out-who">${esc(it.who)}</span>` : ''}
           ${it.milestone ? '' : `<span class="out-days">${r.days}d</span>`}
           ${when ? `<span class="out-when">${when}</span>` : ''}
-          ${it.hold ? `<span class="out-tag is-hold" title="${escAttr(it.hold)}">held up</span>` : ''}
+          ${holdIds(it).length ? `<span class="out-tag is-hold"
+            title="${escAttr('Held up by: ' + holdNames(p, it).join(', '))}">held up by ${
+              holdNames(p, it).length === 1 ? esc(holdNames(p, it)[0]) : holdNames(p, it).length + ' lines'}</span>` : ''}
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
@@ -13433,7 +13498,8 @@ function planListHtml(p, shown, res) {
       <div class="sl-row${planRowClass(r)}">
         <span class="sl-name">${r.item.milestone ? '<b class="sl-ms">◆</b> ' : ''}${esc(r.item.name || '(unnamed)')}
           ${r.critical ? '<span class="sl-tag is-crit" title="The longest run of days back from the milestone — if this slips, the date slips">drives the date</span>' : ''}
-          ${r.item.hold ? `<span class="sl-tag is-hold" title="${escAttr(r.item.hold)}">held up</span>` : ''}
+          ${holdIds(r.item).length ? `<span class="sl-tag is-hold"
+            title="${escAttr('Held up by: ' + holdNames(p, r.item).join(', '))}">held up</span>` : ''}
           ${!r.anchored && !r.item.milestone ? '<span class="sl-tag is-loose">no date — put it under something</span>' : ''}
           ${r.item.note ? `<small class="muted sl-note">${esc(r.item.note)}</small>` : ''}</span>
         <span>${esc(r.item.who || '')}</span>
@@ -13488,15 +13554,18 @@ function planWallHtml(p, shown, cal) {
         ${loose.length ? `<small class="muted">${loose.length} with no date</small>` : ''}</div>
       ${cells.map(list => `<div class="wall-cell">${list.map(r => `
         <div class="sticky${planRowClass(r)}" onclick="editPlanLine('${r.id}')"
-          title="${escAttr((r.item.name || '') + (r.item.hold ? ' — held up: ' + r.item.hold : ''))}">
+          title="${escAttr((r.item.name || '') + (holdIds(r.item).length ? ' — held up by: ' + holdNames(p, r.item).join(', ') : ''))}">
           <span class="st-name">${r.item.milestone ? '◆ ' : ''}${esc(r.item.name || '(unnamed)')}</span>
           <small>${r.item.milestone ? esc(shortDate(r.start))
             : esc(shortDate(r.start)) + ' → ' + esc(shortDate(r.finish)) + ' · ' + r.days + 'd'}</small>
-          ${r.item.hold ? `<small class="st-hold">${esc(r.item.hold)}</small>` : ''}
+          ${holdIds(r.item).length ? `<small class="st-hold">held up by ${esc(holdNames(p, r.item).join(', '))}</small>` : ''}
         </div>`).join('')}</div>`).join('')}
     </div>`;
   }).join('');
-  return `<div class="wall-scroll"><div class="wall" style="--cols:${cols}">${head}${body}</div></div>`;
+  return `${weeks.cut ? `<div class="sch-warn"><div>⚠ This plan runs over four years, so the wall
+    stops at ${esc(shortDate(weeks[weeks.length - 1]))}. The list shows all of it — and a date that
+    far out is usually a typed year.</div></div>` : ''}
+    <div class="wall-scroll"><div class="wall" style="--cols:${cols}">${head}${body}</div></div>`;
 }
 
 /* ── calendar ──
