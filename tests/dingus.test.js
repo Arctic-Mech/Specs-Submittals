@@ -611,6 +611,35 @@ const testCode = `
                (row.match(/toggleOverlap/g) || []).length === 2;
       })()); }
 
+  /* Going alongside takes no slot in the run. But the line carrying the date is what the rest of
+     the run hangs off, so leaving that one out of it took every line after it down too. */
+  { var fourD = { days:[1,2,3,4], holidays:[] };
+    var tempPlan = function (flexAlongside) { return { basis:'start', items: [
+      { id:'tmp', name:'Temp', days:0, parent:null, order:10 },
+      { id:'t7', name:'Tie in to temp units', days:1, parent:'tmp', order:10 },
+      { id:'t6', name:'Set temp units', days:1, parent:'tmp', order:20 },
+      { id:'t5', name:'Connect OSA flex', days:1, parent:'tmp', order:30 },
+      { id:'t4', name:'Open OSA shaft', days:1, parent:'tmp', order:40, overlap:true },
+      { id:'t3', name:'Insulate rooftop duct', days:4, parent:'tmp', order:50, overlap:true },
+      { id:'t2', name:'Run rooftop duct', days:8, parent:'tmp', order:60 },
+      { id:'t1', name:'Run flex', date:'2026-10-12', days:1, parent:'tmp', order:70,
+        overlap: !!flexAlongside } ] }; };
+    var was = planDates(tempPlan(false), fourD);
+    var now = planDates(tempPlan(true), fourD);
+    ck('alongside: the line carrying the date still carries the run when it goes alongside',
+      was.by['tmp'].days === 12 && now.by['tmp'].days === 11 &&
+      now.rows.every(function (r) { return !!r.start; }));
+    ck('alongside: it takes its own day off the plan, and the next line runs beside it',
+      now.by['t2'].start === '2026-10-12' &&
+      now.by['tmp'].start === '2026-10-12' && now.by['tmp'].finish === '2026-10-28');
+    ck('alongside: one is dated even when the line over it has no date of its own',
+      !!was.by['t3'].start && !!was.by['t4'].start &&
+      was.by['t3'].start >= was.by['tmp'].start && was.by['t3'].finish <= was.by['tmp'].finish);
+    ck('alongside: and it keeps its full length without making the line over it any longer',
+      was.by['t3'].days === 4 &&
+      workDaysBetween(was.by['t3'].start, was.by['t3'].finish, fourD) === 4 &&
+      was.by['tmp'].days === 12); }
+
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [
       { id:'m', name:'Turn on', date:'2026-11-02', days:0, parent:null, order:10 },

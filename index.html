@@ -1656,7 +1656,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.11';
+const APP_VERSION = 'v8.12';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12883,34 +12883,54 @@ function planDates(plan, cal) {
     /* What is under it fills its window in the order the work happens: step one of it first, each
        one after that following on. An overlapping line is fitted into the window without moving the
        next one along, and is held to the window rather than running out of it. */
+    /* The run: each line after the one before it. A line going alongside takes no slot in that run,
+       so it is left out of it here and fitted into the window once the window is known — taken from
+       where the line before it left off, it was squeezed into whatever room was left over. But one
+       carrying a date of its own is taken here as well, because with nothing else dated the whole
+       run hangs off it, and left out it took every line after it down with it. */
+    const ordered = fwd ? fieldKids(it).slice().reverse() : fieldKids(it);
+    const alongside = [];
     let cur = edge;
-    for (const k of (fwd ? fieldKids(it).slice().reverse() : fieldKids(it))) {
-      /* One that goes alongside is fitted from the window's own edge rather than from wherever the
-         line before it left off — taken from there it was squeezed into whatever was left and came
-         out shorter than it is. It still takes as long as it takes; it just does not move the next
-         one along, and is held to the window rather than running out of it. */
-      walk(k, k.overlap ? edge : cur);
+    for (const k of ordered) {
+      if (k.overlap) {
+        alongside.push(k);
+        if (!pinnedDate(k)) continue;
+        walk(k, cur);
+        const o = out[k.id];
+        if (o && o.start && !cur) cur = fwd ? o.start : o.finish;
+        continue;
+      }
+      walk(k, cur);
       const o = out[k.id];
       if (!o || !o.start) continue;
-      if (k.overlap) {
-        if (fwd) { if (finish && o.finish > finish) { o.finish = finish; o.clash = true; } }
-        else if (start && o.start < start) { o.start = start; o.clash = true; }
-      } else cur = stepOver(fwd ? o.finish : o.start);
+      cur = stepOver(fwd ? o.finish : o.start);
     }
     /* A line is its parts, so its window is the first of them to the last of them — whatever they
        came to, not what the count said they would. Two things were wrong without this. A date put
        on the first thing anybody does left the heading over it blank, and with that heading blank
        there was nothing for the next one up to follow on from, so the whole plan above the date
        stayed dateless. And where the parts ran a day past what the count allowed for, the line
-       under them started on top of them. */
+       under them started on top of them. A line going alongside adds no days, so it is not one of
+       the parts that can widen it. */
     let lo = '', hi = '';
     for (const k of fieldKids(it)) {
+      if (k.overlap) continue;
       const o = out[k.id];
       if (!o || !o.start) continue;
       if (!lo || o.start < lo) lo = o.start;
       if (!hi || o.finish > hi) hi = o.finish;
     }
     if (lo) { out[it.id].start = lo; out[it.id].finish = hi; out[it.id].anchored = true; }
+    /* And now there is a window, the ones going alongside are fitted into it, at its own edge and
+       held to it rather than running out of it. */
+    const win = out[it.id];
+    for (const k of alongside) {
+      if (!pinnedDate(k)) walk(k, fwd ? win.start : win.finish);
+      const o = out[k.id];
+      if (!o || !o.start) continue;
+      if (fwd) { if (win.finish && o.finish > win.finish) { o.finish = win.finish; o.clash = true; } }
+      else if (win.start && o.start < win.start) { o.start = win.start; o.clash = true; }
+    }
     /* Whichever way round the plan is written, what is on order has to be in before the work
        starts. That end of it never flips. */
     const began = out[it.id].start;
@@ -12922,8 +12942,12 @@ function planDates(plan, cal) {
   for (const r of (fwd ? tr.roots.slice().reverse() : tr.roots)) {
     if (isLead(r)) { walkLead(r, ''); continue; }
     walk(r, bound);
-    const o = out[r.id], e = o && (fwd ? o.finish : o.start);
-    if (e && !r.overlap) bound = stepOver(e);
+    const o = out[r.id];
+    if (!o) continue;
+    /* One going alongside passes the run straight through: the next line is held to the same day
+       this one was. Only where there was nothing to go on does it seed the run instead. */
+    if (r.overlap) { const near = fwd ? o.start : o.finish; if (!bound && near) bound = near; }
+    else { const e = fwd ? o.finish : o.start; if (e) bound = stepOver(e); }
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
