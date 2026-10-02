@@ -560,7 +560,8 @@ const testCode = `
     ck('overlap: a line marked as overlapping adds nothing to how long the one above takes',
       ro2.by['td'].days === 8);
     ck('overlap: it still takes as long as it takes, and sits inside the window',
-      ro2.by['t2'].start >= ro2.by['td'].start && ro2.by['t2'].finish <= ro2.by['td'].finish);
+      ro2.by['t2'].start >= ro2.by['td'].start && ro2.by['t2'].finish <= ro2.by['td'].finish &&
+      workDaysBetween(ro2.by['t2'].start, ro2.by['t2'].finish, { days:[1,2,3,4,5], holidays:[] }) === 7);
     ck('overlap: and it does not push the next one along',
       ro2.by['t1'].start === rr.by['t1'].start && ro2.by['t3'].start > rr.by['t3'].start);
     delete planItemById(currentPlan(), 't2').overlap; }
@@ -579,6 +580,36 @@ const testCode = `
     ck('roll-up: but a length somebody chose is left alone',
       planItemById(currentPlan(), 'a').days === 9 &&
       planItemById(currentPlan(), 'c').parent === 'a'); }
+
+  /* Going alongside is on every line, not only the ones being picked, and works at the top level
+     too \u2014 a top line that goes alongside does not move the next one along either. */
+  { var ovBase = [
+      { id:'a', name:'Ceilings closed', date:'2026-12-18', days:2, parent:null, order:10 },
+      { id:'b', name:'Set hangers', days:3, parent:null, order:20 },
+      { id:'c', name:'Pull wire', days:4, parent:null, order:30 } ];
+    var ovOff = planDates({ basis:'end', items: ovBase }, five);
+    var ovOn = planDates({ basis:'end', items: ovBase.map(function (x) {
+      return x.id === 'b' ? Object.assign({}, x, { overlap: true }) : x; }) }, five);
+    ck('overlap: a top line marked as going alongside adds no days to the plan',
+      ovOn.by['c'].start > ovOff.by['c'].start &&
+      ovOn.by['c'].finish === ovOn.by['b'].finish);
+    ck('overlap: and it still takes as long as it takes',
+      workDaysBetween(ovOn.by['b'].start, ovOn.by['b'].finish, five) === 3);
+    ck('overlap: the row carries the switch itself, so it is there on hover',
+      (function () {
+        var h = planOutlineHtml({ id:'x', items: ovBase }, ovOff.rows.filter(keepRow), ovOff);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
+        return row.indexOf("toggleOverlap('b')") > 0 && row.indexOf('out-act') > 0;
+      })());
+    ck('overlap: and once it is on, the chip says so and turns it off again',
+      (function () {
+        var on = planDates({ items: ovBase.map(function (x) {
+          return x.id === 'b' ? Object.assign({}, x, { overlap: true }) : x; }) }, five);
+        var h = planOutlineHtml({ id:'x', items: [] }, on.rows.filter(keepRow), on);
+        var row = h.split('out-row').find(function (c) { return c.indexOf('Set hangers') > 0; });
+        return row.indexOf('>overlaps<') > 0 &&
+               (row.match(/toggleOverlap/g) || []).length === 2;
+      })()); }
 
   // a line whose only parts are on order is still somebody's work
   { schedules[0].items = [

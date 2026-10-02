@@ -1656,7 +1656,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.10';
+const APP_VERSION = 'v8.11';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12885,7 +12885,11 @@ function planDates(plan, cal) {
        next one along, and is held to the window rather than running out of it. */
     let cur = edge;
     for (const k of (fwd ? fieldKids(it).slice().reverse() : fieldKids(it))) {
-      walk(k, cur);
+      /* One that goes alongside is fitted from the window's own edge rather than from wherever the
+         line before it left off — taken from there it was squeezed into whatever was left and came
+         out shorter than it is. It still takes as long as it takes; it just does not move the next
+         one along, and is held to the window rather than running out of it. */
+      walk(k, k.overlap ? edge : cur);
       const o = out[k.id];
       if (!o || !o.start) continue;
       if (k.overlap) {
@@ -12919,7 +12923,7 @@ function planDates(plan, cal) {
     if (isLead(r)) { walkLead(r, ''); continue; }
     walk(r, bound);
     const o = out[r.id], e = o && (fwd ? o.finish : o.start);
-    if (e) bound = stepOver(e);
+    if (e && !r.overlap) bound = stepOver(e);
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -13702,7 +13706,8 @@ function planOutlineHtml(p, rows, res) {
           ${me && picked[r.id]
             ? `<button class="out-tag is-ov${r.overlap ? ' on' : ''}" onclick="toggleOverlap('${r.id}')"
                  title="It goes on while something else does, so it does not add to how long this takes">overlaps</button>`
-            : (r.overlap ? `<span class="out-tag is-ov on" title="Goes on while something else does — it does not add to how long the line above takes">overlaps</span>` : '')}
+            : (r.overlap ? `<button class="out-tag is-ov on" onclick="toggleOverlap('${r.id}')"
+                 title="Goes alongside what is already there — it adds no days to the plan. Click to put it back in the run.">overlaps</button>` : '')}
           ${r.slack != null && r.slack !== 0
             ? `<span class="out-tag ${r.slack < 0 ? 'is-over' : 'is-slack'}"
                  title="${escAttr('You put it at ' + r.target + ' days and what is under it comes to ' + r.days)}">${
@@ -13714,6 +13719,9 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
+          <button class="x${r.overlap ? ' on' : ''}" onclick="toggleOverlap('${r.id}')"
+            title="${r.overlap ? 'Goes alongside — it is not adding days to the plan. Click to put it back in the run.'
+                               : 'It goes alongside what is already there, so it adds no days to the plan'}">∥</button>
           <button class="x${planPick === r.id ? ' on' : ''}" title="What is holding this up"
             onclick="openNeeds('${r.id}')">↳</button>
           <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
