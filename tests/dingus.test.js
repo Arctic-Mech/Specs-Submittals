@@ -814,6 +814,34 @@ const testCode = `
                row2.indexOf('because there is work under it') > 0;
       })()); }
 
+  /* Released and partly released are a thing people want to look at together, so the chips hold a
+     list rather than one answer. */
+  { var heldJob = job, heldSt = statusFilter, heldRel = releaseFilter, heldQ = query, heldDiv = divFilter;
+    var S = function (k, st, rel) { return { key:k, number:k, title:k, division:'23', status:st,
+      releaseState:rel, specId:'sp1', products:[], releases:[], notes:[] }; };
+    job = { id:'jf', name:'T', number:'1', specs:[{ id:'sp1', name:'Spec' }], ignoredFiles:[], sections: [
+      S('a', 'approved', 'released'), S('b', 'approved', 'partial'), S('c', 'approved', 'released'),
+      S('d', 'submitted_gc', 'ready'), S('e', 'approved', 'partial'), S('f', 'not_started', 'not_ready') ] };
+    statusFilter = []; releaseFilter = []; query = ''; divFilter = 'all';
+    var keys = function () { return visibleSections().map(function (x) { return x.key; }).join(); };
+    ck('chips: nothing picked shows everything', keys() === 'a,b,c,d,e,f');
+    releaseFilter = toggleFilter(releaseFilter, 'released');
+    ck('chips: one picked shows that one', keys() === 'a,c');
+    releaseFilter = toggleFilter(releaseFilter, 'partial');
+    ck('chips: a second one is added to it rather than replacing it',
+      keys() === 'a,b,c,e' && releaseFilter.length === 2);
+    releaseFilter = toggleFilter(releaseFilter, 'released');
+    ck('chips: picking one that is already on takes it back off', keys() === 'b,e');
+    releaseFilter = toggleFilter(releaseFilter, null);
+    ck('chips: and Clear takes them all off', keys() === 'a,b,c,d,e,f' && releaseFilter.length === 0);
+
+    statusFilter = toggleFilter(toggleFilter(statusFilter, 'approved'), 'submitted_gc');
+    ck('chips: the status chips do the same, because they are the same control',
+      keys() === 'a,b,c,d,e');
+    releaseFilter = toggleFilter(releaseFilter, 'partial');
+    ck('chips: and the two rows still narrow each other', keys() === 'b,e');
+    job = heldJob; statusFilter = heldSt; releaseFilter = heldRel; query = heldQ; divFilter = heldDiv; }
+
   // the plan, out to Excel
   { schedules[0].basis = 'start';
     schedules[0].items = [

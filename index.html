@@ -1683,7 +1683,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.20';
+const APP_VERSION = 'v8.21';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3935,8 +3935,10 @@ let jobs = [];            // job metadata, newest first
 let job = null;           // open job
 let view = 'jobs';
 let divFilter = 'all';
-let statusFilter = null;
-let releaseFilter = null;
+/* Both of these hold a list, not one answer: released and partly released are a thing people want
+   to look at together, and so are any other two. Empty means everything. */
+let statusFilter = [];
+let releaseFilter = [];
 let divPicked = false;      // the opening tab is chosen once, then left alone
 let query = '';
 let submSort = 'section';   // 'section' | 'response' (latest response date)
@@ -4414,7 +4416,7 @@ async function openJob(id) {
   job = Object.assign({}, j, { sections: [] });
   clearTimeout(_folderSaveTimer); clearInterval(_saveTicker);   // reset the per-job save indicator
   folderSaveAt = 0; folderSaveState = 'idle'; _lastSavedSig = null; renderSaveStatus();
-  statusFilter = null; releaseFilter = null; query = ''; divPicked = false; divFilter = 'all';
+  statusFilter = []; releaseFilter = []; query = ''; divPicked = false; divFilter = 'all';
   jobTab = 'submittals'; rfis = []; tracking = []; cos = []; drawings = []; drawingQuery = '';
   schedules = []; openPlan = null; planEdit = null; planView = 'outline'; planWho = ''; planHot = false;
   ledgerData = { quotes: [], pos: [] }; contracts = []; estimates = []; openLedger = { key: null, id: null }; ledgerQuery = { quotes: '', pos: '' };
@@ -4666,8 +4668,8 @@ function visibleSections() {
   const q = query.trim().toLowerCase();
   const list = sectionsOf(job).filter(s => {
     if (divFilter !== 'all' && s.division !== divFilter) return false;
-    if (statusFilter && (s.status || 'not_started') !== statusFilter) return false;
-    if (releaseFilter && (s.releaseState || 'not_ready') !== releaseFilter) return false;
+    if (statusFilter.length && statusFilter.indexOf(s.status || 'not_started') < 0) return false;
+    if (releaseFilter.length && releaseFilter.indexOf(s.releaseState || 'not_ready') < 0) return false;
     if (q && !searchHay(s).includes(q)) return false;
     return true;
   });
@@ -4741,25 +4743,33 @@ function renderJob() {
   const tally = {}; STATUSES.forEach(s => tally[s.id] = 0);
   scope.forEach(s => tally[s.status || 'not_started']++);
   $('statusChips').innerHTML = STATUSES.map(s =>
-    `<button class="chip ${statusFilter === s.id ? 'on' : ''}" style="${statusFilter === s.id ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
+    `<button class="chip ${statusFilter.indexOf(s.id) >= 0 ? 'on' : ''}" style="${statusFilter.indexOf(s.id) >= 0 ? 'color:' + cvar(s.color) + ';background:' + csf(s.color) : ''}"
       onclick="setStatusFilter('${s.id}')"><i style="background:${cvar(s.color)}"></i>${esc(s.label)}<span class="n">${tally[s.id]}</span></button>`
-  ).join('') + (statusFilter ? `<button class="chip" onclick="setStatusFilter(null)">Clear ✕</button>` : '');
+  ).join('') + (statusFilter.length ? `<button class="chip" onclick="setStatusFilter(null)">Clear ✕</button>` : '');
 
   const rtally = {}; RELEASES.forEach(r => rtally[r.id] = 0);
   scope.forEach(x => rtally[x.releaseState || 'not_ready']++);
   $('releaseChips').innerHTML =
     `<span class="chip-label">Release</span>` +
     RELEASES.filter(r => r.id !== 'not_ready' || rtally.not_ready < scope.length).map(r =>
-      `<button class="chip ${releaseFilter === r.id ? 'on' : ''}" style="${releaseFilter === r.id ? 'color:' + cvar(r.color) + ';background:' + csf(r.color) : ''}"
+      `<button class="chip ${releaseFilter.indexOf(r.id) >= 0 ? 'on' : ''}" style="${releaseFilter.indexOf(r.id) >= 0 ? 'color:' + cvar(r.color) + ';background:' + csf(r.color) : ''}"
         onclick="setReleaseFilter('${r.id}')"><i style="background:${cvar(r.color)}"></i>${esc(r.label)}<span class="n">${rtally[r.id]}</span></button>`
-    ).join('') + (releaseFilter ? `<button class="chip" onclick="setReleaseFilter(null)">Clear ✕</button>` : '');
+    ).join('') + (releaseFilter.length ? `<button class="chip" onclick="setReleaseFilter(null)">Clear ✕</button>` : '');
 
   renderTable();
 }
 
 function setDiv(d) { divFilter = d; renderJob(); }
-function setStatusFilter(s) { statusFilter = (statusFilter === s) ? null : s; renderJob(); }
-function setReleaseFilter(r) { releaseFilter = (releaseFilter === r) ? null : r; renderJob(); }
+/* Tapping one turns it on, tapping it again turns it off, and any number can be on at once. Null
+   is the Clear button, which takes them all off. */
+function toggleFilter(list, id) {
+  if (id == null) return [];
+  const i = list.indexOf(id);
+  if (i < 0) return list.concat([id]);
+  const out = list.slice(); out.splice(i, 1); return out;
+}
+function setStatusFilter(s) { statusFilter = toggleFilter(statusFilter, s); renderJob(); }
+function setReleaseFilter(r) { releaseFilter = toggleFilter(releaseFilter, r); renderJob(); }
 $('searchBox').addEventListener('input', e => { query = e.target.value; renderTable(); $('countLabel').textContent = countLabel(); });
 $('rfiSearch').addEventListener('input', e => { rfiQuery = e.target.value; renderRfis(); });
 $('coSearch').addEventListener('input', e => { coQuery = e.target.value; renderCos(); });
@@ -19692,7 +19702,8 @@ async function exportResponses() {
   if (!n) { toast('Could not read the response PDFs — make the folder available offline in ShareFile', true); return; }
   const out = await zip.generateAsync({ type: 'blob' });
   const url = URL.createObjectURL(out);
-  const label = [statusFilter ? ST[statusFilter].label : '', releaseFilter ? RL[releaseFilter].label : '', query.trim()].filter(Boolean).join(' ');
+  const label = [statusFilter.map(x => (ST[x] || {}).label || '').join(' '),
+    releaseFilter.map(x => (RL[x] || {}).label || '').join(' '), query.trim()].filter(Boolean).join(' ');
   const a = document.createElement('a');
   a.href = url;
   a.download = sanitizeAnyName(`${jobFileBase()} responses${label ? ' - ' + label : ''} - ${today()}`, 'responses') + '.zip';
