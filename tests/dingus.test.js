@@ -842,6 +842,62 @@ const testCode = `
     ck('chips: and the two rows still narrow each other', keys() === 'b,e');
     job = heldJob; statusFilter = heldSt; releaseFilter = heldRel; query = heldQ; divFilter = heldDiv; }
 
+  /* Where the releases stand, out to Excel. For a section that is only part released the thing you
+     need is which of its items are out, which is a line each rather than a cell. */
+  { var heldJ = job, heldS = statusFilter, heldR = releaseFilter, heldQ2 = query, heldD = divFilter;
+    var prod = function (id, tag, nm) { return { id:id, name:nm, marks:[{ id:id+'#0', tag:tag }] }; };
+    job = { id:'jr', name:'T', number:'1', specs:[{ id:'sp1' }], ignoredFiles:[], sections: [
+      { key:'23 05 00', number:'23 05 00', title:'Common work', division:'23', specId:'sp1',
+        status:'approved', releaseState:'released', vendor:'ENFRA', manufacturer:'Greenheck',
+        leadWeeks:6, products:[prod('p1','HC-1','Hangers')], submittals:[{}],
+        releases:[{ id:'r1', mark:'p1#0', date:'2026-09-01', delivered:true }], notes:[] },
+      { key:'23 36 00', number:'23 36 00', title:'Terminal units', division:'23', specId:'sp1',
+        status:'approved', releaseState:'partial', vendor:'ENFRA', manufacturer:'Titus',
+        leadWeeks:12, submittals:[{}],
+        products:[prod('p2','TU-1','Units'), prod('p3','TU-2','Units'), prod('p4','TU-3','Units')],
+        releases:[{ id:'r2', mark:'p2#0', date:'2026-09-15', note:'First batch' }], notes:[] },
+      { key:'23 37 00', number:'23 37 00', title:'Air outlets', division:'23', specId:'sp1',
+        status:'not_started', releaseState:'not_ready', products:[prod('p5','AO-1','Diffusers')],
+        submittals:[], releases:[], notes:[] } ] };
+    statusFilter = []; releaseFilter = []; query = ''; divFilter = 'all';
+    releaseFilter = toggleFilter(toggleFilter(releaseFilter, 'released'), 'partial');
+    var rsecs = visibleSections();
+    ck('releases: it exports what the chips left on screen, and nothing else',
+      rsecs.map(function (x) { return x.key; }).join() === '23 05 00,23 36 00');
+    ck('releases: a section says which release it is at and how much of it is out',
+      relSectionRow(rsecs[0])[2] === 'Released' && relSectionRow(rsecs[0])[3] === '1 of 1' &&
+      relSectionRow(rsecs[1])[2] === 'Partially Released' && relSectionRow(rsecs[1])[3] === '1 of 3');
+    ck('releases: and carries whose it is, the maker, the lead and where the submittal stands',
+      relSectionRow(rsecs[1])[4] === 'ENFRA' && relSectionRow(rsecs[1])[5] === 'Titus' &&
+      relSectionRow(rsecs[1])[6] === 'Approved' && relSectionRow(rsecs[1])[10] === '12 weeks');
+    var items = relItemRows(rsecs[1]);
+    ck('releases: the part released one gives a line per item, saying which are out and which are not',
+      items.length === 3 && items.map(function (r) { return r[3]; }).join() === 'Yes,No,No' &&
+      items[0][2].indexOf('TU-1') === 0 && items[1][2].indexOf('TU-2') === 0);
+    ck('releases: the one that is out carries its date and its note, and the others carry nothing',
+      items[0][4] instanceof Date && dISO(items[0][4]) === '2026-09-15' &&
+      items[0][7] === 'First batch' && items[1][4] === '' && items[1][7] === '');
+    ck('releases: every row has a cell for every heading',
+      rsecs.every(function (x) { return relSectionRow(x).length === REL_HEADS.length; }) &&
+      items.every(function (r) { return r.length === ITEM_HEADS.length; }) &&
+      REL_HEADS.length === REL_WIDTHS.length && ITEM_HEADS.length === ITEM_WIDTHS.length);
+    if (!HAVE_XLSX) skip('releases: the workbook itself', 'xlsx engine not installed');
+    else {
+      var rb = await buildReleaseXlsx(rsecs);
+      var rwb = XLSX.read(rb, { type: 'array', cellDates: true });
+      ck('releases: two sheets \u2014 a line per section, and a line per item',
+        rwb.SheetNames.join() === 'Sections,Items');
+      var sx = XLSX.utils.sheet_to_json(rwb.Sheets['Sections'], { header: 1, raw: true });
+      ck('releases: it says which kinds of release it was asked for',
+        String(sx[1][4]) === 'Released, Partially Released');
+      ck('releases: headings, then a line per section on screen',
+        sx[4].join() === REL_HEADS.join() && sx.length === 5 + rsecs.length);
+      var ix = XLSX.utils.sheet_to_json(rwb.Sheets['Items'], { header: 1, raw: true });
+      ck('releases: and every item of every one of them on the second sheet',
+        ix.length === 5 + 4 && ix[6][3] === 'Yes' && ix[7][3] === 'No');
+    }
+    job = heldJ; statusFilter = heldS; releaseFilter = heldR; query = heldQ2; divFilter = heldD; }
+
   // the plan, out to Excel
   { schedules[0].basis = 'start';
     schedules[0].items = [

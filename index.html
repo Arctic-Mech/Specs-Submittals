@@ -1683,7 +1683,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.21';
+const APP_VERSION = 'v8.22';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -19372,6 +19372,100 @@ async function exportSubmittalXlsx() {
   }
 }
 /* Pick PDF (branded register) or CSV (spreadsheet). */
+/* ── where the releases stand, out to Excel ──
+   The hand-kept log has no column for this, and for a section that is only part released the thing
+   you need is which of its items are out and which are not — which is a line each, not a cell. */
+const REL_HEADS = ['Section', 'Title', 'Release', 'Out', 'Whose', 'Maker', 'Submittal',
+  'Released on', 'Expected', 'Delivered', 'Lead', 'Note'];
+const REL_WIDTHS = [12, 40, 20, 10, 18, 18, 20, 24, 24, 20, 12, 30];
+const ITEM_HEADS = ['Section', 'Title', 'Item', 'Released', 'Released on', 'Expected', 'Delivered', 'Note'];
+const ITEM_WIDTHS = [12, 34, 34, 11, 15, 24, 15, 30];
+/* How much of a section is out: every mark on it, and how many of them have been released. */
+function relCounts(s) {
+  const marks = sectionProducts(s).reduce((a, pr) => a.concat(productMarks(pr).map(m =>
+    ({ mark: m, prod: pr }))), []);
+  const out = releasedMarks(s);
+  return { marks: marks, out: out, n: marks.filter(x => out[x.mark.id]).length };
+}
+function relSectionRow(s) {
+  const c = relCounts(s);
+  const r = xlogReleases(s);
+  return [
+    s.key || '', s.title || '', relOf(s).label,
+    c.marks.length ? c.n + ' of ' + c.marks.length : '',
+    s.vendor || '', s.manufacturer || '', (ST[s.status || 'not_started'] || {}).label || '',
+    r.released, r.expected, r.delivered, leadLabel(s.leadWeeks) || '', s.note || ''
+  ];
+}
+function relItemRows(s) {
+  const c = relCounts(s);
+  return c.marks.map(x => {
+    const rec = c.out[x.mark.id];
+    return [
+      s.key || '', s.title || '', markLabel(x.prod, x.mark.id),
+      rec ? 'Yes' : 'No',
+      rec && rec.date ? dAt(rec.date) : '',
+      rec && !rec.delivered && rec.expected ? fmtWindow({ from: rec.expected, to: rec.expectedTo }) : '',
+      rec && rec.delivered ? 'Delivered' : '',
+      (rec && rec.note) || ''
+    ];
+  });
+}
+async function buildReleaseXlsx(secs) {
+  const XL = await loadSheetJS();
+  const picked = (releaseFilter.length ? releaseFilter : RELEASES.map(r => r.id))
+    .map(id => (RL[id] || {}).label).filter(Boolean).join(', ');
+  const head = [
+    ['Arctic Sheet Metal — where the releases stand'],
+    ['Job:', (job && job.name) || '', '', 'Showing:', picked],
+    ['Exported:', dAt(today()), '', 'Sections:', secs.length],
+    []
+  ];
+  const sheet = (rows, widths, dateCols) => {
+    const ws = XL.utils.aoa_to_sheet(rows, { cellDates: true });
+    ws['!cols'] = widths.map(w => ({ wch: w }));
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: widths.length - 1 } }];
+    for (let r = 0; r < rows.length; r++) {
+      for (const c of dateCols.concat([1])) {
+        const cell = ws[XL.utils.encode_cell({ r: r, c: c })];
+        if (cell && cell.t === 'd') cell.z = 'mmm d, yyyy';
+      }
+    }
+    return ws;
+  };
+  const items = secs.reduce((a, x) => a.concat(relItemRows(x)), []);
+  const wb = XL.utils.book_new();
+  XL.utils.book_append_sheet(wb,
+    sheet(head.concat([REL_HEADS.slice()], secs.map(relSectionRow)), REL_WIDTHS, []), 'Sections');
+  XL.utils.book_append_sheet(wb,
+    sheet(head.concat([ITEM_HEADS.slice()], items), ITEM_WIDTHS, [4]), 'Items');
+  return XL.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+async function exportReleaseXlsx() {
+  if (!job) return;
+  const secs = visibleSections();
+  if (!secs.length) { toast('Nothing to export — clear the filters or add a section first', true); return; }
+  try {
+    stickyToast('Building the release list…');
+    const bytes = await buildReleaseXlsx(secs);
+    const url = URL.createObjectURL(new Blob([bytes],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sanitizeAnyName(jobFileBase() + ' releases', 'releases') + '.xlsx';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    const all = sectionsOf(job).length;
+    toast(secs.length < all
+      ? 'Release list created — ' + secs.length + ' of ' + all + ' sections, matching the filter you have set'
+      : 'Release list created — ' + secs.length + ' sections');
+  } catch (e) {
+    console.error(e);
+    toast('Could not build the release list: ' + (e.message || e), true);
+  }
+}
 function openExportMenu() {
   if (!job) return;
   $('modalHost').innerHTML = `
@@ -19385,6 +19479,12 @@ function openExportMenu() {
         <button class="choice-btn" onclick="closePdf();exportSubmittalXlsx()">
           <b>▦ Excel submittal &amp; procurement log</b>
           <span>The log Arctic keeps by hand — title block, SUBMITTAL and PROCUREMENT bands, lead times and delivery dates. Follows whatever filter you have set.</span>
+        </button>
+        <button class="choice-btn" onclick="closePdf();exportReleaseXlsx()">
+          <b>▦ Where the releases stand</b>
+          <span>What is released and what is only part released, following whatever filter you have
+            set — a line per section, and a second sheet with a line per item saying which of them
+            are out and which are not.</span>
         </button>
         <button class="choice-btn" onclick="closePdf();exportCsv()">
           <b>⤓ CSV spreadsheet</b>
