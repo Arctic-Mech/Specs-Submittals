@@ -594,6 +594,7 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
    down the left, no rule between them, and the length they share shown the same on both. */
 .out-row.is-mate, .out-row.is-paired { box-shadow: inset 3px 0 0 var(--accent); }
 .out-row.is-mate { border-bottom-color: transparent; }
+.out-step.is-sec { text-align: right; font-size: 11px; color: var(--amber); padding: 3px 4px; }
 .out-step.is-mate { text-align: right; font-size: 10.5px; color: var(--accent); font-weight: 600;
   padding: 3px 4px; font-variant-numeric: tabular-nums; }
 .out-days.is-shared { color: var(--accent); }
@@ -1683,7 +1684,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.22';
+const APP_VERSION = 'v8.23';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3966,8 +3967,7 @@ let openPlan = null;         // the plan being looked at, if any
 let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
 let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
-let planPick = null;         // the line whose 'what has to happen first' list is open
-let planSel = null;          // the line whose group the next tick joins
+let planSel = [];            // the lines ticked, waiting to be put together
 let planDrag = null;         // the line being dragged
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
@@ -12798,83 +12798,104 @@ const pinnedDate = it => (it && String(it.date || '').trim()) ? String(it.date).
    kept on the plan because they are what makes the dates, but they are not a slot in the sequence. */
 const LEAD_KINDS = { submittal: 1, rfi: 1, order: 1 };
 const isLead = it => !!LEAD_KINDS[String((it && it.kind) || '')];
-function planTree(p) {
+/* ── the shape of a plan ──
+   A plan is one list, read bottom to top: the line at the foot is the first thing anybody does.
+   Starred lines cut it into sections, and a section owns every line below it until the next starred
+   line. There is no nesting and nothing to indent — moving a line into another section is putting
+   it on the other side of a star, which is one drag.
+
+   What a plan held before this was a tree of parents and children. It is flattened once, in the
+   order it was already being read in, and anything that had work under it becomes a section, which
+   is what it was being used as. */
+function flattenPlan(p) {
   const items = planItems(p);
+  if (!items.length || p.flat) { p.flat = 1; return false; }
   const byId = Object.create(null);
   for (const it of items) byId[it.id] = it;
   const kids = Object.create(null), roots = [];
   for (const it of items) {
     const par = (it.parent && byId[it.parent] && it.parent !== it.id) ? it.parent : null;
-    if (par) (kids[par] = kids[par] || []).push(it);
-    else roots.push(it);
+    if (par) (kids[par] = kids[par] || []).push(it); else roots.push(it);
   }
   const byOrder = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0);
   roots.sort(byOrder);
   for (const k in kids) kids[k].sort(byOrder);
-
-  /* A line can be set to run alongside another one rather than after it. The two share a slot in
-     the run and a step number — the one alongside takes a letter, 8a, 8b — and the slot is as long
-     as the longest thing in it. Only a line beside it in the same list can be its partner, since
-     the run is a sequence of those. */
-  const sibsOf = it => (it.parent && kids[it.parent]) ? kids[it.parent] : roots;
+  const out = [], seen = Object.create(null);
+  const walk = list => {
+    for (const it of list) {
+      if (seen[it.id]) continue;
+      seen[it.id] = 1;
+      if ((kids[it.id] || []).length) it.main = true;
+      out.push(it);
+      walk(kids[it.id] || []);
+    }
+  };
+  walk(roots);
+  for (const it of items) if (!seen[it.id]) out.push(it);
+  out.forEach((it, i) => { it.order = (i + 1) * 10; delete it.parent; });
+  p.items = out;
+  p.flat = 1;
+  return true;
+}
+function planTree(p) {
+  flattenPlan(p);
+  const items = planItems(p).slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+  const byId = Object.create(null);
+  for (const it of items) byId[it.id] = it;
+  /* Which section a line is in: the nearest starred line above it on the page. Anything above the
+     first star is in no section, which is a plan nobody has split up yet. */
+  const sectionOf = Object.create(null), lines = Object.create(null), sections = [];
+  let at = null;
+  for (const it of items) {
+    if (it.main) { at = it.id; sections.push(it); lines[at] = []; continue; }
+    sectionOf[it.id] = at;
+    if (at) lines[at].push(it);
+  }
+  /* A line can be set to run alongside another rather than after it. They share a slot in the run
+     and a step number — the one alongside takes a letter, 8a, 8b. Both have to be in the same
+     section, because a section is what a run is made of. */
   const partner = it => {
     const h = it.alongside ? byId[it.alongside] : null;
-    return (h && h.id !== it.id && (h.parent || null) === (it.parent || null)) ? h : null;
+    return (h && h.id !== it.id && !h.main && !it.main &&
+      (sectionOf[h.id] || null) === (sectionOf[it.id] || null)) ? h : null;
   };
   const leadOf = Object.create(null), mates = Object.create(null);
   for (const it of items) {
-    let at = it;
+    let a2 = it;
     const hop = Object.create(null);
     for (let i = 0; i < 50; i++) {
-      const h = partner(at);
+      const h = partner(a2);
       if (!h || hop[h.id]) break;
-      hop[at.id] = 1;
-      at = h;
+      hop[a2.id] = 1;
+      a2 = h;
     }
-    /* Plans written before a line said what it ran alongside just said that it did. Take it as the
-       line below it in the list, which is the one it was running inside. */
-    if (at.id === it.id && it.overlap && !partner(it)) {
-      const sb = sibsOf(it), i = sb.indexOf(it);
-      const near = (i >= 0 && sb[i + 1]) || (i > 0 && sb[i - 1]) || null;
-      if (near && !near.overlap) at = near;
-    }
-    leadOf[it.id] = at.id;
-    if (at.id !== it.id) (mates[at.id] = mates[at.id] || []).push(it);
+    leadOf[it.id] = a2.id;
+    if (a2.id !== it.id) (mates[a2.id] = mates[a2.id] || []).push(it);
   }
-  for (const k in mates) mates[k].sort(byOrder);
+  const byOrd = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0);
+  for (const k in mates) mates[k].sort(byOrd);
   /* Kept next to the one it runs with, above it, so reading up the page gives 8, 8a, 8b. */
-  const grouped = list => {
-    const done = Object.create(null), out = [];
-    for (const it of list) {
-      if (leadOf[it.id] !== it.id) continue;
-      const ms = (mates[it.id] || []);
-      for (let i = ms.length - 1; i >= 0; i--) { out.push(ms[i]); done[ms[i].id] = 1; }
-      out.push(it); done[it.id] = 1;
-    }
-    for (const it of list) if (!done[it.id]) out.push(it);
-    return out;
-  };
-  const rootsG = grouped(roots);
-  for (const k in kids) kids[k] = grouped(kids[k]);
-  return { byId: byId, kids: kids, roots: rootsG, leadOf: leadOf, mates: mates };
+  const laid = [], done = Object.create(null);
+  for (const it of items) {
+    if (leadOf[it.id] !== it.id) continue;
+    const ms = mates[it.id] || [];
+    for (let i = ms.length - 1; i >= 0; i--) { laid.push(ms[i]); done[ms[i].id] = 1; }
+    laid.push(it); done[it.id] = 1;
+  }
+  for (const it of items) if (!done[it.id]) laid.push(it);
+  return { byId: byId, items: laid, sections: sections, sectionOf: sectionOf, lines: lines,
+    leadOf: leadOf, mates: mates,
+    /* kept so the older views can still ask the questions they ask */
+    roots: laid.filter(x => x.main || !sectionOf[x.id]), kids: lines };
 }
 /* The tree flattened back into the lines you see, each with how far in it sits. The guard is for a
    plan that has been edited into a ring by two lines claiming each other as parent — it cannot
    happen through the buttons, but a bad write should not cost you the page. */
 function planFlat(p) {
   const tr = planTree(p);
-  const out = [], seen = Object.create(null);
-  const walk = (list, depth) => {
-    for (const it of list) {
-      if (seen[it.id]) continue;
-      seen[it.id] = 1;
-      out.push({ item: it, depth: depth });
-      walk(tr.kids[it.id] || [], depth + 1);
-    }
-  };
-  walk(tr.roots, 0);
-  for (const it of planItems(p)) if (!seen[it.id]) out.push({ item: it, depth: 0, stray: true });
-  return out;
+  /* A section sits one step out from the lines it owns, so the page reads as sections with work in
+     them — but that is all the depth there is. */
+  return tr.items.map(it => ({ item: it, depth: it.main ? 0 : (tr.sectionOf[it.id] ? 1 : 0) }));
 }
 const planDepth = (p, id) => { const f = planFlat(p).find(x => x.item.id === id); return f ? f.depth : 0; };
 
@@ -12891,242 +12912,135 @@ const planDepth = (p, id) => { const f = planFlat(p).find(x => x.item.id === id)
 function planDates(plan, cal) {
   const tr = planTree(plan);
   const dur = it => Math.max(0, Math.round(Number(it.days) || 0));
-  const kidsOf = it => tr.kids[it.id] || [];
-  /* Ordering a pump or waiting on a submittal back is not field work. It runs on the calendar
-     rather than on the crew's week — four weeks of lead is four weeks whether or not the job works
-     Fridays — and it takes no slot in the sequence. All it asks of the plan is to be finished
-     before the work it holds up starts, and to say so early enough to be worth knowing. */
-  const fieldKids = it => kidsOf(it).filter(k => !isLead(k));
-  const leadKids = it => kidsOf(it).filter(k => isLead(k));
-  /* What a line comes to. A line with work under it comes to what that work comes to — fifteen days
-     of temp duct is the taps, the mains and the tie-in. A length typed on a line like that is a
-     target to hit rather than more work to do, and the plan says whether it fits. An overlapping
-     line adds nothing: it goes on while something else does. */
-  /* The children of a line as the run sees them: one entry per slot, each holding the line that
-     takes the slot and anything set to run alongside it. */
-  const slotsOf = (it, order) => {
-    const ks = order || fieldKids(it);
-    const at = Object.create(null), out = [];
-    for (const k of ks) if (tr.leadOf[k.id] === k.id) { at[k.id] = { lead: k, with: [] }; out.push(at[k.id]); }
-    for (const k of ks) {
-      if (tr.leadOf[k.id] === k.id) continue;
-      const g = at[tr.leadOf[k.id]];
-      if (g) g.with.push(k); else out.push({ lead: k, with: [] });
-    }
-    return out;
-  };
-  /* Two lines done at once are one length, not two. It is the length on the line holding the step
-     number, so there is one number to choose and one window they both sit in. */
-  const slotLong = (g, guard) => span(g.lead, guard);
-  const memo = Object.create(null);
-  const span = (it, guard) => {
-    if (memo[it.id] != null) return memo[it.id];
-    if (guard[it.id]) return 0;
-    guard[it.id] = 1;
-    const gs = slotsOf(it);
-    const v = gs.length ? gs.reduce((a, g) => a + slotLong(g, guard), 0) : dur(it);
-    memo[it.id] = v;
-    return v;
-  };
-  /* Which way the plan is written. Back from the end is the pull plan: a date on a line is the day
-     it has to be done by, and everything under it is fitted in front of it. Forward from the start
-     is the same plan read the other way: a date is the day a line begins, and what comes after it
-     follows on. The page reads the same either way — step one at the bottom, step x at the top — so
-     all that changes is what a date on a line means. */
   const fwd = planBasis(plan) === 'start';
-  /* The end of a line that is fixed: the day it finishes working back, the day it starts going
-     forward. A date cannot land on a day the job does not work, so it moves to the nearest one that
-     it does — later going forward, earlier working back. */
   const edgeOf = iso => nearestWorkDay(iso, cal, fwd ? 1 : -1);
   const spanFrom = (edge, n) => !n ? edge
     : (fwd ? addWorkDays(edge, n - 1, cal) : subWorkDays(edge, n - 1, cal));
   const stepOver = iso => fwd ? nextWorkDay(iso, cal) : prevWorkDay(iso, cal);
-  const past = (a, b) => fwd ? a < b : a > b;
+  const past = (x, y) => fwd ? x < y : x > y;
+  const out = Object.create(null);
 
-  const out = Object.create(null), seen = Object.create(null);
-  /* Lead time counts down in plain days to the morning the work starts. */
-  const walkLead = (it, endBy) => {
-    if (seen[it.id]) return; seen[it.id] = 1;
-    const n = Math.max(1, dur(it));
-    let start = '', finish = '', anchored = false, clash = false;
-    if (pinnedDate(it)) {
-      finish = String(it.date).trim(); anchored = true;
-      if (endBy && finish > endBy) clash = true;
-    } else if (endBy) { finish = endBy; anchored = true; }
-    if (finish) start = n > 1 ? dShift(finish, -(n - 1)) : finish;
-    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash,
-      total: n, lead: true };
-    const before = start ? dShift(start, -1) : '';
-    for (const k of kidsOf(it)) walkLead(k, before);
-  };
-  /* Everything in a slot sits in the slot's window: the same days, start and finish, because the
-     two of them are one step on the plan and not two things each with its own run of days. */
-  const shareSlot = together => {
-    if (together.length < 2) return;
-    const o0 = out[together[0].id];
-    if (!o0 || !o0.start) return;
-    for (let i = 1; i < together.length; i++) {
-      const o = out[together[i].id];
-      if (!o) continue;
+  /* The run: every line that is work, the foot of the page first, taken in slots. Everything in a
+     slot is done at once, so it all begins where the slot begins and the slot is as long as the one
+     length they share — the one on the line holding the step number. */
+  const work = tr.items.filter(it => !it.main && !isLead(it));
+  const order = fwd ? work.slice().reverse() : work.slice();
+  const slots = [], at = Object.create(null);
+  for (const k of order) if (tr.leadOf[k.id] === k.id) { at[k.id] = { lead: k, with: [] }; slots.push(at[k.id]); }
+  for (const k of order) {
+    if (tr.leadOf[k.id] === k.id) continue;
+    const g = at[tr.leadOf[k.id]];
+    if (g) g.with.push(k); else slots.push({ lead: k, with: [] });
+  }
+  let cur = '';
+  for (const g of slots) {
+    const together = [g.lead].concat(g.with);
+    /* With nothing to go on yet, whatever in the slot carries a date of its own is where the run
+       starts from, or every line after it is left with nothing to work from. */
+    let from = cur;
+    if (!from) for (const k of together) if (pinnedDate(k)) {
+      const e = edgeOf(k.date);
+      if (!from || past(e, from)) from = e;
+    }
+    const n = dur(g.lead);
+    for (const k of together) {
+      let edge = '', far = '', anchored = false, clash = false;
+      if (pinnedDate(k)) {
+        edge = edgeOf(k.date); anchored = true;
+        if (from && past(edge, from)) clash = true;
+      } else if (from) { edge = from; anchored = true; }
+      if (anchored) far = spanFrom(edge, n);
+      out[k.id] = { start: fwd ? edge : far, finish: fwd ? far : edge,
+        anchored: anchored, clash: clash, total: n };
+    }
+    /* They are one step, so they are the same days. */
+    const o0 = out[g.lead.id];
+    for (const k of g.with) {
+      const o = out[k.id];
+      if (!o || !o0 || !o0.start) continue;
       o.start = o0.start; o.finish = o0.finish; o.anchored = o0.anchored; o.total = o0.total;
     }
-  };
-  /* bound is the day this line is held to: the last day it may run to working back, the first day
-     it may begin going forward. */
-  const walk = (it, bound) => {
-    if (seen[it.id]) return; seen[it.id] = 1;
-    const total = span(it, Object.create(null));
-    let edge = '', far = '', anchored = false, clash = false;
-    if (pinnedDate(it)) {
-      /* A date typed on a line is the one end of it that is fixed. The line is fitted from there and
-         everything under it works out from that, so pinning a date part way down moves its own
-         branch and nothing else. */
-      edge = edgeOf(it.date);
-      far = spanFrom(edge, total);
-      anchored = true;
-      if (bound && past(edge, bound)) clash = true;
-    } else if (bound) {
-      edge = bound;
-      far = spanFrom(edge, total);
-      anchored = true;
+    if (o0 && o0.start) cur = stepOver(fwd ? o0.finish : o0.start);
+  }
+  /* Whichever way round the plan is written, what is on order has to be in before the work it holds
+     up starts. It takes no slot in the run; it only has to land in time for what follows it. Lead
+     time counts down in plain days, because a vendor does not keep our week. */
+  for (const it of tr.items) {
+    if (!isLead(it)) continue;
+    let begin = '';
+    for (const x of tr.items) {
+      if (x.main || isLead(x)) continue;
+      if ((tr.sectionOf[x.id] || null) !== (tr.sectionOf[it.id] || null)) continue;
+      if ((Number(x.order) || 0) <= (Number(it.order) || 0)) continue;
+      const o = out[x.id];
+      if (o && o.start && (!begin || o.start < begin)) begin = o.start;
     }
-    const start = fwd ? edge : far, finish = fwd ? far : edge;
-    out[it.id] = { start: start, finish: finish, anchored: anchored, clash: clash, total: total };
-    /* What is under it fills its window in the order the work happens: step one of it first, each
-       one after that following on. An overlapping line is fitted into the window without moving the
-       next one along, and is held to the window rather than running out of it. */
-    /* The run: a slot at a time, each after the one before it. Everything in a slot runs together,
-       so it all begins where the slot begins, and the slot is as long as the longest of them. */
-    const ordered = fwd ? fieldKids(it).slice().reverse() : fieldKids(it);
-    let cur = edge;
-    for (const g of slotsOf(it, ordered)) {
-      const together = [g.lead].concat(g.with);
-      /* With nothing to go on yet, whatever in the slot brought a date of its own is where the run
-         starts, or every line after it is left with nothing to work from. */
-      let at = cur;
-      if (!at) for (const k of together) if (pinnedDate(k)) {
-        const e = edgeOf(k.date);
-        if (!at || past(e, at)) at = e;
-      }
-      for (const k of together) walk(k, at);
-      shareSlot(together);
-      const o0 = out[g.lead.id];
-      if (o0 && o0.start) cur = stepOver(fwd ? o0.finish : o0.start);
-    }
-    /* A line is its parts, so its window is the first of them to the last of them — whatever they
-       came to, not what the count said they would. Two things were wrong without this. A date put
-       on the first thing anybody does left the heading over it blank, and with that heading blank
-       there was nothing for the next one up to follow on from, so the whole plan above the date
-       stayed dateless. And where the parts ran a day past what the count allowed for, the line
-       under them started on top of them. */
+    const n = Math.max(1, dur(it));
+    let finish = pinnedDate(it) ? String(it.date).trim() : (begin ? prevWorkDay(begin, cal) : '');
+    out[it.id] = { start: finish ? (n > 1 ? dShift(finish, -(n - 1)) : finish) : '',
+      finish: finish, anchored: !!finish, clash: false, total: n, lead: true };
+  }
+  /* A section is what its lines came to, the first of them to the last. It is not a step and takes
+     no time of its own — it is a heading over the work in it, and its tally stops where the next
+     section starts. */
+  for (const sec of tr.sections) {
     let lo = '', hi = '';
-    for (const k of fieldKids(it)) {
+    for (const k of (tr.lines[sec.id] || [])) {
+      /* What is on order takes no slot in the run, so it is not part of how long the section is. */
+      if (isLead(k)) continue;
       const o = out[k.id];
       if (!o || !o.start) continue;
       if (!lo || o.start < lo) lo = o.start;
       if (!hi || o.finish > hi) hi = o.finish;
     }
-    if (lo) { out[it.id].start = lo; out[it.id].finish = hi; out[it.id].anchored = true; }
-    /* Whichever way round the plan is written, what is on order has to be in before the work
-       starts. That end of it never flips. */
-    const began = out[it.id].start;
-    for (const k of leadKids(it)) walkLead(k, began ? prevWorkDay(began, cal) : '');
-  };
-  /* The top level is a sequence like any other, taken in the order the work happens. Something on
-     order at the top level waits on nothing, so it does not take a turn in that sequence. */
-  let bound = '';
-  for (const r of tr.roots) if (isLead(r)) walkLead(r, '');
-  const topRun = (fwd ? tr.roots.slice().reverse() : tr.roots).filter(r => !isLead(r));
-  for (const g of slotsOf(null, topRun)) {
-    const together = [g.lead].concat(g.with);
-    let at = bound;
-    if (!at) for (const k of together) if (pinnedDate(k)) {
-      const e = edgeOf(k.date);
-      if (!at || past(e, at)) at = e;
-    }
-    for (const k of together) walk(k, at);
-    shareSlot(together);
-    const o0 = out[g.lead.id];
-    if (o0 && o0.start) bound = stepOver(fwd ? o0.finish : o0.start);
+    out[sec.id] = { start: lo, finish: hi, anchored: !!lo, clash: false,
+      total: lo ? workDaysBetween(lo, hi, cal) : 0, section: true };
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
-  /* The earliest day anything in a line's own subtree has to start. Following the earliest one down
-     from the top is the chain that sets when you have to begin. */
-  const earliest = Object.create(null);
-  const deep = (it, guard) => {
-    if (guard[it.id]) return '';
-    guard[it.id] = 1;
-    let best = out[it.id].start || '';
-    for (const k of kidsOf(it)) {
-      const e = deep(k, guard);
-      if (e && (!best || e < best)) best = e;
-    }
-    earliest[it.id] = best;
-    return best;
-  };
-  for (const r of tr.roots) deep(r, Object.create(null));
-  const critical = Object.create(null);
-  const markDown = it => {
-    critical[it.id] = true;
-    const ks = kidsOf(it);
-    let pick = null;
-    for (const k of ks) if (earliest[k.id] && (!pick || earliest[k.id] < earliest[pick.id])) pick = k;
-    if (pick) markDown(pick);
-  };
-  for (const r of tr.roots) if (out[r.id].anchored && earliest[r.id]) markDown(r);
-
   const today0 = today();
   const flat = planFlat(plan);
-  /* Numbered from the bottom: step one is the first thing anybody does. A line set to run alongside
-     another is not a step of its own — it shares that one's number and takes a letter, 8a, 8b — so
-     the numbers still count the slots in the run rather than the lines on the page. */
+  /* Numbered from the bottom: step one is the first thing anybody does. A section is not a step, and
+     nor is a line running alongside another — it shares that one's number and takes a letter. */
   const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
   const stepOf = Object.create(null);
   let slotNo = 0;
   for (let i = flat.length - 1; i >= 0; i--) {
     const it = flat[i].item;
-    if (tr.leadOf[it.id] !== it.id) continue;
+    if (it.main || isLead(it) || tr.leadOf[it.id] !== it.id) continue;
     slotNo++;
     stepOf[it.id] = String(slotNo);
     (tr.mates[it.id] || []).forEach((m, j) => { stepOf[m.id] = slotNo + (LETTERS[j] || '+'); });
   }
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
-    const fk = fieldKids(it).length, ks = kidsOf(it).length;
-    /* A length typed on a line that has work under it is what you hoped it would take. A 1 is not
-       that: it is what every new line starts with, and on a plan written before a line dropped it
-       on becoming a heading it would read as being sixteen days over. */
-    const target = (fk && dur(it) !== 1) ? dur(it) : 0;
-    /* And what it actually comes to is the window it ended up with, counted in days this job works.
-       Adding its parts up instead said one day for a line that ran over two. */
-    const long = (fk && d.start && d.finish) ? workDaysBetween(d.start, d.finish, cal) : d.total;
-    return { item: it, id: it.id, depth: f.depth, stray: !!f.stray,
+    const mine = it.main ? (tr.lines[it.id] || []) : [];
+    const target = it.main ? dur(it) : 0;
+    return { item: it, id: it.id, depth: f.depth, stray: false,
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
-      pinned: pinnedDate(it), days: long, own: dur(it), kids: ks, rolled: fk > 0,
-      shared: tr.leadOf[it.id] !== it.id || (tr.mates[it.id] || []).length > 0,
-      main: !!it.main,
-      head: fk > 0 || !!it.main,
+      pinned: pinnedDate(it), days: d.total, own: dur(it),
+      main: !!it.main, head: !!it.main, rolled: !!it.main,
+      kids: mine.filter(x => !isLead(x)).length,
+      section: tr.sectionOf[it.id] || '',
       lead: !!d.lead, kind: String(it.kind || ''),
-      target: target, slack: target ? target - long : null,
       step: stepOf[it.id] || '',
       mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
       mateStep: tr.leadOf[it.id] !== it.id ? (stepOf[tr.leadOf[it.id]] || '') : '',
       withMe: (tr.mates[it.id] || []).length,
+      target: target, slack: target ? target - d.total : null,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
       onDayOff: !isWorkDay(today0, cal),
-      critical: !!critical[it.id] && !pinnedDate(it) };
+      critical: false };
   });
   const by = Object.create(null); rows.forEach(r => by[r.id] = r);
   return { rows: rows, by: by, tree: tr,
     dated: rows.filter(r => r.pinned).length,
     clashes: rows.filter(r => r.clash).length,
-    rootless: rows.filter(r => !r.anchored && r.depth === 0).length,
-    strays: rows.filter(r => r.stray).length,
-    slots: slotNo,
-    fwd: fwd,
+    rootless: rows.filter(r => !r.anchored && !r.main).length,
+    strays: 0, slots: slotNo,
     over: rows.filter(r => r.slack != null && r.slack < 0).length,
+    fwd: fwd,
     behind: rows.filter(r => r.late).length };
 }
 
@@ -13264,53 +13178,36 @@ async function forgetCrew(name) {
    The whole point is that it is quick: Enter puts the next line in, Tab pushes a line under the one
    above to say it has to happen first, Shift+Tab pulls it back out. Nothing is saved per keystroke
    — the line is written when you leave it, so typing never waits on the network. */
-const nextOrder = (p, parent) => {
+const nextOrder = (p) => {
   let n = 0;
-  for (const it of planItems(p)) if ((it.parent || null) === (parent || null)) n = Math.max(n, Number(it.order) || 0);
+  for (const it of planItems(p)) n = Math.max(n, Number(it.order) || 0);
   return n + 10;
 };
-/* A line that was work and now has work under it is a heading, and a heading is as long as its
-   parts. The 1 it is carrying is not a target anybody set — it is the one every new line starts
-   with — and left on there it reads as being sixteen days over before anyone has typed anything.
-   A length somebody actually chose is left alone. */
-function headingTakesItsParts(p, parentId) {
-  if (!parentId) return;
-  const par = planItemById(p, parentId); if (!par) return;
-  const kids = planItems(p).filter(x => (x.parent || null) === parentId && !isLead(x));
-  if (kids.length === 1 && Number(par.days) === 1) par.days = 0;
-}
-/* Whatever runs alongside a line goes where it goes. They are one step, and a step cannot be left
-   behind in two places — the pairing only holds between lines sitting beside each other, so a lead
-   moved on its own would quietly lose whatever was running with it. */
 const mateIdsOf = (p, id) => (planTree(p).mates[id] || []).map(m => m.id);
 function moveMatesWith(p, id, ids) {
   const it = planItemById(p, id); if (!it || !ids || !ids.length) return;
   ids.forEach((mid, i) => {
     const m = planItemById(p, mid);
     if (!m) return;
-    m.parent = it.parent || null;
-    m.order = (Number(it.order) || 0) + (i + 1) / 1000;
+    m.order = (Number(it.order) || 0) - (i + 1) / 1000;
   });
 }
-function blankLine(p, parent, order) {
-  return { id: uid('li'), name: '', who: '', days: 1, parent: parent || null,
-    order: order == null ? nextOrder(p, parent) : order, hold: '', note: '', done: false };
+function blankLine(p, order) {
+  return { id: uid('li'), name: '', who: '', days: 1,
+    order: order == null ? nextOrder(p) : order, hold: '', note: '', done: false };
 }
 /* A new line goes in right under the one you were on, at the same depth — which is what "the next
    thing" means when you are typing a list. */
-async function addLineAfter(afterId, asChild) {
+async function addLineAfter(afterId) {
   const p = currentPlan(); if (!p) return;
   const prev = afterId ? planItemById(p, afterId) : null;
-  const parent = !prev ? null : (asChild ? prev.id : (prev.parent || null));
-  const it = blankLine(p, parent);
-  headingTakesItsParts(p, parent);
-  if (prev && !asChild) {
+  const it = blankLine(p);
+  if (prev) {
     /* Slot it directly below, rather than at the end, by sitting between this one and the next. */
-    const sibs = planItems(p).filter(x => (x.parent || null) === parent)
-      .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
-    const i = sibs.findIndex(x => x.id === prev.id);
+    const list = planTree(p).items;
+    const i = list.findIndex(x => x.id === prev.id);
     const before = Number(prev.order) || 0;
-    const after = (i >= 0 && sibs[i + 1]) ? (Number(sibs[i + 1].order) || before + 20) : before + 20;
+    const after = (i >= 0 && list[i + 1]) ? (Number(list[i + 1].order) || before + 20) : before + 20;
     it.order = before + (after - before) / 2;
   }
   p.items = planItems(p).concat([it]);
@@ -13320,14 +13217,15 @@ async function addLineAfter(afterId, asChild) {
 }
 async function addPlanLine() {
   const p = currentPlan(); if (!p) return;
-  const it = blankLine(p, null);
+  const it = blankLine(p);
   p.items = planItems(p).concat([it]);
   planFocus = it.id;
   renderSchedule(); focusLine(it.id);
   await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
 }
-/* "Something has to happen before this" — a new line, already sitting under the one you clicked. */
-async function addNeedBefore(id) { await addLineAfter(id, true); }
+/* A new line directly below the one you clicked, which in a list read bottom to top is the thing
+   that has to happen before it. */
+async function addNeedBefore(id) { await addLineAfter(id); }
 
 function focusLine(id) {
   const el = $('ln_' + id);
@@ -13346,46 +13244,33 @@ async function commitLine(id) {
   const p = stashLine(id);
   if (p) await savePlan(p);
 }
-async function indentLine(id, out) {
+/* ── sections ──
+   A starred line is a section, and it owns every line below it until the next starred line. */
+async function toggleMain(id) {
   const p = currentPlan(); if (!p) return;
-  stashLine(id);
   const it = planItemById(p, id); if (!it) return;
-  const ms = mateIdsOf(p, id);
-  const sibs = planItems(p).filter(x => (x.parent || null) === (it.parent || null))
-    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
-  const i = sibs.findIndex(x => x.id === id);
-  if (out) {
-    /* Out one level: it becomes the next thing after what used to be its parent. */
-    const par = it.parent ? planItemById(p, it.parent) : null;
-    if (!par) return;                       // already at the top; nothing to come out of
-    it.parent = par.parent || null;
-    it.order = (Number(par.order) || 0) + 1;
-  } else {
-    /* In one level: it goes under the line above it, which is what the indent means. */
-    if (i <= 0) return;                     // nothing above it at this level to go under
-    it.parent = sibs[i - 1].id;
-    it.order = nextOrder(p, it.parent);
-    headingTakesItsParts(p, it.parent);
+  if (it.main) delete it.main;
+  else {
+    it.main = true;
+    delete it.alongside; delete it.overlap;      // a section is not work, so it runs with nothing
+    if (Math.round(Number(it.days) || 0) === 1) it.days = 0;
   }
-  moveMatesWith(p, id, ms);
-  renderSchedule(); focusLine(id);
+  renderSchedule();
   await savePlan(p);
 }
 async function removeLine(id, quiet) {
   const p = currentPlan(); if (!p) return;
   for (const x of planItems(p)) if (x.alongside === id) { delete x.alongside; delete x.overlap; }
-  if (planSel === id) planSel = null;
+  planSel = (planSel || []).filter(x => x !== id);
   const it = planItemById(p, id); if (!it) return;
   const tr = planTree(p);
-  const kids = (tr.kids[id] || []);
+  const kids = it.main ? (tr.lines[id] || []) : [];
   if (!quiet && (String(it.name || '').trim() || kids.length)) {
     const msg = 'Take "' + (it.name || 'this line') + '" off the plan?' +
       (kids.length ? '\n\nThe ' + kids.length + ' line' + (kids.length === 1 ? '' : 's') +
-        ' under it come' + (kids.length === 1 ? 's' : '') + ' up a level rather than going with it.' : '');
+        ' in it stay' + (kids.length === 1 ? 's' : '') + ' on the plan, and fall to the section above.' : '');
     if (!confirm(msg)) return;
   }
-  /* What was under it comes up to where it was, so nothing is lost by taking out a middle line. */
-  for (const k of kids) { k.parent = it.parent || null; k.order = (Number(it.order) || 0) + (Number(k.order) || 0) / 1000; }
   p.items = planItems(p).filter(x => x.id !== id);
   if (planEdit === id) planEdit = null;
   renderSchedule();
@@ -13400,12 +13285,16 @@ async function lineKey(ev, id) {
   if (ev.key === 'Enter') {
     ev.preventDefault();
     await commitLine(id);
-    await addLineAfter(id, false);
+    await addLineAfter(id);
     return;
   }
   if (ev.key === 'Tab') {
+    /* There is nothing to indent any more. Tab makes the line a section, or an ordinary line again,
+       which is the whole of what there is to say about where a line sits. */
     ev.preventDefault();
-    await indentLine(id, !!ev.shiftKey);
+    await commitLine(id);
+    await toggleMain(id);
+    focusLine(id);
     return;
   }
   if (ev.key === 'Backspace' && el && !String(el.value || '').length) {
@@ -13436,176 +13325,92 @@ const LINE_KINDS = [
   { id: 'order',     label: 'Order / release' }
 ];
 const kindLabel = k => (LINE_KINDS.find(x => x.id === (k || '')) || {}).label || '';
-function planAncestors(p, id) {
-  const byId = planTree(p).byId;
-  const out = Object.create(null);
-  let at = byId[id] && byId[id].parent;
-  for (let i = 0; i < 500 && at; i++) { out[at] = 1; at = byId[at] && byId[at].parent; }
-  return out;
-}
-function openNeeds(id) {
-  planPick = (planPick === id) ? null : id;
+/* ── doing two things at once ──
+   They take one slot in the run between them, and that slot is as long as the one length they share.
+   The ticks down the side are how you say which: tick as many as you want inside one section, press
+   Done, and they are one step — a, b, c off the one number. Nothing happens until Done, so there is
+   no rush and no limit. */
+function tapPair(id) {
+  const i = planSel.indexOf(id);
+  planSel = i < 0 ? planSel.concat([id]) : planSel.filter(x => x !== id);
   renderSchedule();
 }
-/* Two things done at once take one slot in the run, and that slot takes as long as the longer of
-   them. The tick down the side of the plan is what makes them: tick one, tick another beside it,
-   and they are a group — a, b, c off the one step number. Ticking one that is already in a group
-   takes it back out. */
-async function tapPair(id) {
+function clearSel() { planSel = []; renderSchedule(); }
+/* Everything ticked, plus everything already running with anything ticked, becomes one group. That
+   is what lets you add to a group that is already there: tick the new line and any one of them. */
+async function doneSel() {
+  const p = currentPlan(); if (!p) return;
+  const tr = planTree(p);
+  const want = Object.create(null);
+  for (const id of planSel) {
+    const lead = tr.leadOf[id] || id;
+    want[lead] = 1;
+    for (const m of (tr.mates[lead] || [])) want[m.id] = 1;
+  }
+  const ids = Object.keys(want).map(x => planItemById(p, x))
+    .filter(x => x && !x.main && !isLead(x));
+  if (ids.length < 2) { planSel = []; renderSchedule(); return; }
+  const secs = Object.create(null);
+  for (const x of ids) secs[tr.sectionOf[x.id] || ''] = 1;
+  if (Object.keys(secs).length > 1) {
+    toast('They have to be in the same section — move them together first', true);
+    return;
+  }
+  /* The one furthest down the page holds the number, because the run reaches it first. */
+  ids.sort((x, y) => (Number(x.order) || 0) - (Number(y.order) || 0));
+  const lead = ids[ids.length - 1];
+  const base = Number(lead.order) || 0;
+  let k = 1;
+  for (const x of ids) {
+    if (x.id === lead.id) continue;
+    x.alongside = lead.id;
+    x.order = base - (k++) / 1000;
+  }
+  delete lead.alongside; delete lead.overlap;
+  planSel = [];
+  renderSchedule();
+  await savePlan(p);
+}
+/* Taking one back out. The one holding the number hands it to the next one along rather than
+   throwing the rest of the group away with it. */
+async function clearMate(id) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, id); if (!it) return;
   const tr = planTree(p);
-  const lead = tr.leadOf[id];
-  const mates = tr.mates[id] || [];
-  if (lead !== id) {                       // in a group, as one of the ones alongside
-    const host = planItemById(p, lead);
-    delete it.alongside; delete it.overlap;
-    /* Back to a step of its own, where it was sitting rather than at the end of the list. */
-    if (host) it.order = (Number(host.order) || 0) - 0.5;
-    planSel = lead;
-    renderSchedule();
-    await savePlan(p);
-    return;
-  }
-  if (mates.length) {                      // in a group, as the one holding the number
-    /* The next one along takes the number and its place, so taking one out of a group of three
-       does not throw the other two away with it. */
-    const next = mates[mates.length - 1];
-    const base = Number(it.order) || 0;
-    delete next.alongside; delete next.overlap;
-    next.order = base;
-    it.order = base - 0.5;
-    let k = 1;
-    for (const m of mates) if (m.id !== next.id) { m.alongside = next.id; m.order = base + (k++) / 1000; }
-    planSel = next.id;
-    renderSchedule();
-    await savePlan(p);
-    return;
-  }
-  if (planSel && planSel !== id) {
-    const other = planItemById(p, planSel);
-    if (other && (other.parent || null) === (it.parent || null)) {
-      const host = planTree(p).leadOf[other.id] === other.id ? other : planItemById(p, planTree(p).leadOf[other.id]);
-      if (host) {
-        /* Whichever of them is further down the page holds the number, because that is the one the
-           run reaches first. */
-        if ((Number(it.order) || 0) > (Number(host.order) || 0)) { await setMate(host.id, it.id); planSel = it.id; }
-        else { await setMate(it.id, host.id); planSel = host.id; }
-        renderSchedule();
-        return;
-      }
+  if (tr.leadOf[it.id] === it.id) {
+    const ms = tr.mates[it.id] || [];
+    const next = ms[ms.length - 1];
+    if (next) {
+      delete next.alongside;
+      const base = Number(it.order) || 0;
+      next.order = base; it.order = base - 0.5;
+      let k = 1;
+      for (const m of ms) if (m.id !== next.id) { m.alongside = next.id; m.order = base - (k++) / 1000; }
     }
-    toast('Tick one beside it — a group is lines at the same level', true);
-    return;
+  } else {
+    const host = planItemById(p, tr.leadOf[it.id]);
+    delete it.alongside;
+    if (host) it.order = (Number(host.order) || 0) - 0.5;
   }
-  planSel = (planSel === id) ? null : id;
-  renderSchedule();
-}
-async function setMate(id, hostId) {
-  const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, id), host = planItemById(p, hostId);
-  if (!it || !host || it.id === host.id) return;
-  /* Ticking the one it already runs with unticks it, because that is what a tick that is already
-     ticked does. Without this the only way back out was a button on the bar, and a tick that will
-     not untick reads as the thing being stuck. */
-  const tr = planTree(p);
-  if (tr.leadOf[it.id] === host.id) { await clearMate(id, true); return; }
-  if (tr.leadOf[host.id] !== host.id) return;          // that one already runs alongside something
-  if (planAncestors(p, host.id)[it.id]) return;        // and it cannot be its own parent's partner
-  /* Only one beside it in the same list. The run is a sequence of the lines at one level, so a line
-     could only pair across levels by being moved out of whatever it was under — which it was, and
-     quietly, and taking the pairing off again never put it back. The heading above it then stopped
-     counting it, and came out shorter than the work in it. */
-  if ((host.parent || null) !== (it.parent || null)) {
-    toast('It can only run alongside a line at the same level', true);
-    return;
-  }
-  /* The two of them share one length from here on, so it starts as the longer of what they were and
-     nothing silently gets shorter. It lives on the line holding the step number. */
-  const leafKids = x => planItems(p).filter(y => (y.parent || null) === x.id && !isLead(y));
-  if (!leafKids(host).length && !leafKids(it).length) {
-    host.days = Math.max(Math.round(Number(host.days) || 0), Math.round(Number(it.days) || 0));
-  }
-  it.alongside = host.id;
   delete it.overlap;
-  const mates = (tr.mates[host.id] || []).filter(m => m.id !== it.id).length;
-  it.order = (Number(host.order) || 0) + (mates + 1) / 1000;
-  planSel = host.id;
-  renderSchedule();
-  await savePlan(p);
-}
-async function clearMate(id, stay) {
-  const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, id); if (!it) return;
-  /* It goes back to being a step of its own, where it was sitting rather than at the end of the
-     list — undoing something should not also move it somewhere you have to go and find it. */
-  const host = planItemById(p, it.alongside || '');
-  delete it.alongside; delete it.overlap;
-  if (host) it.order = (Number(host.order) || 0) - 0.5;
-  if (!stay) planSel = null;
-  renderSchedule();
-  await savePlan(p);
-}
-async function toggleNeed(parentId, childId) {
-  const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, childId); if (!it) return;
-  const ms = mateIdsOf(p, childId);
-  if (it.parent === parentId) { it.parent = null; it.order = nextOrder(p, null); }
-  else { it.parent = parentId; it.order = nextOrder(p, parentId); headingTakesItsParts(p, parentId); }
-  moveMatesWith(p, childId, ms);
   renderSchedule();
   await savePlan(p);
 }
 /* Lead time is given in weeks because that is how a vendor quotes it. A vendor's week is seven days
    whatever the job works, so four weeks lands four weeks earlier either way. */
 const weeksToDays = (w, cal) => Math.max(0, Math.round(Number(w) || 0)) * 7;
-async function addNeedNew(parentId) {
-  const p = currentPlan(); if (!p) return;
-  const name = String((($('pickQ') || {}).value) || '').trim();
-  if (!name) { toast('Give it a name', true); return; }
-  const kind = (($('pickKind') || {}).value) || '';
-  const wk = (($('pickWeeks') || {}).value) || '';
-  const cal = workCal(job);
-  const it = blankLine(p, parentId);
-  it.name = autoCap(name);
-  it.kind = kind;
-  it.days = wk ? weeksToDays(wk, cal) : 1;
-  p.items = planItems(p).concat([it]);
-  renderSchedule();
-  await saveOrUndo(p, () => { p.items = planItems(p).filter(x => x.id !== it.id); });
-}
-/* The bar that comes up while you are saying what has to happen first. The ticks down the outline
-   do the choosing — there is no second list to scroll — so all this holds is the way out and a way
-   to put something on the plan that is not on it yet. */
-/* The bar that is up once one line has been ticked and is waiting for the next. */
-function selBarHtml(p, me) {
+/* The bar that is up while lines are ticked and waiting to be put together. */
+function selBarHtml(p, n) {
   return `
     <div class="pick-bar">
-      <b>Tick another line beside "${esc(me.name || 'this')}" to do them at once</b>
-      <small>They take one step between them — a, b, c off the one number — and it lasts as long
-        as the one length you set on it.</small>
+      <b>${n} line${n === 1 ? '' : 's'} ticked</b>
+      <small>${n < 2 ? 'Tick the others that are done at the same time — anywhere in the same section.'
+        : 'They will take one step between them, a, b, c off the one number, and last as long as the one length you set on it.'}</small>
       <span class="spacer" style="flex:1"></span>
-      <button class="btn sm primary" onclick="clearSel()">Done</button>
+      <button class="btn sm ghost" onclick="clearSel()">Cancel</button>
+      <button class="btn sm primary"${n < 2 ? ' disabled' : ''} onclick="doneSel()">Done — do them at once</button>
     </div>`;
 }
-function clearSel() { planSel = null; renderSchedule(); }
-function pickBarHtml(p, me) {
-  return `
-    <div class="pick-bar">
-      <b>Tick what has to happen first, before "${esc(me.name || 'this')}"</b>
-      <span class="spacer" style="flex:1"></span>
-      <small>Not on the plan?</small>
-      <input class="input sm pick-name" id="pickQ" placeholder="Name it…"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();addNeedNew('${me.id}')}">
-      <select class="input sm" id="pickKind">${LINE_KINDS.map(k =>
-        `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
-      <span class="pick-lead"><input class="input sm" id="pickWeeks" type="number" min="0" step="1"
-        placeholder="0"><small>weeks lead</small></span>
-      <button class="btn sm" onclick="addNeedNew('${me.id}')">Add it</button>
-      <button class="btn sm primary" onclick="openNeeds('${me.id}')">Done</button>
-    </div>`;
-}
-
 /* ── the rest of a line ──
    The outline holds the name and the shape. Everything else about a line — whose it is, how long it
    takes, what is holding it up — lives behind the pencil, so building the plan is not interrupted
@@ -13672,18 +13477,15 @@ async function takePastedList() {
   const text = ($('pasteBox') || {}).value || '';
   const rows = parseOutline(text);
   if (!rows.length) { toast('Nothing to add', true); return; }
-  const stack = [];                       // the last line seen at each depth
   const made = [];
   for (const r of rows) {
-    const parent = r.depth > 0 ? (stack[r.depth - 1] || null) : null;
-    const it = blankLine(p, parent, null);
+    const it = blankLine(p, null);
     it.name = autoCap(r.name);
-    it.order = nextOrder(p, parent) + made.filter(m => (m.parent || null) === (parent || null)).length * 10;
+    /* One list: a line typed flush left is a section, and the ones indented under it are its work. */
+    if (!r.depth) { it.main = true; it.days = 0; }
+    it.order = nextOrder(p) + made.length * 10;
     made.push(it);
-    stack[r.depth] = it.id;
-    stack.length = r.depth + 1;
     p.items = planItems(p).concat([it]);   // in as we go, so nextOrder sees them
-    headingTakesItsParts(p, parent);
   }
   closePdf();
   renderSchedule();
@@ -13920,49 +13722,40 @@ function planOutlineHtml(p, rows, res) {
   /* While you are saying what has to happen first, the ticks stop meaning done and start meaning
      chosen. It is the same list in the same order in the same place, so picking the twentieth thing
      and then the twenty-first is two clicks next to each other. */
-  const me = planPick ? planItemById(p, planPick) : null;
-  const up = me ? planAncestors(p, planPick) : null;
-  const picked = Object.create(null);
-  if (me) for (const k of (planTree(p).kids[planPick] || [])) picked[k.id] = 1;
-  /* Or the other thing: one line ticked and waiting for the next one to pair it with. */
-  const sel = (!me && planSel) ? planItemById(p, planSel) : null;
   const tr0 = planTree(p);
-  return `<div class="out-list${me ? ' is-picking' : ''}">
+  const ticked = Object.create(null);
+  for (const id of planSel) ticked[id] = 1;
+  return `<div class="out-list${planSel.length ? ' is-picking' : ''}">
     <datalist id="schPeople">${people.map(w => `<option value="${escAttr(w)}"></option>`).join('')}</datalist>
-    ${me ? pickBarHtml(p, me) : ''}${sel ? selBarHtml(p, sel) : ''}
+    ${planSel.length ? selBarHtml(p, planSel.length) : ''}
     ${rows.map((r, i) => {
       const it = r.item;
       /* Coming back out of a block, the line that follows it is not part of it. Nothing said so
          once that line was not a main line itself, so it read as the last thing in the block
          above it. */
       const outOf = i > 0 && r.depth < rows[i - 1].depth;
-      const step = r.step || String(n - i);
+      const step = r.step;      // a section is not a step, so it carries no number
       const dates = r.anchored
         ? ((r.finish && r.finish !== r.start)
             ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
         : '';
       const grouped = r.mate || r.withMe;
-      const tick = me
-        ? (r.id === planPick
-            ? `<span class="out-tick is-me" title="This is the line you are filling in">↳</span>`
-            : (up[r.id]
-                ? `<span class="out-tick is-off" title="This one is already waiting on it">·</span>`
-                : `<button class="out-tick is-sel" id="sel_${r.id}" onclick="toggleNeed('${planPick}','${r.id}')"
-                     title="${picked[r.id] ? 'Take it back off' : 'It has to happen first'}">${picked[r.id] ? '☑' : '☐'}</button>`))
-        : `<button class="out-tick is-grp${grouped ? ' on' : ''}${r.id === planSel ? ' is-waiting' : ''}"
+      const tick = `<button class="out-tick is-grp${ticked[r.id] ? ' on' : ''}${grouped ? ' is-grouped' : ''}"
              onclick="tapPair('${r.id}')"
-             title="${grouped ? 'Done at the same time as step ' + escAttr(r.mateStep || r.step) + ' — click to take it out of that group'
-               : r.id === planSel ? 'Waiting — tick another line beside it to do them at once'
-               : 'Tick this and another beside it to do them at once'}">${
-             grouped ? '☑' : r.id === planSel ? '◉' : '☐'}</button>`;
+             title="${ticked[r.id] ? 'Ticked — press Done to do these at once'
+               : grouped ? 'Done at the same time as step ' + escAttr(r.mateStep || r.step) + ' — tick it to add more, or use the chip to take it out'
+               : 'Tick this and the others done at the same time, then press Done'}">${
+             ticked[r.id] ? '☑' : '☐'}</button>`;
       return `
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
           r.head ? ' is-head' : ''}${outOf ? ' is-outof' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
-          (r.id === planPick || r.id === planSel) ? ' is-picked' : ''}" style="--d:${r.depth}"
+          ticked[r.id] ? ' is-picked' : ''}" style="--d:${r.depth}"
         ondragover="dragOverLine(event,'${r.id}')" ondrop="dropOnLine(event,'${r.id}')">
         <span class="out-grip" draggable="true" ondragstart="dragLine(event,'${r.id}')"
-          ondragend="dragEndLine()" title="Drag it where you want it — onto a line to put it under that line">⠿</span>
-        ${r.mate
+          ondragend="dragEndLine()" title="Drag it where you want it — onto a section to put it in that section">⠿</span>
+        ${r.main
+          ? `<span class="out-step is-sec" title="A section — it is not a step of its own">★</span>`
+          : r.mate
           ? `<span class="out-step is-mate" title="Runs alongside step ${esc(r.mateStep)} — they take one step between them">${esc(step)}</span>`
           : `<input class="out-step" value="${escAttr(step)}" title="Step ${step} — type another number to move it there"
                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
@@ -13971,7 +13764,7 @@ function planOutlineHtml(p, rows, res) {
         <button class="out-done${it.done ? ' on' : ''}" onclick="togglePlanDone('${r.id}')"
           title="${it.done ? 'Done — click to put it back' : 'Cross it off'}">${it.done ? '✔' : '✓'}</button>
         <input class="out-name" id="ln_${r.id}" value="${escAttr(it.name || '')}"
-          placeholder="${r.depth ? 'what has to happen first…' : 'what has to be done…'}"
+          placeholder="${r.main ? 'name this section…' : 'what has to be done…'}"
           onkeydown="lineKey(event,'${r.id}')" onblur="commitLine('${r.id}')">
         ${r.head
           ? `<span class="out-who is-none" title="Whose it is is on the lines underneath"></span>`
@@ -14007,14 +13800,11 @@ function planOutlineHtml(p, rows, res) {
           ${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}
         </span>
         <span class="out-act">
-          <button class="x star${r.head ? ' on' : ''}" onclick="toggleMain('${r.id}')"
-            title="${r.rolled && !r.main ? 'A main line, because there is work under it — it carries the overall dates of that work'
-              : r.main ? 'A main line — the plan is read by these, and it carries the overall dates of what goes under it. Click to make it an ordinary line again.'
-              : 'Make it a main line, with the overall dates of whatever goes under it'}">${r.head ? '★' : '☆'}</button>
-          <button class="x${planPick === r.id ? ' on' : ''}" title="What is holding this up"
-            onclick="openNeeds('${r.id}')">↳</button>
-          <button class="x" title="Put it under the line above (Tab)" onclick="indentLine('${r.id}',false)">→</button>
-          <button class="x" title="Pull it back out (Shift+Tab)" onclick="indentLine('${r.id}',true)">←</button>
+          <button class="x star${r.main ? ' on' : ''}" onclick="toggleMain('${r.id}')"
+            title="${r.main ? 'A section — it owns every line below it until the next starred line, and shows what they come to. Click to make it an ordinary line again.'
+              : 'Make it a section. It takes the lines below it, as far as the next starred line.'}">${r.main ? '★' : '☆'}</button>
+          <button class="x" title="Put a new line below this one, which is the thing that happens before it"
+            onclick="addNeedBefore('${r.id}')">↳</button>
           <button class="x" title="What is holding it up, and anything else worth knowing"
             onclick="editPlanLine('${r.id}')">✎</button>
           <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
@@ -14024,7 +13814,7 @@ function planOutlineHtml(p, rows, res) {
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
       <button class="btn sm ghost" onclick="pasteListModal()">Type or paste a list…</button>
-      <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab puts it under the one above · Shift+Tab pulls it back out</span>
+      <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab makes it a section · drag a line by the handle to move it</span>
     </div>
   </div>`;
 }
@@ -14057,25 +13847,29 @@ async function dropOnLine(ev, id) {
   planDrag = null; dropHint(null, null);
   if (from && from !== id) await moveLineTo(from, id, mode);
 }
+/* Dropped on a section it goes into that section, at the top of it. Dropped on or between ordinary
+   lines it goes there, and whichever section that place is in is the section it is now in. */
 async function moveLineTo(fromId, toId, mode) {
   const p = currentPlan(); if (!p) return;
   const it = planItemById(p, fromId), target = planItemById(p, toId);
   if (!it || !target || it.id === target.id) return;
-  /* Nothing can be put underneath something that is already underneath it. */
-  if (planAncestors(p, toId)[fromId]) { toast('That one is already under this line', true); return; }
   const ms = mateIdsOf(p, fromId);
-  if (mode === 'into') {
-    it.parent = target.id;
-    it.order = nextOrder(p, target.id);
-    headingTakesItsParts(p, target.id);
-  } else {
-    it.parent = target.parent || null;
-    it.order = (Number(target.order) || 0) + (mode === 'below' ? 0.5 : -0.5);
-  }
-  /* Two lines only run alongside each other while they are sitting beside each other. */
-  const lead = planItemById(p, it.alongside || '');
-  if (lead && (lead.parent || null) !== (it.parent || null)) delete it.alongside;
+  const list = planTree(p).items;
+  const i = list.findIndex(x => x.id === target.id);
+  let before, after;
+  if (target.main && mode !== 'above') { before = target; after = list[i + 1]; }
+  else if (mode === 'above') { before = list[i - 1]; after = target; }
+  else { before = target; after = list[i + 1]; }
+  const lo = before ? (Number(before.order) || 0) : (Number(target.order) || 0) - 20;
+  const hi = after ? (Number(after.order) || 0) : lo + 20;
+  it.order = lo + (hi - lo) / 2;
   moveMatesWith(p, fromId, ms);
+  /* Two lines only run alongside each other inside one section. */
+  const tr = planTree(p);
+  for (const x of planItems(p)) {
+    const h = x.alongside ? planItemById(p, x.alongside) : null;
+    if (h && (tr.sectionOf[h.id] || null) !== (tr.sectionOf[x.id] || null)) delete x.alongside;
+  }
   renderSchedule();
   await savePlan(p);
 }
@@ -14152,26 +13946,23 @@ async function setLineDate(id, v) {
    so moving something is one keystroke rather than a drag. */
 async function moveToStep(id, v) {
   const p = currentPlan(); if (!p) return;
-  const flat = planFlat(p);
   const want = String(v == null ? '' : v).trim().toLowerCase();
   if (!want) { renderSchedule(); return; }
   /* The numbers count slots in the run, not lines on the page, so the one you typed is looked up
      rather than counted back from the end. */
+  const list = planTree(p).items;
   const steps = planDates(p, workCal(job)).by;
-  const toIdx = flat.findIndex(f => String((steps[f.item.id] || {}).step || '').toLowerCase() === want);
-  const from = flat.findIndex(f => f.item.id === id);
+  const toIdx = list.findIndex(x => String((steps[x.id] || {}).step || '').toLowerCase() === want);
+  const from = list.findIndex(x => x.id === id);
   if (toIdx < 0 || from < 0 || toIdx === from) { renderSchedule(); return; }
-  const target = flat[toIdx];
-  if (!target) { renderSchedule(); return; }
-  /* Nothing can be put underneath something that is already underneath it. */
-  const below = Object.create(null);
-  const mark = x => { below[x.item.id] = 1; };
-  for (let i = from + 1; i < flat.length && flat[i].depth > flat[from].depth; i++) mark(flat[i]);
-  if (below[target.item.id]) { toast('That one is already under this line', true); renderSchedule(); return; }
   const it = planItemById(p, id);
   const ms = mateIdsOf(p, id);
-  it.parent = target.item.parent || null;
-  it.order = (Number(target.item.order) || 0) - (toIdx > from ? -1 : 1) * 0.5;
+  /* It takes that line's place: just above it going up the page, just below it coming down. */
+  const target = list[toIdx];
+  const other = list[toIdx + (toIdx > from ? 1 : -1)];
+  const a2 = Number(target.order) || 0;
+  const b2 = other ? (Number(other.order) || 0) : a2 + (toIdx > from ? 20 : -20);
+  it.order = a2 + (b2 - a2) / 2;
   moveMatesWith(p, id, ms);
   renderSchedule();
   await savePlan(p);
