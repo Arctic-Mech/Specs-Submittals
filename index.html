@@ -480,7 +480,7 @@ textarea.autosize[rows="1"] { min-height: 0; }
    the step numbers staggered with the indent, so nothing down the page lined up with anything. Only
    the name steps in now; everything else holds its column. */
 .out-row { display: grid; align-items: center; gap: 7px;
-  grid-template-columns: 14px 30px 18px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
+  grid-template-columns: 16px 30px 18px 18px minmax(110px, 1fr) 116px 46px 182px minmax(0, 190px) auto;
   padding: 3px 10px; border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent; position: relative; }
 .out-row:last-of-type { border-bottom: none; }
@@ -552,13 +552,12 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .out-act .x { visibility: hidden; }
 .out-row:hover .out-act .x, .out-row:focus-within .out-act .x { visibility: visible; }
 .out-act .x.star.on { visibility: visible; color: var(--amber); }
-.out-grip { color: var(--text-3); opacity: 0; cursor: grab; font-size: 11px; line-height: 1;
-  text-align: center; user-select: none; }
-.out-row:hover .out-grip { opacity: .7; }
-.out-grip:active { cursor: grabbing; }
-.out-row.drop-into { box-shadow: inset 0 0 0 2px var(--accent); }
-.out-row.drop-above { box-shadow: inset 0 3px 0 var(--accent); }
-.out-row.drop-below { box-shadow: inset 0 -3px 0 var(--accent); }
+/* up and down, a line at a time, rather than dragging */
+.out-move { display: flex; flex-direction: column; justify-content: center; gap: 0; }
+.out-move .mv { border: none; background: none; color: var(--text-3); cursor: pointer; padding: 0;
+  font-size: 7px; line-height: 7px; opacity: 0; }
+.out-row:hover .out-move .mv, .out-row:focus-within .out-move .mv { opacity: .75; }
+.out-move .mv:hover { opacity: 1; color: var(--accent); }
 .out-act .x { border: none; background: none; color: var(--text-3); cursor: pointer;
   font-size: 11px; padding: 0 3px; }
 .out-act .x:hover { color: var(--accent); }
@@ -589,7 +588,12 @@ button.out-tag { border: none; cursor: pointer; font-family: inherit; }
 button.out-tag.is-ov { opacity: .55; }
 button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(--accent); font-weight: 600; }
 .out-days.in-cell { width: 100%; border-color: var(--accent); text-align: right; }
-.out-row.is-lead .out-name { font-style: italic; }
+/* A notice stands out, because the whole point of it is being noticed in time. */
+.out-row.is-lead .out-name { color: var(--red); font-weight: 600; }
+.out-row.is-lead .out-when { color: var(--red); font-weight: 600; }
+.out-days.is-notice { color: var(--text-3); text-align: right; padding: 3px 4px; }
+.out-tag.is-notice { background: var(--red-sf); color: var(--red); font-weight: 600; }
+.cd-item.is-lead { background: var(--red-sf); color: var(--red); font-weight: 600; font-style: normal; }
 /* Lines done at once are one step with one length, so they are drawn as one block: tied together
    down the left, no rule between them, and the length they share shown the same on both. */
 .out-row.is-mate, .out-row.is-paired { box-shadow: inset 3px 0 0 var(--accent); }
@@ -604,7 +608,6 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 .out-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
 .sl-tag.is-slack { background: var(--surface-3); color: var(--text-3); }
 .sl-tag.is-over { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
-.cd-item.is-lead { font-style: italic; }
 .sl-tag.is-kind { background: var(--surface-3); color: var(--text-2); font-weight: 600; }
 .out-act .x.on { color: var(--accent); }
 /* the list */
@@ -1684,7 +1687,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.24';
+const APP_VERSION = 'v8.25';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3968,7 +3971,6 @@ let planView = 'outline';    // 'outline' | 'wall' | 'list' | 'calendar'
 let planEdit = null;         // the line open on its full form, if any
 let planFocus = null;        // the line the caret goes back to after a repaint
 let planSel = [];            // the lines ticked, waiting to be put together
-let planDrag = null;         // the line being dragged
 let planWho = '';            // filter: only this contractor's lines
 let planHot = false;         // filter: only what is behind or blocked
 let tracking = [];           // job-tracking categories (each with files/notes/checklist)
@@ -13453,6 +13455,17 @@ function selBarHtml(p, n) {
    The outline holds the name and the shape. Everything else about a line — whose it is, how long it
    takes, what is holding it up — lives behind the pencil, so building the plan is not interrupted
    by filling it in. */
+/* A submittal or an order is a date to hit rather than a job with a length, so the one thing worth
+   asking about it is how far ahead it has to be started. */
+const leadWeeksOf = it => Math.max(1, Math.round((Math.max(1, Math.round(Number(it.days) || 0))) / 7));
+function liKindChanged() {
+  const sel = $('liKind'), wrap = $('liLeadWrap');
+  if (!sel || !wrap) return;
+  const lead = !!LEAD_KINDS[String(sel.value || '')];
+  wrap.hidden = !lead;
+  const days = $('liDays'); if (days && days.closest) { const f = days.closest('.field'); if (f) f.hidden = lead; }
+  if (lead) { const w = $('liWeeks'); if (w && w.focus) { w.focus(); if (w.select) w.select(); } }
+}
 function editPlanLine(id) { planEdit = id; renderSchedule(); const b = $('liName'); if (b && b.focus) b.focus(); }
 function cancelPlanLine() { planEdit = null; renderSchedule(); }
 async function savePlanLine(id) {
@@ -13460,7 +13473,8 @@ async function savePlanLine(id) {
   const it = planItemById(p, id); if (!it) { planEdit = null; renderSchedule(); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   it.kind = v('liKind');
-  if ($('liDays')) it.days = Math.max(0, Math.round(Number(v('liDays')) || 0));
+  if (isLead(it)) it.days = Math.max(1, Math.round(Number(v('liWeeks')) || 0)) * 7;
+  else if ($('liDays')) it.days = Math.max(0, Math.round(Number(v('liDays')) || 0));
   it.note = autoCap(v('liNote'));
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
   planEdit = null;
@@ -13696,8 +13710,15 @@ function lineForm(p, id, rows) {
           comes to. Put a number here and the row says how many days that leaves you, or how many
           you are out by. Leave it at 0 and it just takes as long as its parts.</div></div>` : ''}
       <div class="field"><label class="fl">What kind of thing it is</label>
-        <select class="input" id="liKind">${LINE_KINDS.map(k =>
+        <select class="input" id="liKind" onchange="liKindChanged()">${LINE_KINDS.map(k =>
           `<option value="${k.id}"${(it.kind || '') === k.id ? ' selected' : ''}>${esc(k.label)}</option>`).join('')}</select></div>
+      <div class="field" id="liLeadWrap"${isLead(it) ? '' : ' hidden'}>
+        <label class="fl">How long is the lead time?</label>
+        <span class="pick-lead"><input class="input" type="number" min="0" step="1" id="liWeeks"
+          value="${escAttr(String(leadWeeksOf(it)))}" style="width:90px"><small>weeks</small></span>
+        <div class="muted" style="font-size:12px;margin-top:4px">It is not a job with a length — it is
+          a date to hit. The plan counts back that far from the work it holds up and puts a notice
+          there, so you are told while there is still time to act on it.</div></div>
       <div class="field"><label class="fl">Anything else worth knowing</label>
         <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
       <div class="field"><label class="ac-done"><input type="checkbox" id="liDone" ${it.done ? 'checked' : ''}> <span>Done</span></label></div>
@@ -13773,10 +13794,12 @@ function planOutlineHtml(p, rows, res) {
          above it. */
       const outOf = i > 0 && r.depth < rows[i - 1].depth;
       const step = r.step;      // a section is not a step, so it carries no number
-      const dates = r.anchored
-        ? ((r.finish && r.finish !== r.start)
-            ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start))
-        : '';
+      /* A notice is a day, not a stretch of days: it says when the thing has to be done by for the
+         plan to hold, and there is nothing to draw between two dates. */
+      const dates = !r.anchored ? ''
+        : r.lead ? shortDate(r.start)
+        : ((r.finish && r.finish !== r.start)
+            ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start));
       const grouped = r.mate || r.withMe;
       const tick = `<button class="out-tick is-grp${ticked[r.id] ? ' on' : ''}${grouped ? ' is-grouped' : ''}"
              onclick="tapPair('${r.id}')"
@@ -13788,9 +13811,11 @@ function planOutlineHtml(p, rows, res) {
       <div class="out-row${planRowClass(r)}${r.clash ? ' is-clash' : ''}${r.lead ? ' is-lead' : ''}${
           r.head ? ' is-head' : ''}${outOf ? ' is-outof' : ''}${r.mate ? ' is-mate' : ''}${r.withMe ? ' is-paired' : ''}${
           ticked[r.id] ? ' is-picked' : ''}" style="--d:${r.depth}"
-        ondragover="dragOverLine(event,'${r.id}')" ondrop="dropOnLine(event,'${r.id}')">
-        <span class="out-grip" draggable="true" ondragstart="dragLine(event,'${r.id}')"
-          ondragend="dragEndLine()" title="Drag it where you want it — onto a section to put it in that section">⠿</span>
+>
+        <span class="out-move">
+          <button class="mv" onclick="nudgeLine('${r.id}',-1)" title="Move it up">▲</button>
+          <button class="mv" onclick="nudgeLine('${r.id}',1)" title="Move it down">▼</button>
+        </span>
         ${r.main
           ? `<span class="out-step is-sec" title="A section — it is not a step of its own">★</span>`
           : r.mate
@@ -13808,7 +13833,9 @@ function planOutlineHtml(p, rows, res) {
           ? `<span class="out-who is-none" title="Whose it is is on the lines underneath"></span>`
           : `<input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
                onchange="setLineWho('${r.id}',this.value)">`}
-        ${r.mate
+        ${r.lead
+          ? `<span class="out-days is-notice" title="A notice, not a job — it has no length of its own">—</span>`
+          : r.mate
           ? `<input class="out-days is-shared" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
                title="The ${r.days} days step ${escAttr(r.mateStep)} and this one share — set it on either of them"
                onchange="setLineDays('${r.id}',this.value)">`
@@ -13824,7 +13851,10 @@ function planOutlineHtml(p, rows, res) {
             : 'Click to set ' + (res && res.fwd ? 'the day it starts' : 'the day it has to be done by')}"
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
-          ${it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
+          ${r.lead ? `<span class="out-tag is-notice" title="${escAttr(kindLabel(it.kind) + ' · ' +
+              leadWeeksOf(it) + ' week' + (leadWeeksOf(it) === 1 ? '' : 's') + ' of lead — counted back from ' +
+              'the work it holds up, so there is still time to act on it')}">needs doing to stay on schedule</span>`
+            : it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
           ${r.mate ? `<button class="out-tag is-ov on" onclick="clearMate('${r.id}')"
                title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to take it off.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
           ${r.slack != null && r.slack !== 0
@@ -13852,39 +13882,45 @@ function planOutlineHtml(p, rows, res) {
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
       <button class="btn sm ghost" onclick="pasteListModal()">Type or paste a list…</button>
-      <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab makes it a section · drag a line by the handle to move it</span>
+      <span class="muted" style="font-size:11.5px;margin-left:6px">Enter adds the next line · Tab makes it a section · the arrows move a line up and down</span>
     </div>
   </div>`;
 }
 
-/* ── dragging a line where you want it ──
-   Dropped on a line it goes under it, dropped between two it goes between them. The dragging is
-   started from the handle rather than the row, so taking hold of a name to edit it still does. */
-function dragLine(ev, id) {
-  planDrag = id;
-  try { ev.dataTransfer.setData('text/plain', id); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+/* ── moving a line ──
+   Up and down a line at a time. It swaps places with the line above or below it, section headings
+   included, so walking a line out of one section and into the next is just holding the arrow. */
+async function nudgeLine(id, dir) {
+  const p = currentPlan(); if (!p) return;
+  const list = planTree(p).items;
+  const i = list.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const it = planItemById(p, id);
+  const ms = mateIdsOf(p, id);
+  /* Whatever runs alongside it moves with it, so the group steps as one. */
+  const block = [it].concat(ms.map(x => planItemById(p, x)).filter(Boolean));
+  const inBlock = Object.create(null);
+  for (const x of block) inBlock[x.id] = 1;
+  const rest = list.filter(x => !inBlock[x.id]);
+  const j = rest.findIndex(x => (Number(x.order) || 0) > (Number(it.order) || 0));
+  const aboveIdx = (j < 0 ? rest.length : j) - 1;        // the line just above it, ignoring its own group
+  const target = dir < 0 ? rest[aboveIdx] : rest[aboveIdx + 1];
+  if (!target) return;
+  const next = dir < 0 ? rest[aboveIdx - 1] : rest[aboveIdx + 2];
+  const a2 = Number(target.order) || 0;
+  const b2 = next ? (Number(next.order) || 0) : a2 + (dir < 0 ? -20 : 20);
+  it.order = a2 + (b2 - a2) / 2;
+  moveMatesWith(p, id, ms);
+  /* Two lines only run alongside each other inside one section. */
+  const tr = planTree(p);
+  for (const x of planItems(p)) {
+    const h = x.alongside ? planItemById(p, x.alongside) : null;
+    if (h && (tr.sectionOf[h.id] || null) !== (tr.sectionOf[x.id] || null)) delete x.alongside;
+  }
+  renderSchedule();
+  await savePlan(p);
 }
-function dropHint(row, mode) {
-  for (const e of document.querySelectorAll('.out-row.drop-into, .out-row.drop-above, .out-row.drop-below'))
-    e.classList.remove('drop-into', 'drop-above', 'drop-below');
-  if (row && mode) { row.classList.add('drop-' + mode); row.dataset.drop = mode; }
-}
-function dragOverLine(ev, id) {
-  if (!planDrag || planDrag === id) return;
-  ev.preventDefault();
-  try { ev.dataTransfer.dropEffect = 'move'; } catch (e) {}
-  const row = ev.currentTarget, b = row.getBoundingClientRect();
-  const y = ev.clientY - b.top;
-  dropHint(row, y < b.height * 0.3 ? 'above' : y > b.height * 0.7 ? 'below' : 'into');
-}
-function dragEndLine() { planDrag = null; dropHint(null, null); }
-async function dropOnLine(ev, id) {
-  ev.preventDefault();
-  const mode = ev.currentTarget.dataset.drop || 'into';
-  const from = planDrag;
-  planDrag = null; dropHint(null, null);
-  if (from && from !== id) await moveLineTo(from, id, mode);
-}
+
 /* Dropped on a section it goes into that section, at the top of it. Dropped on or between ordinary
    lines it goes there, and whichever section that place is in is the section it is now in. */
 async function moveLineTo(fromId, toId, mode) {

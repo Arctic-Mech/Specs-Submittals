@@ -447,6 +447,60 @@ const testCode = `
       planDates(currentPlan(), five).by['p3'].days === 8);
     planSel = []; }
 
+  /* Up and down a line at a time, instead of dragging. */
+  { schedules = [mk('start', [
+      L('ns', 'Temp', 0, 10, { main:true }), L('n1', 'Set units', 1, 20),
+      L('n2', 'Run duct', 8, 30), L('n3', 'Open shaft', 1, 40, { date:'2026-10-12' }) ])];
+    openPlan = 'p';
+    var ids = function () { return planTree(currentPlan()).items.map(function (x) { return x.id; }).join(); };
+    await nudgeLine('n1', 1);
+    ck('arrows: down swaps it with the line below', ids() === 'ns,n2,n1,n3');
+    await nudgeLine('n1', -1);
+    ck('arrows: and up puts it back', ids() === 'ns,n1,n2,n3');
+    await nudgeLine('ns', 1);
+    ck('arrows: a section moves like anything else, so lines pass in and out of it',
+      ids() === 'n1,ns,n2,n3' && !planTree(currentPlan()).sectionOf['n1']);
+    await nudgeLine('ns', -1);
+    ck('arrows: the top line will not go further up',
+      await (async function () { var h = ids(); await nudgeLine('ns', -1); return ids() === h; })());
+    /* A group steps as one. */
+    planSel = []; tapPair('n1'); tapPair('n2'); await doneSel();
+    var held = ids();
+    await nudgeLine('n2', 1);
+    ck('arrows: whatever runs alongside a line moves with it',
+      planTree(currentPlan()).sectionOf['n1'] === planTree(currentPlan()).sectionOf['n2'] &&
+      ids() !== held);
+    planSel = []; }
+
+  /* A submittal is a date to hit, not a job with a length: a notice, counted back from the work. */
+  { var nt = mk('start', [
+      L('xs', 'Temp', 0, 10, { main:true }),
+      L('x2', 'Set units', 2, 20),
+      L('xsub', 'Pump submittal', 14, 25, { kind:'submittal', who:'ENFRA' }),
+      L('x1', 'Run duct', 8, 30, { date:'2026-10-26' }) ]);
+    var rn = planDates(nt, five);
+    ck('notice: it is counted back from the work it holds up, by the lead time given',
+      rn.by['x1'].start === '2026-10-26' && rn.by['xsub'].finish === '2026-10-23' &&
+      rn.by['xsub'].start === '2026-10-10' && rn.by['xsub'].lead === true);
+    ck('notice: it takes no step and adds no time to the section',
+      rn.by['xsub'].step === '' && rn.by['xs'].days === 10);
+    ck('notice: the row shows one day and no length, and says what it is for',
+      (function () {
+        var h = planOutlineHtml(nt, rn.rows.filter(keepRow), rn);
+        var row = h.split('out-row').filter(function (c) { return c.indexOf('Pump submittal') > 0; })[0] || '';
+        return row.indexOf('is-lead') > 0 && row.indexOf('out-days is-notice') > 0 &&
+               row.indexOf('needs doing to stay on schedule') > 0 &&
+               row.indexOf('\u2192') < 0;
+      })());
+    ck('notice: and the card asks how long the lead time is, in weeks',
+      (function () {
+        var f = lineForm(nt, 'xsub', rn.rows);
+        return f.indexOf('How long is the lead time') > 0 && f.indexOf('liWeeks') > 0 &&
+               f.indexOf('value="2"') > 0;
+      })());
+    ck('notice: a line that is not one of those is not asked',
+      lineForm(nt, 'x2', rn.rows).indexOf('liLeadWrap" hidden') > 0); }
+
   /* Typing a number into the step box moves the line to that step. */
   { schedules = [mk('start', [
       L('ms', 'Prep', 0, 10, { main:true }),
