@@ -1684,7 +1684,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.23';
+const APP_VERSION = 'v8.24';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12920,47 +12920,95 @@ function planDates(plan, cal) {
   const past = (x, y) => fwd ? x < y : x > y;
   const out = Object.create(null);
 
-  /* The run: every line that is work, the foot of the page first, taken in slots. Everything in a
-     slot is done at once, so it all begins where the slot begins and the slot is as long as the one
-     length they share — the one on the line holding the step number. */
-  const work = tr.items.filter(it => !it.main && !isLead(it));
-  const order = fwd ? work.slice().reverse() : work.slice();
-  const slots = [], at = Object.create(null);
-  for (const k of order) if (tr.leadOf[k.id] === k.id) { at[k.id] = { lead: k, with: [] }; slots.push(at[k.id]); }
-  for (const k of order) {
-    if (tr.leadOf[k.id] === k.id) continue;
-    const g = at[tr.leadOf[k.id]];
-    if (g) g.with.push(k); else slots.push({ lead: k, with: [] });
+  /* The run, a section at a time. A section is a block of the plan: its lines lay out inside it,
+     and whatever follows it starts after the block ends — not after whatever its last line happened
+     to come to. So a length typed on a section is the length of that block, and everything after it
+     moves. With nothing typed, the block is as long as its lines come to. */
+  const slotsIn = list => {
+    const got = [], at = Object.create(null);
+    for (const k of list) if (tr.leadOf[k.id] === k.id) { at[k.id] = { lead: k, with: [] }; got.push(at[k.id]); }
+    for (const k of list) {
+      if (tr.leadOf[k.id] === k.id) continue;
+      const g = at[tr.leadOf[k.id]];
+      if (g) g.with.push(k); else got.push({ lead: k, with: [] });
+    }
+    return got;
+  };
+  /* How long a slot is: the length on the line holding the number, or, where that is nothing, the
+     longest of the lines in it — a slot of no days is not a thing anybody meant. */
+  const slotLen = g => dur(g.lead) || [g.lead].concat(g.with).reduce((m, k) => Math.max(m, dur(k)), 0);
+  /* Each section with the work in it, in the order the run reaches them. Anything above the first
+     star is a block of its own with no heading over it. */
+  const blocks = [];
+  let loose = [];
+  for (const it of tr.items) {
+    if (it.main) { blocks.push({ sec: it, lines: [] }); continue; }
+    if (isLead(it)) continue;
+    if (blocks.length) blocks[blocks.length - 1].lines.push(it); else loose.push(it);
   }
+  if (loose.length) blocks.unshift({ sec: null, lines: loose });
+  const runBlocks = fwd ? blocks.slice().reverse() : blocks.slice();
+  const sumOf = Object.create(null);
   let cur = '';
-  for (const g of slots) {
-    const together = [g.lead].concat(g.with);
-    /* With nothing to go on yet, whatever in the slot carries a date of its own is where the run
-       starts from, or every line after it is left with nothing to work from. */
-    let from = cur;
-    if (!from) for (const k of together) if (pinnedDate(k)) {
-      const e = edgeOf(k.date);
-      if (!from || past(e, from)) from = e;
+  for (const blk of runBlocks) {
+    const lines = fwd ? blk.lines.slice().reverse() : blk.lines.slice();
+    const slots = slotsIn(lines);
+    const sum = slots.reduce((a2, g) => a2 + slotLen(g), 0);
+    if (blk.sec) sumOf[blk.sec.id] = sum;
+    /* Where the block begins: its own date if it has one, else where the run has got to. A date on
+       a line inside it belongs to that line's slot, not to the block. */
+    const from = (blk.sec && pinnedDate(blk.sec)) ? edgeOf(blk.sec.date) : cur;
+    /* A length typed on the section is the block's length. Nothing typed and it is its lines. */
+    const typed = blk.sec ? dur(blk.sec) : 0;
+    const blockDays = typed || sum;
+    let inner = from;
+    for (const g of slots) {
+      const together = [g.lead].concat(g.with);
+      let begin = inner;
+      if (!begin) for (const k of together) if (pinnedDate(k)) {
+        const e = edgeOf(k.date);
+        if (!begin || past(e, begin)) begin = e;
+      }
+      const n = slotLen(g);
+      for (const k of together) {
+        let edge = '', far = '', anchored = false, clash = false;
+        if (pinnedDate(k)) {
+          edge = edgeOf(k.date); anchored = true;
+          if (begin && past(edge, begin)) clash = true;
+        } else if (begin) { edge = begin; anchored = true; }
+        if (anchored) far = spanFrom(edge, n);
+        out[k.id] = { start: fwd ? edge : far, finish: fwd ? far : edge,
+          anchored: anchored, clash: clash, total: n };
+      }
+      /* They are one step, so they are the same days. */
+      const o0 = out[g.lead.id];
+      for (const k of g.with) {
+        const o = out[k.id];
+        if (!o || !o0 || !o0.start) continue;
+        o.start = o0.start; o.finish = o0.finish; o.anchored = o0.anchored; o.total = o0.total;
+      }
+      if (o0 && o0.start) inner = stepOver(fwd ? o0.finish : o0.start);
     }
-    const n = dur(g.lead);
-    for (const k of together) {
-      let edge = '', far = '', anchored = false, clash = false;
-      if (pinnedDate(k)) {
-        edge = edgeOf(k.date); anchored = true;
-        if (from && past(edge, from)) clash = true;
-      } else if (from) { edge = from; anchored = true; }
-      if (anchored) far = spanFrom(edge, n);
-      out[k.id] = { start: fwd ? edge : far, finish: fwd ? far : edge,
-        anchored: anchored, clash: clash, total: n };
-    }
-    /* They are one step, so they are the same days. */
-    const o0 = out[g.lead.id];
-    for (const k of g.with) {
+    /* The block hangs off its own date where it has one, and off whatever its lines worked out to
+       where it has not. */
+    let anchor = from;
+    if (!anchor) for (const g of slots) for (const k of [g.lead].concat(g.with)) {
       const o = out[k.id];
-      if (!o || !o0 || !o0.start) continue;
-      o.start = o0.start; o.finish = o0.finish; o.anchored = o0.anchored; o.total = o0.total;
+      if (!o || !o.start) continue;
+      const e = fwd ? o.start : o.finish;
+      if (!anchor || past(e, anchor)) anchor = e;
     }
-    if (o0 && o0.start) cur = stepOver(fwd ? o0.finish : o0.start);
+    if (blk.sec) {
+      const far = anchor ? spanFrom(anchor, blockDays) : '';
+      out[blk.sec.id] = anchor
+        ? { start: fwd ? anchor : far, finish: fwd ? far : anchor,
+            anchored: true, clash: false, total: blockDays, section: true }
+        : { start: '', finish: '', anchored: false, clash: false, total: blockDays, section: true };
+    }
+    /* The next block starts after this one ends, which is the block's own length — not after
+       whatever its last line happened to come to. */
+    if (anchor && blockDays) cur = stepOver(spanFrom(anchor, blockDays));
+    else if (inner) cur = inner;
   }
   /* Whichever way round the plan is written, what is on order has to be in before the work it holds
      up starts. It takes no slot in the run; it only has to land in time for what follows it. Lead
@@ -12979,22 +13027,6 @@ function planDates(plan, cal) {
     let finish = pinnedDate(it) ? String(it.date).trim() : (begin ? prevWorkDay(begin, cal) : '');
     out[it.id] = { start: finish ? (n > 1 ? dShift(finish, -(n - 1)) : finish) : '',
       finish: finish, anchored: !!finish, clash: false, total: n, lead: true };
-  }
-  /* A section is what its lines came to, the first of them to the last. It is not a step and takes
-     no time of its own — it is a heading over the work in it, and its tally stops where the next
-     section starts. */
-  for (const sec of tr.sections) {
-    let lo = '', hi = '';
-    for (const k of (tr.lines[sec.id] || [])) {
-      /* What is on order takes no slot in the run, so it is not part of how long the section is. */
-      if (isLead(k)) continue;
-      const o = out[k.id];
-      if (!o || !o.start) continue;
-      if (!lo || o.start < lo) lo = o.start;
-      if (!hi || o.finish > hi) hi = o.finish;
-    }
-    out[sec.id] = { start: lo, finish: hi, anchored: !!lo, clash: false,
-      total: lo ? workDaysBetween(lo, hi, cal) : 0, section: true };
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -13015,7 +13047,10 @@ function planDates(plan, cal) {
   const rows = flat.map(f => {
     const it = f.item, d = out[it.id];
     const mine = it.main ? (tr.lines[it.id] || []) : [];
+    /* A length typed on a section is the block's length, and the row says how it compares with what
+       the lines in it actually come to. */
     const target = it.main ? dur(it) : 0;
+    const came = it.main ? (sumOf[it.id] || 0) : 0;
     return { item: it, id: it.id, depth: f.depth, stray: false,
       start: d.start, finish: d.finish, anchored: d.anchored, clash: !!d.clash,
       pinned: pinnedDate(it), days: d.total, own: dur(it),
@@ -13027,7 +13062,7 @@ function planDates(plan, cal) {
       mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
       mateStep: tr.leadOf[it.id] !== it.id ? (stepOf[tr.leadOf[it.id]] || '') : '',
       withMe: (tr.mates[it.id] || []).length,
-      target: target, slack: target ? target - d.total : null,
+      target: target, slack: target ? target - came : null,
       late: !!(d.start && !it.done && d.start < today0),
       runway: d.start ? workDaysTo(today0, d.start, cal) : null,
       onDayOff: !isWorkDay(today0, cal),
@@ -13356,9 +13391,12 @@ async function doneSel() {
     toast('They have to be in the same section — move them together first', true);
     return;
   }
-  /* The one furthest down the page holds the number, because the run reaches it first. */
+  /* The one furthest down the page holds the number, because the run reaches it first — and it
+     carries the length they share, which starts as the longest of what they were, so nothing gets
+     shorter without being asked. */
   ids.sort((x, y) => (Number(x.order) || 0) - (Number(y.order) || 0));
   const lead = ids[ids.length - 1];
+  lead.days = ids.reduce((n, x) => Math.max(n, Math.round(Number(x.days) || 0)), 0);
   const base = Number(lead.order) || 0;
   let k = 1;
   for (const x of ids) {

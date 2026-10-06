@@ -402,6 +402,51 @@ const testCode = `
       rl.by['lo'].finish < rl.by['lw'].start &&
       dShift(rl.by['lo'].finish, -27) === rl.by['lo'].start); }
 
+  /* A length typed on a section is the length of that block, and what follows it moves. */
+  /* The page reads bottom to top, so the section that comes after Temp is the one above it. */
+  { var blk = function (secDays) { return mk('start', [
+      L('demo', 'Demo', 0, 5, { main:true }), L('d1', 'Demo piping', 3, 8),
+      L('temp', 'Temp', secDays, 10, { main:true, date:'2026-10-12' }),
+      L('t2', 'Run rooftop duct', 8, 20), L('t1', 'Open OSA shaft', 1, 30) ]); };
+    var loose = planDates(blk(0), five);
+    ck('section length: with nothing typed, the block is as long as its lines come to',
+      loose.by['temp'].days === 9 && loose.by['temp'].start === '2026-10-12' &&
+      loose.by['temp'].slack === null);
+    var set12 = planDates(blk(12), five);
+    ck('section length: typing a length makes the block that long, off its own date',
+      set12.by['temp'].days === 12 && set12.by['temp'].start === '2026-10-12' &&
+      set12.by['temp'].finish === addWorkDays('2026-10-12', 11, five));
+    ck('section length: and everything after it is based on that, not on its last line',
+      set12.by['demo'].start > set12.by['temp'].finish &&
+      set12.by['demo'].start > loose.by['demo'].start);
+    ck('section length: the row says how it compares with what the lines come to',
+      set12.by['temp'].slack === 3 &&
+      planDates(blk(4), five).by['temp'].slack === -5);
+    ck('section length: a block shorter than its lines still moves what follows by what you typed',
+      planDates(blk(4), five).by['demo'].start < set12.by['demo'].start); }
+
+  /* A slot whose lead carries no length takes the longest of the lines in it. */
+  { var grp = mk('start', [
+      L('gs', 'Temp', 0, 10, { main:true, date:'2026-10-12' }),
+      L('g3', 'Insulate', 4, 20, { alongside:'g1' }),
+      L('g2', 'Run duct', 8, 30, { alongside:'g1' }),
+      L('g1', 'Open shaft', 0, 40) ]);
+    var rg = planDates(grp, five);
+    ck('together: a group whose lead carries nothing is as long as the longest in it',
+      rg.by['g1'].days === 8 && rg.by['g2'].days === 8 && rg.by['g3'].days === 8 &&
+      rg.by['gs'].days === 8);
+    /* And putting a group together carries the longest across, so nothing shortens quietly. */
+    schedules = [mk('start', [
+      L('ps', 'Temp', 0, 10, { main:true, date:'2026-10-12' }),
+      L('p3', 'Insulate', 4, 20), L('p2', 'Run duct', 8, 30), L('p1', 'Open shaft', 1, 40) ])];
+    openPlan = 'p'; planSel = [];
+    tapPair('p1'); tapPair('p2'); tapPair('p3');
+    await doneSel();
+    ck('together: Done carries the longest of them onto the line holding the number',
+      planItemById(currentPlan(), 'p1').days === 8 &&
+      planDates(currentPlan(), five).by['p3'].days === 8);
+    planSel = []; }
+
   /* Typing a number into the step box moves the line to that step. */
   { schedules = [mk('start', [
       L('ms', 'Prep', 0, 10, { main:true }),
