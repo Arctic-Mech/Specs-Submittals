@@ -399,8 +399,8 @@ const testCode = `
     ck('order: something on order takes no step and is not counted into the section',
       rl.by['lo'].step === '' && rl.by['lo'].lead === true && rl.by['ls'].days === 2);
     ck('order: it lands its lead time before the line above it, counted in plain days',
-      rl.by['lo'].start === dShift(rl.by['lw'].start, -28) &&
-      rl.by['lo'].start === rl.by['lo'].finish); }
+      rl.by['lo~by'].start === dShift(rl.by['lw'].start, -28) &&
+      rl.by['lo~by'].start === rl.by['lo~by'].finish); }
 
   /* A length typed on a section is the length of that block, and what follows it moves. */
   /* The page reads bottom to top, so the section that comes after Temp is the one above it. */
@@ -457,12 +457,54 @@ const testCode = `
     ck('arrows: down swaps it with the line below', ids() === 'ns,n2,n1,n3');
     await nudgeLine('n1', -1);
     ck('arrows: and up puts it back', ids() === 'ns,n1,n2,n3');
-    await nudgeLine('ns', 1);
-    ck('arrows: a section moves like anything else, so lines pass in and out of it',
-      ids() === 'n1,ns,n2,n3' && !planTree(currentPlan()).sectionOf['n1']);
-    await nudgeLine('ns', -1);
     ck('arrows: the top line will not go further up',
       await (async function () { var h = ids(); await nudgeLine('ns', -1); return ids() === h; })());
+    ck('arrows: and the bottom line will not go further down',
+      await (async function () { var h = ids(); await nudgeLine('n3', 1); return ids() === h; })());
+    /* Numbered again from the top every time, so the gaps never run out and no two lines can end
+       up on the same number \u2014 which is what left a line sitting where it was. */
+    ck('arrows: pressing it over and over does not wear the numbers out',
+      await (async function () {
+        for (var k = 0; k < 40; k++) { await nudgeLine('n2', -1); await nudgeLine('n2', 1); }
+        var os = planItems(currentPlan()).map(function (x) { return Number(x.order) || 0; });
+        var uniq = os.filter(function (v, i) { return os.indexOf(v) === i; }).length;
+        var gaps = os.slice().sort(function (a, b) { return a - b; });
+        var tight = 1e9;
+        for (var i = 1; i < gaps.length; i++) tight = Math.min(tight, gaps[i] - gaps[i - 1]);
+        var moved = ids();
+        await nudgeLine('n2', -1);
+        return uniq === os.length && tight >= 1 && ids() !== moved;
+      })());
+    schedules = [mk('start', [
+      L('ns', 'Temp', 0, 10, { main:true }), L('n1', 'Set units', 1, 20),
+      L('n2', 'Run duct', 8, 30), L('n3', 'Open shaft', 1, 40, { date:'2026-10-12' }) ])];
+    /* A section is a block: the lines it owns go with it, or it has not moved at all. */
+    { schedules = [mk('start', [
+        L('s1', 'Demo', 0, 10, { main:true }), L('w1', 'Demo piping', 2, 20),
+        L('w2', 'Demo duct', 3, 30),
+        L('s2', 'Mech room', 0, 40, { main:true }), L('w3', 'Set pumps', 4, 50) ])];
+      openPlan = 'p';
+      var tr0 = planTree(currentPlan());
+      ck('arrows: a section starts out owning its own lines',
+        tr0.sectionOf['w1'] === 's1' && tr0.sectionOf['w3'] === 's2');
+      await nudgeLine('s2', -1);
+      var tr1 = planTree(currentPlan());
+      ck('arrows: moving a section takes the lines under it with it',
+        ids() === 's2,w3,s1,w1,w2' &&
+        tr1.sectionOf['w3'] === 's2' && tr1.sectionOf['w1'] === 's1' && tr1.sectionOf['w2'] === 's1');
+      await nudgeLine('s2', 1);
+      ck('arrows: and back down again, whole', ids() === 's1,w1,w2,s2,w3');
+      ck('arrows: a section at the top will not climb past itself',
+        await (async function () { var h = ids(); await nudgeLine('s1', -1); return ids() === h; })());
+      /* An ordinary line still walks a step at a time, in and out of sections. */
+      await nudgeLine('w3', -1);
+      ck('arrows: an ordinary line still steps over a section heading, one at a time',
+        ids() === 's1,w1,w2,w3,s2' && planTree(currentPlan()).sectionOf['w3'] === 's1'); }
+
+    schedules = [mk('start', [
+      L('ns', 'Temp', 0, 10, { main:true }), L('n1', 'Set units', 1, 20),
+      L('n2', 'Run duct', 8, 30), L('n3', 'Open shaft', 1, 40, { date:'2026-10-12' }) ])];
+    openPlan = 'p';
     /* A group steps as one. */
     planSel = []; tapPair('n1'); tapPair('n2'); await doneSel();
     var held = ids();
@@ -471,6 +513,42 @@ const testCode = `
       planTree(currentPlan()).sectionOf['n1'] === planTree(currentPlan()).sectionOf['n2'] &&
       ids() !== held);
     planSel = []; }
+
+  /* A section is not work, so it cannot also be running alongside something. */
+  { schedules = [mk('start', [
+      L('ms', 'Temp', 0, 10, { main:true }), L('ma', 'One', 2, 20), L('mb', 'Two', 3, 30) ])];
+    openPlan = 'p'; planSel = []; tapPair('ma'); tapPair('mb'); await doneSel();
+    ck('star: they are a group to start with',
+      planTree(currentPlan()).leadOf['ma'] !== 'ma' || planTree(currentPlan()).leadOf['mb'] !== 'mb');
+    var grouped = planItems(currentPlan()).filter(function (x) { return x.alongside; })[0];
+    await toggleMain(grouped.id);
+    ck('star: starring one takes it out of the group it was in',
+      !grouped.alongside && grouped.main === true);
+    planSel = []; }
+
+  /* Typing a number in the step box. */
+  { schedules = [mk('start', [
+      L('ts', 'Temp', 0, 10, { main:true }), L('t1', 'One', 1, 20),
+      L('t2', 'Two', 1, 30), L('t3', 'Three', 1, 40), L('t4', 'Four', 1, 50) ])];
+    openPlan = 'p';
+    var tids = function () { return planTree(currentPlan()).items.map(function (x) { return x.id; }).join(); };
+    var stepOf = function (id) { return planDates(currentPlan(), five).by[id].step; };
+    ck('step box: it is numbered from the foot of the page up',
+      stepOf('t4') === '1' && stepOf('t1') === '4');
+    await moveToStep('t1', '1');
+    ck('step box: typing 1 makes it the first thing done', stepOf('t1') === '1' &&
+      tids() === 'ts,t2,t3,t4,t1');
+    await moveToStep('t1', '4');
+    ck('step box: and typing 4 puts it back last', stepOf('t1') === '4' &&
+      tids() === 'ts,t1,t2,t3,t4');
+    await moveToStep('t1', '99');
+    ck('step box: a number past the end goes to the end, it does not just sit there',
+      stepOf('t1') === '4');
+    await moveToStep('t4', '99');
+    ck('step box: from the other end too', stepOf('t4') === '4' && tids() === 'ts,t4,t1,t2,t3');
+    var held2 = tids();
+    await moveToStep('t4', 'nonsense');
+    ck('step box: something that is not a number leaves it where it is', tids() === held2); }
 
   /* A submittal is a date to hit, not a job with a length: a notice, counted back from the work. */
   /* A date typed on a line partway up a block used to leave everything under it blank, because the
@@ -496,20 +574,39 @@ const testCode = `
       L('xsub', 'Pump submittal approval', 42, 25, { kind:'submittal', who:'ENFRA' }),
       L('x2', 'Run duct', 8, 30) ]);
     var rn = planDates(nt, five);
-    ck('notice: it is counted back from the line above it, by the lead time given',
-      rn.by['x1'].start === '2026-12-07' && rn.by['xsub'].start === '2026-10-26' &&
-      rn.by['xsub'].holds === 'x1' && rn.by['xsub'].lead === true);
-    ck('notice: it is one day, not a stretch of days',
-      rn.by['xsub'].start === rn.by['xsub'].finish && rn.by['xsub'].days === 0);
+    /* The submittal line keeps its lead time. The day it comes to is put in underneath, on a line
+       of its own that nobody typed. */
+    ck('notice: the submittal line carries a lead time and no start date',
+      rn.by['xsub'].lead === true && rn.by['xsub'].weeks === 6 &&
+      rn.by['xsub'].start === '' && rn.by['xsub'].anchored === false);
+    ck('notice: a line is put in at the lead time before the line above it',
+      rn.by['x1'].start === '2026-12-07' && !!rn.by['xsub~by'] &&
+      rn.by['xsub~by'].start === '2026-10-26' && rn.by['xsub~by'].notice === true &&
+      rn.by['xsub~by'].holds === 'x1' && rn.by['xsub~by'].by === '2026-12-07');
+    ck('notice: it is one day, not a stretch of days, and it sits under its own line',
+      rn.by['xsub~by'].start === rn.by['xsub~by'].finish && rn.by['xsub~by'].days === 0 &&
+      rn.rows.map(function (r) { return r.id; }).join().indexOf('xsub,xsub~by') >= 0);
     ck('notice: it takes no step and adds no time to the section',
       rn.by['xsub'].step === '' && rn.by['xs'].days === 9);
-    ck('notice: the row shows one day and no length, and says what it is for',
+    ck('notice: and it is not nagged about for having no date of its own', rn.rootless === 0);
+    ck('notice: the submittal row shows the weeks where the days go, and no start date',
       (function () {
         var h = planOutlineHtml(nt, rn.rows.filter(keepRow), rn);
-        var row = h.split('out-row').filter(function (c) { return c.indexOf('Pump submittal') > 0; })[0] || '';
-        return row.indexOf('is-lead') > 0 && row.indexOf('out-days is-notice') > 0 &&
-               row.indexOf('needed by then for Set HWPs') > 0 &&
-               row.indexOf('\u2192') < 0;
+        var row = h.split('class=' + Q + 'out-row').filter(function (c) {
+          return c.indexOf('Pump submittal') > 0 && c.indexOf('is-made') < 0; })[0] || '';
+        return row.indexOf('is-lead') > 0 && row.indexOf('out-days is-lead') > 0 &&
+               row.indexOf('>6w<') > 0 && row.indexOf('lead time') > 0 &&
+               row.indexOf('set a date') < 0 && row.indexOf('Submittal') > 0;
+      })());
+    ck('notice: and the line it puts in says the day and what it keeps on track',
+      (function () {
+        var h = planOutlineHtml(nt, rn.rows.filter(keepRow), rn);
+        var row = h.split('class=' + Q + 'out-row').filter(function (c) {
+          return c.indexOf('is-made') > 0; })[0] || '';
+        return row.indexOf('has to be in') > 0 && row.indexOf('Oct 26, 2026') > 0 &&
+               row.indexOf('to keep Set HWPs') > 0 &&
+               row.indexOf('nudgeLine') < 0 && row.indexOf('moveToStep') < 0 &&
+               row.indexOf('removeLine') < 0 && row.indexOf('\u2192') < 0;
       })());
     ck('notice: and the card asks how long the lead time is, in weeks',
       (function () {
@@ -693,13 +790,17 @@ const testCode = `
       line('t3')[0] === '2a' && line('t3')[6] === 'Step 2' && line('t3')[3] === line('t2')[3]);
     ck('excel: only the lines that are not plain work name a kind',
       line('o')[7] === 'Order / release' && line('t2')[7] === '');
+    ck('excel: the day a lead time comes to goes out as a line of its own',
+      !!xr.by['o~by'] && schRow(currentPlan(), xr.by['o~by'])[7] === 'Needed by' &&
+      schRow(currentPlan(), xr.by['o~by'])[1].indexOf('has to be in by then') > 0 &&
+      schRow(currentPlan(), xr.by['o~by'])[3] === '');
     ck('excel: the note and the done mark come along',
       line('t1')[9] === 'Night work' && line('t1')[10] === '' &&
       (function () { var it = planItemById(currentPlan(), 't1'); it.done = true;
         var v = schRow(currentPlan(), planDates(currentPlan(), five).by['t1'])[10];
         delete it.done; return v === 'Yes'; })());
     ck('excel: and a line that is behind says so in a column of its own',
-      schFlag(xr.by['o']).indexOf('behind') > 0 && schFlag(xr.by['t2']) === '');
+      schFlag(xr.by['o~by']).indexOf('behind') > 0 && schFlag(xr.by['t2']) === '');
     ck('excel: every row has a cell for every heading',
       xshown.every(function (r) { return schRow(currentPlan(), r).length === SCH_HEADS.length; }) &&
       SCH_HEADS.length === SCH_WIDTHS.length);

@@ -465,6 +465,9 @@ textarea.autosize[rows="1"] { min-height: 0; }
 .sch-form { border: 1px solid var(--accent); border-radius: var(--radius); padding: 14px;
   background: var(--surface); margin-bottom: 14px; }
 .sch-form-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+/* Opened against the line it belongs to, so you stay where you were on the page. */
+.out-open { margin: 2px 0 10px; padding-left: 14px; border-left: 2px solid var(--accent); }
+.out-open .sch-form { margin-bottom: 0; }
 .sch-deps { border: 1px solid var(--border); border-radius: 7px; padding: 4px 2px;
   max-height: 190px; overflow-y: auto; }
 .sch-deps .tick-row { margin-top: 0; padding: 4px 9px; }
@@ -591,6 +594,14 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 /* A notice stands out, because the whole point of it is being noticed in time. */
 .out-row.is-lead .out-name { color: var(--red); font-weight: 600; }
 .out-row.is-lead .out-when { color: var(--red); font-weight: 600; }
+/* The day a lead time comes to: worked out, not typed, so it carries none of a line's handles. */
+.out-row.is-made { opacity: .92; }
+.out-row.is-made .out-tick, .out-row.is-made .out-done { visibility: hidden; }
+.out-row.is-made .out-name { color: var(--red); font-weight: 600; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 2px; }
+.out-days.is-lead { text-align: center; font-size: 11px; font-weight: 600; color: var(--red);
+  cursor: pointer; border: 1px solid transparent; border-radius: 5px; padding: 2px 0; }
+.out-days.is-lead:hover { border-color: var(--red); }
 .out-days.is-notice { color: var(--text-3); text-align: right; padding: 3px 4px; }
 .out-tag.is-notice { background: var(--red-sf); color: var(--red); font-weight: 600; }
 .cd-item.is-lead { background: var(--red-sf); color: var(--red); font-weight: 600; font-style: normal; }
@@ -1687,7 +1698,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.26';
+const APP_VERSION = 'v8.27';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13059,8 +13070,10 @@ function planDates(plan, cal) {
     /* Plain days, counted back from that line's date: six weeks before the seventh is the twenty
        sixth, not six weeks of the job's working week. */
     const when = pinnedDate(it) ? String(it.date).trim() : (by ? dShift(by, -n) : '');
-    out[it.id] = { start: when, finish: when, anchored: !!when, clash: false, total: 0,
-      lead: true, holds: (holds && holds.id) || '', by: by };
+    /* The line itself carries the lead time, not a start date — it is not a stretch of work that
+       begins somewhere. The date it comes to goes on a notice of its own, put in underneath. */
+    out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0,
+      lead: true, holds: (holds && holds.id) || '', by: by, need: when, weeks: leadWeeksOf(it) };
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -13078,7 +13091,7 @@ function planDates(plan, cal) {
     stepOf[it.id] = String(slotNo);
     (tr.mates[it.id] || []).forEach((m, j) => { stepOf[m.id] = slotNo + (LETTERS[j] || '+'); });
   }
-  const rows = flat.map(f => {
+  let rows = flat.map(f => {
     const it = f.item, d = out[it.id];
     const mine = it.main ? (tr.lines[it.id] || []) : [];
     /* A length typed on a section is the block's length, and the row says how it compares with what
@@ -13092,7 +13105,7 @@ function planDates(plan, cal) {
       kids: mine.filter(x => !isLead(x)).length,
       section: tr.sectionOf[it.id] || '',
       lead: !!d.lead, kind: String(it.kind || ''),
-      holds: d.holds || '', by: d.by || '',
+      holds: d.holds || '', by: d.by || '', need: d.need || '', weeks: d.weeks || 0,
       step: stepOf[it.id] || '',
       mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
       mateStep: tr.leadOf[it.id] !== it.id ? (stepOf[tr.leadOf[it.id]] || '') : '',
@@ -13103,11 +13116,32 @@ function planDates(plan, cal) {
       onDayOff: !isWorkDay(today0, cal),
       critical: false };
   });
+  /* Each lead time puts a notice in under the line it belongs to: the day the thing has to be in
+     by for the plan to hold. It is worked out, not typed, so it is not a line of the plan — there
+     is nothing on it to set and nothing to move. */
+  const withNotices = [];
+  for (const r of rows) {
+    withNotices.push(r);
+    if (!r.lead || !r.need) continue;
+    withNotices.push({ item: r.item, id: r.id + '~by', depth: r.depth, stray: false,
+      notice: true, lead: true, kind: r.kind,
+      start: r.need, finish: r.need, anchored: true, clash: false, pinned: false,
+      days: 0, own: 0, main: false, head: false, rolled: false, kids: 0,
+      section: r.section, holds: r.holds, by: r.by, step: '', mate: '', mateStep: '',
+      need: r.need, weeks: r.weeks,
+      weeksBack: r.weeks + ' week' + (r.weeks === 1 ? '' : 's'),
+      withMe: 0, target: 0, slack: null,
+      late: !r.item.done && r.need < today0,
+      runway: workDaysTo(today0, r.need, cal), onDayOff: !isWorkDay(today0, cal), critical: false });
+  }
+  rows = withNotices;
   const by = Object.create(null); rows.forEach(r => by[r.id] = r);
   return { rows: rows, by: by, tree: tr,
     dated: rows.filter(r => r.pinned).length,
     clashes: rows.filter(r => r.clash).length,
-    rootless: rows.filter(r => !r.anchored && !r.main).length,
+    /* A lead time is meant to have no date of its own — the line it puts in carries the day — so
+       it is not a line sitting on its own with nothing to work it out from. */
+    rootless: rows.filter(r => !r.anchored && !r.main && !r.lead).length,
     strays: 0, slots: slotNo,
     over: rows.filter(r => r.slack != null && r.slack < 0).length,
     fwd: fwd,
@@ -13499,7 +13533,14 @@ function liKindChanged() {
   const days = $('liDays'); if (days && days.closest) { const f = days.closest('.field'); if (f) f.hidden = lead; }
   if (lead) { const w = $('liWeeks'); if (w && w.focus) { w.focus(); if (w.select) w.select(); } }
 }
-function editPlanLine(id) { planEdit = id; renderSchedule(); const b = $('liName'); if (b && b.focus) b.focus(); }
+function editPlanLine(id) {
+  planEdit = planEdit === id ? null : id;
+  renderSchedule();
+  /* Focus without the browser scrolling to it: the card is already under the line you clicked, so
+     being taken anywhere is being taken away from your place. */
+  const b = $('liName');
+  if (b && b.focus) { try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); } }
+}
 function cancelPlanLine() { planEdit = null; renderSchedule(); }
 async function savePlanLine(id) {
   const p = currentPlan(); if (!p) return;
@@ -13714,7 +13755,7 @@ function renderScheduleInner() {
     </div>
 
     ${warn.length ? `<div class="sch-warn">${warn.map(w => `<div>⚠ ${esc(w)}</div>`).join('')}</div>` : ''}
-    ${planEdit ? lineForm(p, planEdit, rows) : ''}
+    ${planEdit && planView !== 'outline' ? lineForm(p, planEdit, rows) : ''}
     ${planView === 'outline' ? planOutlineHtml(p, shown, res)
      : !planItems(p).length ? `<div class="muted" style="font-size:13px;padding:10px 2px">
        Nothing on this plan yet — start on the Outline.</div>`
@@ -13822,6 +13863,25 @@ function planOutlineHtml(p, rows, res) {
     ${planSel.length ? selBarHtml(p, planSel.length) : ''}
     ${rows.map((r, i) => {
       const it = r.item;
+      /* The day a lead time comes to. It is worked out from the line above it, so there is nothing
+         on it to type and nothing to move — change the lead time and it moves itself. */
+      if (r.notice) {
+        const forName = (planItemById(p, r.holds) || {}).name || '';
+        return `
+      <div class="out-row is-lead is-made${r.late ? ' is-late' : ''}">
+        <span class="out-move"></span><span class="out-step"></span>
+        <span class="out-tick is-made"></span><span class="out-done is-made"></span>
+        <span class="out-name is-made">↳ ${esc(it.name || 'this')} has to be in</span>
+        <span class="out-who is-none"></span>
+        <span class="out-days is-notice">—</span>
+        <span class="out-when is-notice" title="${escAttr(r.weeksBack + ' before ' +
+          (forName || 'the line above it') + (r.by ? ' on ' + shortDate(r.by) : ''))}">${esc(shortDate(r.start))}</span>
+        <span class="out-meta">${forName
+          ? `<span class="out-tag is-notice">to keep ${esc(clipName(forName, 18))} on ${esc(shortDate(r.by))}</span>`
+          : ''}${r.late ? `<span class="out-tag is-late">${esc(runwayLabel(r))}</span>` : ''}</span>
+        <span class="out-act"></span>
+      </div>`;
+      }
       /* Coming back out of a block, the line that follows it is not part of it. Nothing said so
          once that line was not a main line itself, so it read as the last thing in the block
          above it. */
@@ -13867,7 +13927,9 @@ function planOutlineHtml(p, rows, res) {
           : `<input class="out-who" list="schPeople" value="${escAttr(it.who || '')}" placeholder="whose"
                onchange="setLineWho('${r.id}',this.value)">`}
         ${r.lead
-          ? `<span class="out-days is-notice" title="A notice, not a job — it has no length of its own">—</span>`
+          ? `<span class="out-days is-lead" onclick="editPlanLine('${r.id}')"
+               title="${escAttr(r.weeks + ' week' + (r.weeks === 1 ? '' : 's') +
+                 ' of lead time — click to change it')}">${r.weeks}w</span>`
           : r.mate
           ? `<input class="out-days is-shared" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
                title="The ${r.days} days step ${escAttr(r.mateStep)} and this one share — set it on either of them"
@@ -13882,14 +13944,13 @@ function planOutlineHtml(p, rows, res) {
           title="${r.pinned
             ? (res && res.fwd ? 'Starts on this date' : 'Has to be done by this date') + ' — click to change or clear it'
             : 'Click to set ' + (res && res.fwd ? 'the day it starts' : 'the day it has to be done by')}"
-          id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
+          id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) ||
+            (r.lead ? '<i>lead time</i>' : '<i>set a date</i>')}</span>
         <span class="out-meta">
-          ${r.lead ? `<span class="out-tag is-notice" title="${escAttr(kindLabel(it.kind) + ' · ' +
-              leadWeeksOf(it) + ' week' + (leadWeeksOf(it) === 1 ? '' : 's') + ' of lead' +
-              (r.holds ? ', counted back from "' + ((planItemById(p, r.holds) || {}).name || '') +
-                '" on ' + shortDate(r.by) : ' — put it under the line it has to be in for'))}">${
-              r.holds ? 'needed by then for ' + esc(clipName((planItemById(p, r.holds) || {}).name || '', 20))
-                      : 'put it under the line it is for'}</span>`
+          ${r.lead
+            ? `<span class="out-tag is-notice" title="${escAttr(kindLabel(it.kind) + ' · ' + r.weeks +
+                ' week' + (r.weeks === 1 ? '' : 's') + ' of lead time')}">${
+                r.holds ? esc(kindLabel(it.kind)) : 'put it under the line it is for'}</span>`
             : it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
           ${r.mate ? `<button class="out-tag is-ov on" onclick="clearMate('${r.id}')"
                title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to take it off.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
@@ -13913,7 +13974,7 @@ function planOutlineHtml(p, rows, res) {
             onclick="editPlanLine('${r.id}')">✎</button>
           <button class="x" title="Take it off" onclick="removeLine('${r.id}')">✕</button>
         </span>
-      </div>`;
+      </div>${planEdit === r.id ? `<div class="out-open">${lineForm(p, r.id, rows)}</div>` : ''}`;
     }).join('')}
     <div class="out-add">
       <button class="btn sm ghost" onclick="addPlanLine(false)">+ Line</button>
@@ -13924,35 +13985,81 @@ function planOutlineHtml(p, rows, res) {
 }
 
 /* ── moving a line ──
-   Up and down a line at a time. It swaps places with the line above or below it, section headings
-   included, so walking a line out of one section and into the next is just holding the arrow. */
-async function nudgeLine(id, dir) {
-  const p = currentPlan(); if (!p) return;
-  const list = planTree(p).items;
-  const i = list.findIndex(x => x.id === id);
-  if (i < 0) return;
-  const it = planItemById(p, id);
-  const ms = mateIdsOf(p, id);
-  /* Whatever runs alongside it moves with it, so the group steps as one. */
-  const block = [it].concat(ms.map(x => planItemById(p, x)).filter(Boolean));
-  const inBlock = Object.create(null);
-  for (const x of block) inBlock[x.id] = 1;
-  const rest = list.filter(x => !inBlock[x.id]);
-  const j = rest.findIndex(x => (Number(x.order) || 0) > (Number(it.order) || 0));
-  const aboveIdx = (j < 0 ? rest.length : j) - 1;        // the line just above it, ignoring its own group
-  const target = dir < 0 ? rest[aboveIdx] : rest[aboveIdx + 1];
-  if (!target) return;
-  const next = dir < 0 ? rest[aboveIdx - 1] : rest[aboveIdx + 2];
-  const a2 = Number(target.order) || 0;
-  const b2 = next ? (Number(next.order) || 0) : a2 + (dir < 0 ? -20 : 20);
-  it.order = a2 + (b2 - a2) / 2;
-  moveMatesWith(p, id, ms);
-  /* Two lines only run alongside each other inside one section. */
+   The arrows move a line one place at a time. What a place is depends on what you took hold of: a
+   section goes with the lines it owns, because a block that left its work behind has not moved at
+   all; lines running alongside each other go together, being the one step they are; anything else
+   is just itself. Afterwards the whole plan is numbered again from the top, ten apart, so the gaps
+   never run out and no two lines can end up claiming the same place — which is what left a line
+   sitting where it was however many times you pressed. */
+
+/* The page split into the things an arrow steps over. */
+function planUnits(p) {
+  const tr = planTree(p), list = tr.items, units = [];
+  for (let i = 0; i < list.length;) {
+    if (list[i].main) { units.push([list[i]]); i++; continue; }
+    const lead = tr.leadOf[list[i].id], run = [];
+    while (i < list.length && !list[i].main && tr.leadOf[list[i].id] === lead) run.push(list[i++]);
+    units.push(run);
+  }
+  return units;
+}
+/* The page split into blocks: a section with everything under it, as far as the next section. Work
+   sitting above the first section is a block of its own with no heading over it. */
+function planBlocksOf(p) {
+  const blocks = [];
+  for (const u of planUnits(p)) {
+    if (u[0].main || !blocks.length) blocks.push({ sec: u[0].main ? u[0] : null, units: [u] });
+    else blocks[blocks.length - 1].units.push(u);
+  }
+  return blocks;
+}
+/* Numbered again from the top, ten apart. A group keeps its letters: the one holding the number
+   sits at the foot of it on the round number, and the rest step down from there so they still read
+   a, b, c going up the page. */
+function renumberUnits(p, units) {
+  units.forEach((u, i) => {
+    const base = (i + 1) * 10;
+    u[u.length - 1].order = base;
+    u.slice(0, -1).forEach((m, j) => { m.order = base - (j + 1) / 1000; });
+  });
+}
+/* Two lines only run alongside each other inside one section, so a move that takes one out of the
+   section its partner is in takes it out of the group too. */
+function dropStrayMates(p) {
   const tr = planTree(p);
   for (const x of planItems(p)) {
     const h = x.alongside ? planItemById(p, x.alongside) : null;
     if (h && (tr.sectionOf[h.id] || null) !== (tr.sectionOf[x.id] || null)) delete x.alongside;
   }
+}
+/* Take one thing out of a list and put it back at another place. */
+function slideTo(list, from, to) {
+  const out = list.slice(), got = out.splice(from, 1)[0];
+  out.splice(from < to ? to - 1 : to, 0, got);
+  return out;
+}
+async function nudgeLine(id, dir) {
+  const p = currentPlan(); if (!p) return;
+  const it = planItemById(p, id); if (!it) return;
+  const step = dir < 0 ? -1 : 1;
+  let seq;
+  if (it.main) {
+    const blocks = planBlocksOf(p);
+    const from = blocks.findIndex(b => b.sec && b.sec.id === id);
+    const to = from + step;
+    if (from < 0 || to < 0 || to >= blocks.length) return;
+    const moved = slideTo(blocks, from, from < to ? to + 1 : to);
+    seq = [];
+    for (const b of moved) for (const u of b.units) seq.push(u);
+  } else {
+    const units = planUnits(p);
+    const from = units.findIndex(u => u.some(x => x.id === id));
+    const to = from + step;
+    if (from < 0 || to < 0 || to >= units.length) return;
+    seq = slideTo(units, from, from < to ? to + 1 : to);
+  }
+  renumberUnits(p, seq);
+  dropStrayMates(p);
   renderSchedule();
   await savePlan(p);
 }
@@ -13974,12 +14081,8 @@ async function moveLineTo(fromId, toId, mode) {
   const hi = after ? (Number(after.order) || 0) : lo + 20;
   it.order = lo + (hi - lo) / 2;
   moveMatesWith(p, fromId, ms);
-  /* Two lines only run alongside each other inside one section. */
-  const tr = planTree(p);
-  for (const x of planItems(p)) {
-    const h = x.alongside ? planItemById(p, x.alongside) : null;
-    if (h && (tr.sectionOf[h.id] || null) !== (tr.sectionOf[x.id] || null)) delete x.alongside;
-  }
+  renumberUnits(p, planUnits(p));
+  dropStrayMates(p);
   renderSchedule();
   await savePlan(p);
 }
@@ -13988,15 +14091,6 @@ async function moveLineTo(fromId, toId, mode) {
    The ones the plan is read by: a section with its own overall dates, rather than one more thing to
    do. A line with work under it is one whether it says so or not; the star is for saying so before
    there is anything under it yet, so there is something to drop the work onto. */
-async function toggleMain(id) {
-  const p = currentPlan(); if (!p) return;
-  const it = planItemById(p, id); if (!it) return;
-  if (it.main) delete it.main;
-  else { it.main = true; if (Math.round(Number(it.days) || 0) === 1) it.days = 0; }
-  renderSchedule();
-  await savePlan(p);
-}
-
 /* ── editing a line where it sits ── */
 /* A length on a line that has work under it is a target, not more work: what is under it is what it
    actually comes to, and the row says how many days that leaves you, or how many you are out by. */
@@ -14054,26 +14148,33 @@ async function setLineDate(id, v) {
 }
 /* Type a number to put the line where that number is. It takes that line's place, and its level,
    so moving something is one keystroke rather than a drag. */
+/* The number in the box is the step in the run, counted from the bottom of the page — so typing
+   one is saying which turn you want this to take. Type a number past the end and it goes to the
+   end, rather than sitting there looking like the box is broken. */
 async function moveToStep(id, v) {
   const p = currentPlan(); if (!p) return;
   const want = String(v == null ? '' : v).trim().toLowerCase();
   if (!want) { renderSchedule(); return; }
-  /* The numbers count slots in the run, not lines on the page, so the one you typed is looked up
-     rather than counted back from the end. */
-  const list = planTree(p).items;
-  const steps = planDates(p, workCal(job)).by;
-  const toIdx = list.findIndex(x => String((steps[x.id] || {}).step || '').toLowerCase() === want);
-  const from = list.findIndex(x => x.id === id);
-  if (toIdx < 0 || from < 0 || toIdx === from) { renderSchedule(); return; }
-  const it = planItemById(p, id);
-  const ms = mateIdsOf(p, id);
-  /* It takes that line's place: just above it going up the page, just below it coming down. */
-  const target = list[toIdx];
-  const other = list[toIdx + (toIdx > from ? 1 : -1)];
-  const a2 = Number(target.order) || 0;
-  const b2 = other ? (Number(other.order) || 0) : a2 + (toIdx > from ? 20 : -20);
-  it.order = a2 + (b2 - a2) / 2;
-  moveMatesWith(p, id, ms);
+  const by = planDates(p, workCal(job)).by;
+  const units = planUnits(p);
+  const from = units.findIndex(u => u.some(x => x.id === id));
+  if (from < 0) { renderSchedule(); return; }
+  const stepOfUnit = u => String((by[u[u.length - 1].id] || {}).step || '').toLowerCase();
+  let to = units.findIndex(u => stepOfUnit(u) === want);
+  if (to < 0) {
+    const n = parseInt(want, 10);
+    const numbered = units.map((u, i) => ({ i: i, n: parseInt(stepOfUnit(u), 10) }))
+      .filter(x => x.n === x.n);
+    if (!(n === n) || !numbered.length) {
+      toast('Type the step number you want it to take', true); renderSchedule(); return;
+    }
+    let best = numbered[0];
+    for (const x of numbered) if (Math.abs(x.n - n) < Math.abs(best.n - n)) best = x;
+    to = best.i;
+  }
+  if (to === from) { renderSchedule(); return; }
+  renumberUnits(p, slideTo(units, from, from < to ? to + 1 : to));
+  dropStrayMates(p);
   renderSchedule();
   await savePlan(p);
 }
@@ -14137,13 +14238,14 @@ function schRow(p, r, flat) {
     r.step || '',
     /* On the plan the shape of it is the point, so the indent comes along. In a list sorted by date
        there is no shape to show, and an indent there only reads as a mistake. */
-    (flat ? '' : new Array(r.depth + 1).join('    ')) + (it.name || '(unnamed)'),
-    r.head ? '' : (it.who || ''),
+    (flat ? '' : new Array(r.depth + 1).join('    ')) + (it.name || '(unnamed)') +
+      (r.notice ? ' — has to be in by then' : ''),
+    r.head || r.notice ? '' : (it.who || ''),
     r.days || '',
     r.start ? dAt(r.start) : '',
     r.finish ? dAt(r.finish) : '',
     r.mate ? 'Step ' + r.mateStep : '',
-    it.kind ? kindLabel(it.kind) : '',
+    r.notice ? 'Needed by' : it.kind ? kindLabel(it.kind) : '',
     schFlag(r),
     it.note || '',
     it.done ? 'Yes' : ''
