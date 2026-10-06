@@ -1687,7 +1687,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.25';
+const APP_VERSION = 'v8.26';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12901,6 +12901,15 @@ function planFlat(p) {
 }
 const planDepth = (p, id) => { const f = planFlat(p).find(x => x.item.id === id); return f ? f.depth : 0; };
 
+/* A name cut to fit a tag, cut at a space where there is one near the end so it does not read as a
+   typo, with the mark that says there is more of it. */
+function clipName(name, n) {
+  const t = String(name || '').trim();
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n), sp = cut.lastIndexOf(' ');
+  return (sp > n - 7 ? cut.slice(0, sp) : cut).replace(/[ ,;:.\-]+$/, '') + '\u2026';
+}
+
 /* ── the backward pass ──
    A line with things under it IS those things: its length is what they add up to, and they fill its
    window. Fifteen days of temp duct is the taps, the mains and the tie-in laid end to end — not
@@ -12919,6 +12928,10 @@ function planDates(plan, cal) {
   const spanFrom = (edge, n) => !n ? edge
     : (fwd ? addWorkDays(edge, n - 1, cal) : subWorkDays(edge, n - 1, cal));
   const stepOver = iso => fwd ? nextWorkDay(iso, cal) : prevWorkDay(iso, cal);
+  /* the same two, against the run, for working out what has to come before a date somebody typed */
+  const stepBack = iso => fwd ? prevWorkDay(iso, cal) : nextWorkDay(iso, cal);
+  const spanBack = (edge, n) => !n ? edge
+    : (fwd ? subWorkDays(edge, n - 1, cal) : addWorkDays(edge, n - 1, cal));
   const past = (x, y) => fwd ? x < y : x > y;
   const out = Object.create(null);
 
@@ -12964,6 +12977,22 @@ function planDates(plan, cal) {
     const typed = blk.sec ? dur(blk.sec) : 0;
     const blockDays = typed || sum;
     let inner = from;
+    /* A date typed partway up a block pins the run to it, and the work that comes before it has to
+       land before it. Count back from the first line carrying one, far enough for everything under
+       it to fit, so those lines get their days instead of being left blank. */
+    if (!inner) {
+      let before = 0;
+      for (const g of slots) {
+        let pin = '';
+        for (const k of [g.lead].concat(g.with)) {
+          if (!pinnedDate(k)) continue;
+          const e = edgeOf(k.date);
+          if (!pin || past(e, pin)) pin = e;
+        }
+        if (pin) { if (before) inner = spanBack(stepBack(pin), before); break; }
+        before += slotLen(g);
+      }
+    }
     for (const g of slots) {
       const together = [g.lead].concat(g.with);
       let begin = inner;
@@ -13012,23 +13041,26 @@ function planDates(plan, cal) {
     if (anchor && blockDays) cur = stepOver(spanFrom(anchor, blockDays));
     else if (inner) cur = inner;
   }
-  /* Whichever way round the plan is written, what is on order has to be in before the work it holds
-     up starts. It takes no slot in the run; it only has to land in time for what follows it. Lead
-     time counts down in plain days, because a vendor does not keep our week. */
+  /* A notice is not work: it is a date to hit so the work it holds up can start on time. The line it
+     holds up is the next piece of work above it on the page, because the page reads bottom to top —
+     what sits above a line is what comes after it. Put the notice directly under the thing it has to
+     be in for, give it a lead time, and it lands that far before that line's date. */
   for (const it of tr.items) {
     if (!isLead(it)) continue;
-    let begin = '';
+    let holds = null;
     for (const x of tr.items) {
       if (x.main || isLead(x)) continue;
-      if ((tr.sectionOf[x.id] || null) !== (tr.sectionOf[it.id] || null)) continue;
-      if ((Number(x.order) || 0) <= (Number(it.order) || 0)) continue;
-      const o = out[x.id];
-      if (o && o.start && (!begin || o.start < begin)) begin = o.start;
+      if ((Number(x.order) || 0) >= (Number(it.order) || 0)) continue;
+      if (!holds || (Number(x.order) || 0) > (Number(holds.order) || 0)) holds = x;
     }
+    const o = holds ? out[holds.id] : null;
+    const by = (o && o.start) || '';
     const n = Math.max(1, dur(it));
-    let finish = pinnedDate(it) ? String(it.date).trim() : (begin ? prevWorkDay(begin, cal) : '');
-    out[it.id] = { start: finish ? (n > 1 ? dShift(finish, -(n - 1)) : finish) : '',
-      finish: finish, anchored: !!finish, clash: false, total: n, lead: true };
+    /* Plain days, counted back from that line's date: six weeks before the seventh is the twenty
+       sixth, not six weeks of the job's working week. */
+    const when = pinnedDate(it) ? String(it.date).trim() : (by ? dShift(by, -n) : '');
+    out[it.id] = { start: when, finish: when, anchored: !!when, clash: false, total: 0,
+      lead: true, holds: (holds && holds.id) || '', by: by };
   }
   for (const it of planItems(plan)) if (!out[it.id]) out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0 };
 
@@ -13060,6 +13092,7 @@ function planDates(plan, cal) {
       kids: mine.filter(x => !isLead(x)).length,
       section: tr.sectionOf[it.id] || '',
       lead: !!d.lead, kind: String(it.kind || ''),
+      holds: d.holds || '', by: d.by || '',
       step: stepOf[it.id] || '',
       mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
       mateStep: tr.leadOf[it.id] !== it.id ? (stepOf[tr.leadOf[it.id]] || '') : '',
@@ -13852,8 +13885,11 @@ function planOutlineHtml(p, rows, res) {
           id="dt_${r.id}">${r.pinned ? '◆ ' : ''}${esc(dates) || '<i>set a date</i>'}</span>
         <span class="out-meta">
           ${r.lead ? `<span class="out-tag is-notice" title="${escAttr(kindLabel(it.kind) + ' · ' +
-              leadWeeksOf(it) + ' week' + (leadWeeksOf(it) === 1 ? '' : 's') + ' of lead — counted back from ' +
-              'the work it holds up, so there is still time to act on it')}">needs doing to stay on schedule</span>`
+              leadWeeksOf(it) + ' week' + (leadWeeksOf(it) === 1 ? '' : 's') + ' of lead' +
+              (r.holds ? ', counted back from "' + ((planItemById(p, r.holds) || {}).name || '') +
+                '" on ' + shortDate(r.by) : ' — put it under the line it has to be in for'))}">${
+              r.holds ? 'needed by then for ' + esc(clipName((planItemById(p, r.holds) || {}).name || '', 20))
+                      : 'put it under the line it is for'}</span>`
             : it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
           ${r.mate ? `<button class="out-tag is-ov on" onclick="clearMate('${r.id}')"
                title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to take it off.">alongside ${esc(r.mateStep)} ✕</button>` : ''}

@@ -392,15 +392,15 @@ const testCode = `
   /* Lead time still has to land before the work it holds up. */
   { schedules = [mk('start', [
       L('ls', 'Temp', 0, 10, { main:true }),
-      L('lw', 'Hang units', 2, 20, { date:'2026-11-02' }),
-      L('lo', 'Order units', 28, 15, { kind:'order', who:'' }) ])];
+      L('lw', 'Hang units', 2, 15, { date:'2026-11-02' }),
+      L('lo', 'Order units', 28, 20, { kind:'order', who:'' }) ])];
     openPlan = 'p';
     var rl = planDates(currentPlan(), five);
     ck('order: something on order takes no step and is not counted into the section',
       rl.by['lo'].step === '' && rl.by['lo'].lead === true && rl.by['ls'].days === 2);
-    ck('order: it has to be in before the work it holds up starts, counting plain days',
-      rl.by['lo'].finish < rl.by['lw'].start &&
-      dShift(rl.by['lo'].finish, -27) === rl.by['lo'].start); }
+    ck('order: it lands its lead time before the line above it, counted in plain days',
+      rl.by['lo'].start === dShift(rl.by['lw'].start, -28) &&
+      rl.by['lo'].start === rl.by['lo'].finish); }
 
   /* A length typed on a section is the length of that block, and what follows it moves. */
   /* The page reads bottom to top, so the section that comes after Temp is the one above it. */
@@ -473,30 +473,49 @@ const testCode = `
     planSel = []; }
 
   /* A submittal is a date to hit, not a job with a length: a notice, counted back from the work. */
+  /* A date typed on a line partway up a block used to leave everything under it blank, because the
+     run had nowhere to start from until it reached the pin. It counts back from the pin instead. */
+  { var bk = mk('start', [
+      L('bs', 'Mech room', 0, 10, { main:true }),
+      L('ba', 'Top line', 2, 20),
+      L('bb', 'Middle line', 3, 30, { date:'2026-12-07' }),
+      L('bc', 'Foot line', 5, 40) ]);
+    var rb = planDates(bk, five);
+    ck('pin: work under a date typed partway up lands before it, not nowhere',
+      rb.by['bc'].start === '2026-11-30' && rb.by['bc'].finish === '2026-12-04' &&
+      rb.by['bb'].start === '2026-12-07' && rb.by['ba'].start === '2026-12-10');
+    ck('pin: the section stretches over the lot', rb.by['bs'].start === '2026-11-30' &&
+      rb.by['bs'].finish === '2026-12-11' && rb.by['bs'].days === 10);
+    ck('pin: and the typed date is hit, not shoved', rb.by['bb'].clash === false); }
+
+  /* Put it directly under the line it has to be in for. The page reads bottom to top, so the line
+     above it is the one that comes after it \u2014 six weeks before that line's date is the day. */
   { var nt = mk('start', [
       L('xs', 'Temp', 0, 10, { main:true }),
-      L('x2', 'Set units', 2, 20),
-      L('xsub', 'Pump submittal', 14, 25, { kind:'submittal', who:'ENFRA' }),
-      L('x1', 'Run duct', 8, 30, { date:'2026-10-26' }) ]);
+      L('x1', 'Set HWPs, HX and ADS', 1, 20, { date:'2026-12-07' }),
+      L('xsub', 'Pump submittal approval', 42, 25, { kind:'submittal', who:'ENFRA' }),
+      L('x2', 'Run duct', 8, 30) ]);
     var rn = planDates(nt, five);
-    ck('notice: it is counted back from the work it holds up, by the lead time given',
-      rn.by['x1'].start === '2026-10-26' && rn.by['xsub'].finish === '2026-10-23' &&
-      rn.by['xsub'].start === '2026-10-10' && rn.by['xsub'].lead === true);
+    ck('notice: it is counted back from the line above it, by the lead time given',
+      rn.by['x1'].start === '2026-12-07' && rn.by['xsub'].start === '2026-10-26' &&
+      rn.by['xsub'].holds === 'x1' && rn.by['xsub'].lead === true);
+    ck('notice: it is one day, not a stretch of days',
+      rn.by['xsub'].start === rn.by['xsub'].finish && rn.by['xsub'].days === 0);
     ck('notice: it takes no step and adds no time to the section',
-      rn.by['xsub'].step === '' && rn.by['xs'].days === 10);
+      rn.by['xsub'].step === '' && rn.by['xs'].days === 9);
     ck('notice: the row shows one day and no length, and says what it is for',
       (function () {
         var h = planOutlineHtml(nt, rn.rows.filter(keepRow), rn);
         var row = h.split('out-row').filter(function (c) { return c.indexOf('Pump submittal') > 0; })[0] || '';
         return row.indexOf('is-lead') > 0 && row.indexOf('out-days is-notice') > 0 &&
-               row.indexOf('needs doing to stay on schedule') > 0 &&
+               row.indexOf('needed by then for Set HWPs') > 0 &&
                row.indexOf('\u2192') < 0;
       })());
     ck('notice: and the card asks how long the lead time is, in weeks',
       (function () {
         var f = lineForm(nt, 'xsub', rn.rows);
         return f.indexOf('How long is the lead time') > 0 && f.indexOf('liWeeks') > 0 &&
-               f.indexOf('value="2"') > 0;
+               f.indexOf('value="6"') > 0;
       })());
     ck('notice: a line that is not one of those is not asked',
       lineForm(nt, 'x2', rn.rows).indexOf('liLeadWrap" hidden') > 0); }
@@ -655,11 +674,11 @@ const testCode = `
     delete schedules[0].flat;
     schedules[0].items = [
       { id:'tmp', name:'Temp', days:0, order:10, main:true },
-      { id:'o', name:'Order pumps', kind:'order', days:28, order:15 },
       { id:'t5', name:'Connect OSA flex', who:'Arctic', days:1, order:20 },
       { id:'t3', name:'Insulate rooftop duct', who:'Arctic', days:4, order:40, alongside:'t2' },
       { id:'t2', name:'Run rooftop duct', who:'Arctic', days:8, order:50 },
-      { id:'t1', name:'Run flex', who:'Arctic', days:1, order:60, date:'2026-10-12', note:'Night work' } ];
+      { id:'t1', name:'Run flex', who:'Arctic', days:1, order:60, date:'2026-10-12', note:'Night work' },
+      { id:'o', name:'Order pumps', kind:'order', days:28, order:65 } ];
     var xr = planDates(currentPlan(), five);
     var xshown = xr.rows.filter(keepRow);
     var line = function (id) { return schRow(currentPlan(), xr.by[id]); };
