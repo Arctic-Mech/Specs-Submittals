@@ -929,6 +929,83 @@ const testCode = `
       })());
     delete schedules[0].basis; }
 
+  // the submittal starter — the sheet the job gets priced on
+  { var reqOf = function (art, name, kind, items) {
+      return { article: art, name: name, kind: kind, items: items.map(function (x) {
+        return { label: x[0], detail: x[1], text: x[0] + ': ' + x[1] }; }) }; };
+    var secs = [
+      { key:'237300', number:'23 73 00', division:'23', title:'Air-Handling Units', vendor:'Trane',
+        products: [ { id:'p1', marks:[{id:'m1',tag:'AHU-1'}], name:'Rooftop unit', desc:'12,000 cfm', make:'Trane', leadWeeks:'22' },
+                    { id:'p2', marks:[{id:'m2',tag:'AHU-2'},{id:'m3',tag:'AHU-3'}], name:'Rooftop unit', desc:'8,000 cfm', make:'Trane', leadWeeks:'22' } ],
+        requirements: [
+          reqOf('1.06','Closeout Submittals','Closeout', [['Operation and Maintenance Data','For units, in the O and M manuals.']]),
+          reqOf('1.03','Action Submittals','Action', [
+            ['Product Data','Include rated capacities and operating weights for each unit.'],
+            ['Shop Drawings','Signed and sealed by a qualified professional engineer.'],
+            ['Delegated Design Submittal','For seismic restraints indicated to comply.'],
+            ['Product Data','a duplicate label that must not be counted twice'] ]),
+          reqOf('1.04','Informational Submittals','Informational', [
+            ['Seismic Qualification Certificates','From the manufacturer.'],
+            ['Field quality-control reports','Results of each test.'] ]) ] },
+      { key:'230593', number:'23 05 93', division:'23', title:'Testing and Balancing', products: [],
+        requirements: [ reqOf('1.03','Action Submittals','Action', [['Qualification Data','For the TAB firm.']]) ] },
+      { key:'220516', number:'22 05 16', division:'22', title:'Expansion Fittings', manual: true,
+        products: [ { id:'p3', marks:[{id:'m4',tag:'EXP-1'}], name:'Compensator', desc:'4 inch', make:'', leadWeeks:'6' } ],
+        requirements: [] } ];
+    job = { id:'js', name:'Test job', number:'25-113', specs:[{ id:'sp1', name:'Spec book' }], sections: secs };
+    jobs = [job];
+    specDataFor = async function (k) {
+      var s2 = secs.filter(function (x) { return x.key === k; })[0];
+      return { requirements: (s2 && s2.requirements) || [], includes: [] };
+    };
+
+    var must = starterMust(secs[0].requirements);
+    ck('starter: what the section demands, named once each and worth-reading-first first',
+      must.short.indexOf('Product Data') === 0 &&
+      must.short.split('Product Data').length === 2 &&
+      must.count === 6);
+    ck('starter: the action submittals come before the informational ones',
+      must.short.indexOf('Product Data') < must.short.indexOf('Seismic Qualification'));
+    ck('starter: only four are named in the cell, and it says how many more there are',
+      must.short.indexOf('+2 more') > 0);
+    ck('starter: the whole wording is kept for the cell note, article by article',
+      must.full.indexOf('1.03  ACTION SUBMITTALS') >= 0 &&
+      must.full.indexOf('rated capacities and operating weights') > 0 &&
+      must.full.length > must.short.length * 3);
+    ck('starter: a section nothing was read out of asks for nothing',
+      starterMust([]).short === '' && starterMust([]).count === 0);
+
+    var lines = await starterLines(secs, 'both');
+    var shape = function (ls) { return ls.map(function (l) {
+      return l.band ? '[' + l.sec.number + ']' : (l.mark || '(section)'); }).join(' '); };
+    ck('starter: both — equipment under its section, and a line for a section with none entered',
+      shape(lines) === '[23 73 00] AHU-1 AHU-2 AHU-3 [23 05 93] (section) [22 05 16] EXP-1');
+    ck('starter: the quantity is how many marks the line covers',
+      lines[2].qty === 2 && lines[1].qty === 1);
+    ck('starter: what it is carries the basis of design',
+      lines[1].desc.indexOf('Basis of design: Trane') > 0);
+
+    var autoL = await starterLines(secs, 'auto');
+    ck('starter: the spec book on its own gives a line per section it was read into, and no equipment',
+      shape(autoL) === '[23 73 00] (section) [23 05 93] (section)');
+    var handL = await starterLines(secs, 'hand');
+    ck('starter: by hand gives the equipment entered and the sections added by hand',
+      shape(handL) === '[23 73 00] AHU-1 AHU-2 AHU-3 [22 05 16] EXP-1');
+    ck('starter: the spec wording still comes along on a line chosen by hand',
+      handL[1].must.short.indexOf('Product Data') === 0);
+    ck('starter: and a section added by hand with nothing read into it says so',
+      handL[handL.length - 1].must.short === '');
+
+    ck('starter: it knows whether a spec book has ever been read on this job', starterHasParse() === true);
+    ck('starter: and knows when one has not',
+      (function () {
+        var keep = job.specs, keep2 = job.sections;
+        job.specs = []; job.sections = [{ key:'1', manual: true, products: [] }];
+        var got = starterHasParse();
+        job.specs = keep; job.sections = keep2;
+        return got === false;
+      })()); }
+
 /* A date box hands out the year a digit at a time \u2014 2026 arrives as 0002, 0020, 0202, 2026 \u2014
      and everything here redraws when a date changes, so the box was taken away on the first digit
      and the year could never be finished. */

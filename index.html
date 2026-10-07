@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.30';
+const APP_VERSION = 'v8.31';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -19982,6 +19982,454 @@ async function exportReleaseXlsx() {
     toast('Could not build the release list: ' + (e.message || e), true);
   }
 }
+/* ── the submittal starter ──
+   The sheet you send out to get a job priced. A line per piece of equipment, banded under the spec
+   section it has to answer to, with what that section demands of it sitting right there — short
+   enough to read across, with the whole wording on the cell if you want it.
+
+   Quotes are slots on a line, not columns down the page: a vendor who prices the air handlers and
+   nothing else takes slot 1 on those lines and appears nowhere else. Pick the one you are going
+   with from the box at the end and it lights up, and it lands on the vendors tab under whoever you
+   picked, so what each of them is owed is a list you already have. */
+const STARTER_SLOT_COLS = [
+  { h: 'Vendor', w: 16, k: 'vendor' }, { h: 'Price', w: 11.5, k: 'price' },
+  { h: 'Lead (wks)', w: 8, k: 'lead' }, { h: 'Notes', w: 17, k: 'note' }
+];
+const STARTER_FIXED = [
+  { h: 'Item', w: 12 }, { h: 'What it is', w: 30 }, { h: 'Qty', w: 5 },
+  { h: 'Spec section', w: 11.5 }, { h: 'Must meet', w: 33 }
+];
+const STARTER_TAIL = [
+  { h: 'Going with', w: 11 }, { h: 'Vendor chosen', w: 17 }, { h: 'Price chosen', w: 13 }
+];
+const STARTER_HEAD = 6;                 // the heading row; lines start under it
+/* The order the articles are worth reading in: what you have to hand over to get the thing
+   approved comes before what you hand over at the end of the job. */
+const STARTER_KIND_ORDER = { 'Action': 0, 'Submittals': 1, 'Informational': 2,
+  'Maintenance Material': 3, 'Training': 4, 'Closeout': 5 };
+/* The requirements twice over: the names of them, short enough to sit in a cell and be read across
+   a row, and the whole parsed wording for the cell note. The wording is what the spec actually
+   says, so it is long — which is exactly why it is not in the cell. */
+function starterMust(reqs) {
+  const groups = (reqs || []).slice().sort((a, b) =>
+    ((STARTER_KIND_ORDER[a.kind] == null ? 9 : STARTER_KIND_ORDER[a.kind]) -
+     (STARTER_KIND_ORDER[b.kind] == null ? 9 : STARTER_KIND_ORDER[b.kind])));
+  const seen = Object.create(null), labels = [], full = [];
+  for (const g of groups) {
+    const head = [g.article || '', (g.name || g.kind || '').toUpperCase()].filter(Boolean).join('  ');
+    if (head) full.push(head);
+    for (const it of (g.items || [])) {
+      const lab = String(it.label || '').trim();
+      if (lab && !seen[lab.toLowerCase()]) { seen[lab.toLowerCase()] = 1; labels.push(lab); }
+      const body = it.label ? it.label + (it.detail ? ': ' + it.detail : '') : (it.text || '');
+      if (body) full.push('   • ' + body);
+    }
+    full.push('');
+  }
+  const SHOW = 4;
+  return {
+    short: labels.slice(0, SHOW).join(' · ') +
+      (labels.length > SHOW ? '  · +' + (labels.length - SHOW) + ' more' : ''),
+    full: full.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+    count: labels.length
+  };
+}
+/* Has anything ever been read out of a spec book on this job? */
+function starterHasParse() {
+  if (specsOf(job).length) return true;
+  /* No spec file on the job, but a register restored from a backup can still carry what was read
+     out of one — so what matters is whether there is anything parsed, not where it came from. */
+  return sectionsOf(job).some(s => Array.isArray(s.requirements) && s.requirements.length);
+}
+/* The lines of the sheet. A section becomes a band with its equipment under it; a section with no
+   equipment entered still gets a line of its own, so nothing quietly falls off the list. */
+async function starterLines(secs, mode) {
+  const data = await Promise.all(secs.map(s =>
+    specDataFor(s.key).catch(() => ({ requirements: [], includes: [] }))));
+  const out = [];
+  secs.forEach((s, i) => {
+    const prods = sectionProducts(s);
+    const keep = mode === 'auto' ? !s.manual
+      : mode === 'hand' ? !!(s.manual || prods.length)
+      : true;
+    if (!keep) return;
+    /* The wording is reference, so it comes along whichever way the lines were chosen — there is
+       no sense in hiding what the spec demands of a line that is on the sheet. */
+    const must = starterMust(data[i].requirements || []);
+    const items = mode === 'auto' ? [] : prods;
+    out.push({ band: true, sec: s });
+    if (items.length) {
+      for (const p of items) out.push({ sec: s, must: must,
+        mark: marksLabel(p) || p.tag || '',
+        name: p.name || '',
+        desc: [p.desc, p.make && ('Basis of design: ' + p.make)].filter(Boolean).join(' — '),
+        lead: p.leadWeeks || '', qty: Math.max(1, (marksInOrder(p) || []).length) });
+    } else {
+      out.push({ sec: s, must: must, bare: true, mark: '',
+        name: s.title || '(untitled section)',
+        desc: [s.description, s.manufacturer && ('Basis of design: ' + s.manufacturer)].filter(Boolean).join(' — '),
+        lead: s.leadWeeks || '', qty: '' });
+    }
+  });
+  return out;
+}
+async function buildStarterXlsx(lines, opts) {
+  const XJ = await ensureExcelJS();
+  const N = Math.max(2, Math.min(8, opts.slots || 4));
+  const SW = STARTER_SLOT_COLS.length;
+  const nFix = STARTER_FIXED.length;
+  const slotAt = i => nFix + i * SW + 1;                       // 1-based first column of slot i
+  const tailAt = nFix + N * SW + 1;
+  const nCols = tailAt + STARTER_TAIL.length - 1;
+  const C = n => schCol(n);
+  const GOING = C(tailAt), VCH = C(tailAt + 1), PCH = C(tailAt + 2);
+  const wb = new XJ.Workbook();
+  wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+  const ws = wb.addWorksheet('Quote sheet', {
+    views: [{ state: 'frozen', xSplit: 2, ySplit: STARTER_HEAD }],
+    pageSetup: { orientation: 'landscape', scale: 78,
+      printTitlesRow: STARTER_HEAD + ':' + STARTER_HEAD, printTitlesColumn: 'A:E',
+      margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
+  });
+  ws.columns = STARTER_FIXED.map(c => ({ width: c.w }))
+    .concat([].concat.apply([], Array.from({ length: N }, () => STARTER_SLOT_COLS.map(c => ({ width: c.w })))))
+    .concat(STARTER_TAIL.map(c => ({ width: c.w })));
+  const span = (r, text, style, from, to) => {
+    ws.mergeCells(r, from || 1, r, to || nCols);
+    const c = ws.getCell(r, from || 1); c.value = text; Object.assign(c, style || {}); return c;
+  };
+  span(1, 'Arctic Mechanical — ' + (job.name || 'Job') + '  ·  Submittal starter',
+    { font: { bold: true, size: 15, color: { argb: SCH_INK.title } }, alignment: { vertical: 'middle' } });
+  ws.getRow(1).height = 26;
+  span(2, [job.number ? 'Job ' + job.number : '', opts.sourceLabel,
+    opts.items + ' item' + (opts.items === 1 ? '' : 's') + ' across ' + opts.sections + ' section' + (opts.sections === 1 ? '' : 's'),
+    N + ' quotes a line', 'Started ' + shortDate(today())].filter(Boolean).join('    ·    '),
+    { font: { size: 10, color: { argb: SCH_INK.dim } } });
+  span(3, 'Name the vendor in the slot you put their number in — slot 1 does not have to be the same '
+    + 'firm all the way down. Hover a Must meet cell for the spec wording behind it. Pick who you are '
+    + 'going with at the end of the line and it lights up and lands on the Vendors tab.',
+    { font: { size: 10, italic: true, color: { argb: SCH_INK.calcText } },
+      alignment: { wrapText: true, vertical: 'middle' } });
+  ws.getRow(3).height = 26;
+  ws.getRow(4).height = 6;
+  /* The slot banner, so four columns read as one quote rather than four loose ones. */
+  const banner = ws.getRow(STARTER_HEAD - 1);
+  for (let i = 0; i < N; i++) {
+    const a = slotAt(i), b = a + SW - 1;
+    ws.mergeCells(STARTER_HEAD - 1, a, STARTER_HEAD - 1, b);
+    const c = banner.getCell(a);
+    c.value = 'QUOTE ' + (i + 1);
+    c.font = { bold: true, size: 9.5, color: { argb: i % 2 ? SCH_INK.calcText : SCH_INK.title } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 ? 'FFE8EEF6' : 'FFDCE6F2' } };
+    c.border = { top: { style: 'thin', color: { argb: SCH_INK.rule } },
+      left: { style: 'thin', color: { argb: SCH_INK.rule } },
+      right: { style: 'thin', color: { argb: SCH_INK.rule } } };
+  }
+  banner.height = 15;
+  const heads = STARTER_FIXED.map(c => c.h)
+    .concat([].concat.apply([], Array.from({ length: N }, () => STARTER_SLOT_COLS.map(c => c.h))))
+    .concat(STARTER_TAIL.map(c => c.h));
+  const hr = ws.getRow(STARTER_HEAD);
+  heads.forEach((h, i) => {
+    const c = hr.getCell(i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    c.alignment = { vertical: 'middle', horizontal: (i === 1 || i === 4) ? 'left' : 'center', wrapText: true };
+    c.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
+  });
+  hr.height = 22;
+  const top = STARTER_HEAD + 1;
+  let r = top;
+  const itemRows = [];
+  for (const ln of lines) {
+    const row = ws.getRow(r);
+    if (ln.band) {
+      ws.mergeCells(r, 1, r, nCols);
+      const c = row.getCell(1);
+      c.value = '  ' + (ln.sec.number || ln.sec.key) + '   ' + String(ln.sec.title || '').toUpperCase();
+      c.font = { bold: true, size: 11, color: { argb: SCH_INK.secText } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
+      c.alignment = { vertical: 'middle' };
+      row.height = 19;
+      r++; continue;
+    }
+    itemRows.push(r);
+    row.getCell(1).value = ln.mark || '';
+    row.getCell(2).value = [ln.name, ln.desc].filter(Boolean).join(' — ');
+    row.getCell(3).value = ln.qty === '' ? '' : ln.qty;
+    row.getCell(4).value = ln.sec.number || ln.sec.key;
+    const mc = row.getCell(5);
+    mc.value = ln.must.short || '';
+    if (ln.must.full) mc.note = ln.must.full;
+    for (let i = 0; i < N; i++) {
+      const a = slotAt(i);
+      row.getCell(a + 1).numFmt = '#,##0';
+      for (let k = 0; k < SW; k++) {
+        const c = row.getCell(a + k);
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 ? 'FFF7FAFD' : 'FFEFF4FA' } };
+      }
+    }
+    /* Which slot won, and the two cells that follow it out so the vendors tab has something plain
+       to read rather than having to know where the slots sit. */
+    const pick = (col) => {
+      let f = '""';
+      for (let i = N - 1; i >= 0; i--) f = 'IF($' + GOING + r + '="Quote ' + (i + 1) + '",' + C(slotAt(i) + col) + r + ',' + f + ')';
+      return '=IF($' + GOING + r + '="","",' + f + ')';
+    };
+    row.getCell(tailAt + 1).value = { formula: pick(0).slice(1) };
+    const pc = row.getCell(tailAt + 2);
+    pc.value = { formula: pick(1).slice(1) };
+    pc.numFmt = '#,##0';
+    row.getCell(tailAt).dataValidation = { type: 'list', allowBlank: true,
+      formulae: ['"' + Array.from({ length: N }, (_, i) => 'Quote ' + (i + 1)).join(',') + '"'] };
+    for (let c = 1; c <= nCols; c++) {
+      const cell = row.getCell(c);
+      cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      cell.font = Object.assign({ size: 10, color: { argb: SCH_INK.title } }, cell.font || {});
+      if (c === 2 || c === 5) cell.alignment = { vertical: 'middle', wrapText: true };
+      else if (c === 1 || c === 4) cell.alignment = { horizontal: 'left' };
+      else cell.alignment = { horizontal: 'center' };
+    }
+    row.getCell(5).font = { size: 8.5, color: { argb: SCH_INK.calcText } };
+    row.getCell(2).font = { size: 9.5, color: { argb: SCH_INK.title } };
+    /* Two lines, so a long description and a long list of requirements both sit inside their own
+       cell instead of running over the line under them. The rest is on the cell. */
+    row.height = 27;
+    r++;
+  }
+  const last = r - 1;
+  return { wb: wb, ws: ws, XJ: XJ, N: N, SW: SW, nFix: nFix, nCols: nCols, slotAt: slotAt,
+    tailAt: tailAt, top: top, last: last, itemRows: itemRows, C: C, GOING: GOING, VCH: VCH, PCH: PCH };
+}
+function starterFinish(b, lines, opts) {
+  const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, C, GOING, VCH, PCH } = b;
+  /* The one you picked goes green across its four cells, so a glance down the sheet says who the
+     job is being bought from without reading a word. */
+  if (itemRows.length) {
+    for (let i = 0; i < N; i++) {
+      const a = C(slotAt(i)), z = C(slotAt(i) + SW - 1);
+      ws.addConditionalFormatting({
+        ref: a + top + ':' + z + last,
+        rules: [{ type: 'expression', priority: i + 1,
+          formulae: ['$' + GOING + top + '="Quote ' + (i + 1) + '"'],
+          style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD7F0DB' } },
+            font: { bold: true, color: { argb: 'FF14532D' } } } }]
+      });
+    }
+    /* A line nobody has been picked on yet, so what is left to decide is visible. */
+    ws.addConditionalFormatting({
+      ref: C(tailAt) + top + ':' + C(tailAt) + last,
+      rules: [{ type: 'expression', priority: N + 1, formulae: ['$' + GOING + top + '=""'],
+        style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } } } }]
+    });
+  }
+  const sum = last + 2;
+  const sr = ws.getRow(sum);
+  ws.mergeCells(sum, 1, sum, 4);
+  sr.getCell(1).value = 'GOING WITH, SO FAR';
+  sr.getCell(1).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
+  sr.getCell(1).alignment = { vertical: 'middle' };
+  const picked = itemRows.length
+    ? '=COUNTIF(' + GOING + top + ':' + GOING + last + ',"<>")&" of ' + itemRows.length + ' picked"' : '""';
+  sr.getCell(5).value = { formula: picked.slice(1) };
+  sr.getCell(5).font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+  sr.getCell(5).alignment = { horizontal: 'left' };
+  const tot = ws.getCell(sum, tailAt + 2);
+  tot.value = { formula: itemRows.length ? 'SUM(' + PCH + top + ':' + PCH + last + ')' : '0' };
+  tot.numFmt = '#,##0';
+  tot.font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
+  tot.alignment = { horizontal: 'center' };
+  for (let c = 1; c <= nCols; c++) {
+    sr.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    sr.getCell(c).border = { top: { style: 'medium', color: { argb: SCH_INK.head } } };
+  }
+  sr.height = 20;
+  if (itemRows.length) ws.autoFilter = { from: { row: STARTER_HEAD, column: 1 }, to: { row: last, column: nCols } };
+
+  /* ── the vendors tab ──
+     Everything you have said yes to, under whoever you said it to. It reads itself off the quote
+     sheet, so picking a different slot moves the line from one firm to the other on its own. */
+  const v = wb.addWorksheet('Vendors', {
+    views: [{ state: 'frozen', ySplit: 3 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
+  });
+  const VH = ['Vendor', 'Item', 'What it is', 'Spec section', 'Price', 'Lead (wks)', 'Notes'];
+  v.columns = [{ width: 24 }, { width: 13 }, { width: 38 }, { width: 13 }, { width: 13 }, { width: 10 }, { width: 26 }];
+  v.mergeCells(1, 1, 1, VH.length);
+  v.getCell(1, 1).value = 'Who we are going with — ' + (job.name || 'Job');
+  v.getCell(1, 1).font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
+  v.getRow(1).height = 24;
+  v.mergeCells(2, 1, 2, VH.length);
+  v.getCell(2, 1).value = 'Filter the Vendor column to one firm and you have their award list. '
+    + 'It follows the Going with boxes on the quote sheet — change one there and it changes here.';
+  v.getCell(2, 1).font = { size: 10, italic: true, color: { argb: SCH_INK.dim } };
+  VH.forEach((h, i) => {
+    const c = v.getCell(3, i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    c.alignment = { vertical: 'middle', horizontal: (i === 2 || i === 6) ? 'left' : 'center' };
+  });
+  v.getRow(3).height = 20;
+  const Q = "'Quote sheet'!";
+  /* An empty cell read through a formula comes back as a nought, which would litter the list with
+     zeros where somebody simply left the lead time or the note blank. Every pull is asked whether
+     there was anything there first. */
+  const blankIf = f => 'IF(' + f + '="","",' + f + ')';
+  itemRows.forEach((src, n) => {
+    const row = v.getRow(4 + n);
+    const put = (c, f, fmt) => {
+      const cell = row.getCell(c);
+      cell.value = { formula: 'IF(' + Q + '$' + VCH + src + '="","",' + f + ')' };
+      if (fmt) cell.numFmt = fmt;
+      cell.font = { size: 10, color: { argb: SCH_INK.title } };
+      cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      cell.alignment = (c === 3 || c === 7) ? { vertical: 'top' } : { horizontal: 'center' };
+      return cell;
+    };
+    put(1, Q + '$' + VCH + src).font = { size: 10, bold: true, color: { argb: SCH_INK.title } };
+    put(2, blankIf(Q + '$A' + src));
+    put(3, blankIf(Q + '$B' + src)).alignment = { vertical: 'top' };
+    put(4, blankIf(Q + '$D' + src));
+    put(5, Q + '$' + PCH + src, '#,##0');
+    /* the lead and the note belong to the slot that won, same as the price */
+    const pickOf = (off) => {
+      let f = '""';
+      for (let i = N - 1; i >= 0; i--) f = 'IF(' + Q + '$' + GOING + src + '="Quote ' + (i + 1) + '",' +
+        blankIf(Q + C(slotAt(i) + off) + src) + ',' + f + ')';
+      return f;
+    };
+    put(6, pickOf(2));
+    put(7, pickOf(3)).alignment = { vertical: 'top' };
+    row.getCell(1).alignment = { horizontal: 'left' };
+    /* Two columns nobody sees, which turn the award list into a list of firms: the first time each
+       name appears, and how many distinct names have appeared by that line. */
+    const h = row.getCell(8), k = row.getCell(9);
+    h.value = { formula: 'IF($A' + (4 + n) + '="",0,IF(COUNTIF($A$4:$A' + (4 + n) + ',$A' + (4 + n) + ')=1,1,0))' };
+    k.value = { formula: 'IF($A' + (4 + n) + '="","",SUM($H$4:H' + (4 + n) + '))' };
+  });
+  v.getColumn(8).hidden = true; v.getColumn(9).hidden = true;
+  const vLast = 3 + itemRows.length;
+  if (itemRows.length) v.autoFilter = { from: { row: 3, column: 1 }, to: { row: vLast, column: VH.length } };
+  /* What each firm comes to, worked out off the same list rather than guessed at beforehand — you
+     may well go with somebody who was never on the job before today. */
+  const sTop = vLast + 3;
+  v.mergeCells(sTop, 1, sTop, 3);
+  v.getCell(sTop, 1).value = 'WHAT EACH FIRM COMES TO';
+  v.getCell(sTop, 1).font = { bold: true, size: 11, color: { argb: SCH_INK.title } };
+  ['Vendor', 'Items', 'Total'].forEach((h, i) => {
+    const c = v.getCell(sTop + 1, i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    c.alignment = { horizontal: i ? 'center' : 'left' };
+  });
+  const rows = Math.max(itemRows.length, 1);
+  const det = '$A$4:$A$' + Math.max(vLast, 4), money = '$E$4:$E$' + Math.max(vLast, 4);
+  const ord = '$I$4:$I$' + Math.max(vLast, 4);
+  for (let i = 0; i < rows; i++) {
+    const rr = sTop + 2 + i, row = v.getRow(rr);
+    row.getCell(1).value = { formula: 'IFERROR(INDEX(' + det + ',MATCH(' + (i + 1) + ',' + ord + ',0)),"")' };
+    row.getCell(2).value = { formula: 'IF($A' + rr + '="","",COUNTIF(' + det + ',$A' + rr + '))' };
+    row.getCell(3).value = { formula: 'IF($A' + rr + '="","",SUMIF(' + det + ',$A' + rr + ',' + money + '))' };
+    row.getCell(3).numFmt = '#,##0';
+    for (let c = 1; c <= 3; c++) {
+      row.getCell(c).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      row.getCell(c).font = { size: 10, color: { argb: SCH_INK.title } };
+      row.getCell(c).alignment = { horizontal: c === 1 ? 'left' : 'center' };
+    }
+  }
+  const gr = v.getRow(sTop + 2 + rows);
+  gr.getCell(1).value = 'ALL IN';
+  gr.getCell(3).value = { formula: 'SUM($C$' + (sTop + 2) + ':$C$' + (sTop + 1 + rows) + ')' };
+  gr.getCell(3).numFmt = '#,##0';
+  for (let c = 1; c <= 3; c++) {
+    gr.getCell(c).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
+    gr.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    gr.getCell(c).alignment = { horizontal: c === 1 ? 'left' : 'center' };
+  }
+  return wb;
+}
+const STARTER_SOURCES = [
+  { id: 'both', label: 'Both',
+    say: 'Every section on the register, with the equipment you have entered listed under it. A section with nothing entered yet still gets a line, so nothing falls off.' },
+  { id: 'auto', label: 'What the spec book gave us',
+    say: 'Only the sections the spec book was read into, one line each, with what that section demands of them. No equipment lines — those are yours.' },
+  { id: 'hand', label: 'What I entered by hand',
+    say: 'Only the equipment you have entered and the sections you added yourself. The spec wording still comes along wherever it has been read.' }
+];
+let starterMode = 'both', starterSlots = 4;
+function openStarterModal() {
+  if (!job) return;
+  const secs = visibleSections();
+  const all = sectionsOf(job).length;
+  const parsed = starterHasParse();
+  const prods = secs.reduce((n, s) => n + sectionProducts(s).length, 0);
+  if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
+  if (!parsed) starterMode = 'hand';
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
+      <div class="modal-head"><h3>Export submittal starter</h3>
+        <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <div class="muted" style="font-size:12.5px;margin-bottom:12px">A sheet to get the job priced
+          on: a line per piece of equipment under the section it answers to, what that section
+          demands of it, and room for ${starterSlots} quotes a line.</div>
+        ${parsed ? '' : `<div class="folder-bar warn" style="margin-bottom:12px">
+          <span class="fb-ico">⚠</span><span>No spec book has been read on this job yet, so there
+          is no parse to go off — only what you have entered by hand.</span>
+          <button class="btn sm primary" onclick="closePdf();promptImportSpec()">Read the spec book</button></div>`}
+        <div class="field"><label class="fl">What goes on it</label>
+          ${STARTER_SOURCES.map(o => `<label class="ac-done" style="align-items:flex-start;gap:8px;margin-bottom:8px${
+              o.id === 'auto' && !parsed ? ';opacity:.45' : ''}">
+            <input type="radio" name="stSrc" value="${o.id}" ${starterMode === o.id ? 'checked' : ''}${
+              o.id === 'auto' && !parsed ? ' disabled' : ''} onchange="starterMode=this.value">
+            <span><b>${esc(o.label)}</b><br><span class="muted" style="font-size:12px">${esc(o.say)}</span></span>
+          </label>`).join('')}
+        </div>
+        <div class="field"><label class="fl">How many quotes a line</label>
+          <select class="input" id="stSlots" style="max-width:120px" onchange="starterSlots=Number(this.value)||4">
+            ${[2,3,4,5,6,8].map(n => `<option value="${n}"${n === starterSlots ? ' selected' : ''}>${n}</option>`).join('')}
+          </select></div>
+        <div class="muted" style="font-size:12px">${secs.length} section${secs.length === 1 ? '' : 's'}${
+          secs.length < all ? ' of ' + all + ', matching the filter you have set' : ''}${
+          prods ? ' · ' + prods + ' piece' + (prods === 1 ? '' : 's') + ' of equipment entered' : ' · no equipment entered yet'}.</div>
+      </div>
+      <div class="modal-foot"><button class="btn primary" onclick="closePdf();exportStarterXlsx()">Build it</button></div>
+    </div></div>`;
+}
+async function exportStarterXlsx() {
+  if (!job) return;
+  const secs = visibleSections();
+  if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
+  try {
+    stickyToast('Building the starter…');
+    const lines = await starterLines(secs, starterMode);
+    const items = lines.filter(l => !l.band).length;
+    if (!items) { toast('Nothing matched that choice — try "Both"', true); return; }
+    const src = (STARTER_SOURCES.find(o => o.id === starterMode) || {}).label || '';
+    const b = await buildStarterXlsx(lines, { slots: starterSlots, sourceLabel: 'From: ' + src,
+      items: items, sections: lines.filter(l => l.band).length });
+    const wb = starterFinish(b, lines, { slots: starterSlots });
+    const bytes = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([bytes],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sanitizeAnyName(jobFileBase() + ' submittal starter', 'submittal starter') + '.xlsx';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    toast('Starter built — ' + items + ' line' + (items === 1 ? '' : 's') + ' to get priced');
+  } catch (e) {
+    console.error(e);
+    toast('Could not build the starter: ' + (e.message || e), true);
+  }
+}
 function openExportMenu() {
   if (!job) return;
   $('modalHost').innerHTML = `
@@ -20001,6 +20449,12 @@ function openExportMenu() {
           <span>What is released and what is only part released, following whatever filter you have
             set — a line per section, and a second sheet with a line per item saying which of them
             are out and which are not.</span>
+        </button>
+        <button class="choice-btn" onclick="closePdf();openStarterModal()">
+          <b>▦ Submittal starter — to get quotes on</b>
+          <span>A line per piece of equipment under the spec section it answers to, what that
+            section demands of it, and room for several quotes a line. Pick who you are going with
+            and it lands on a vendors tab.</span>
         </button>
         <button class="choice-btn" onclick="closePdf();exportCsv()">
           <b>⤓ CSV spreadsheet</b>
