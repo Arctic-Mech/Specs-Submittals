@@ -331,7 +331,11 @@ header {
   border-radius: var(--radius); padding: 9px 13px; margin-bottom: 14px; font-size: 13px;
 }
 .folder-bar .fb-ico { font-size: 15px; }
-.folder-bar .btn { margin-left: auto; }
+.folder-bar > .btn { margin-left: auto; }
+.folder-bar .fb-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.folder-bar .fb-x { border: 1px solid transparent; background: none; color: inherit; cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 4px 6px; border-radius: 6px; opacity: .65; }
+.folder-bar .fb-x:hover { border-color: var(--border); opacity: 1; }
 .folder-bar.on   { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .folder-bar.warn { background: var(--amber-sf); border: 1px solid var(--amber); color: var(--text); }
 .folder-bar .fb-bb { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12.5px; white-space: nowrap; }
@@ -1698,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.29';
+const APP_VERSION = 'v8.30';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3960,6 +3964,14 @@ let submSort = 'section';   // 'section' | 'response' (latest response date)
 let rfiSort = 'number';     // 'number' | 'response' (latest answered date)
 // per-machine: open PDFs by downloading (to open in Bluebeam) instead of the inline viewer
 let bluebeamMode = (() => { try { return localStorage.getItem('sr_bluebeam') === '1'; } catch (e) { return false; } })();
+/* Which folder on ShareFile a job is wired to is housekeeping, not something to have up on a screen
+   in front of anybody. It stays folded away until you open it, and it remembers which you chose. */
+let folderBarOpen = (() => { try { return localStorage.getItem('sr_folderbar') === '1'; } catch (e) { return false; } })();
+function toggleFolderBar() {
+  folderBarOpen = !folderBarOpen;
+  try { localStorage.setItem('sr_folderbar', folderBarOpen ? '1' : '0'); } catch (e) {}
+  updateFolderBar();
+}
 let openKey = null;       // section open in the drawer
 let editRow = null;       // section whose row is in inline-edit mode (pencil toggled)
 let unsubJobs = null;
@@ -20786,32 +20798,53 @@ function updateFolderBar() {
   if (!bar) return;
   if (!job) { bar.hidden = true; bar.innerHTML = ''; return; }
   bar.hidden = false;
+  const open = !!folderBarOpen;
+  /* The folder's name is the one thing on here worth hiding: it is a ShareFile path, it means
+     nothing to anybody else in the room, and it is the sort of thing that should not be read off
+     a shared screen. Everything that needs doing stays on show. */
+  const fold = () => `<button class="fb-x" onclick="toggleFolderBar()" title="${
+    open ? 'Hide which folder this is' : 'Show which folder this is'}">${
+    open ? '\u25BE hide folder' : '\u25B8 folder'}</button>`;
   if (jobFolder) {
-    const nm = jobFolder.name || job.sfFolderName || 'this job’s folder';
+    const nm = jobFolder.name || job.sfFolderName || 'this job\u2019s folder';
     const cnt = jobFolderCount == null ? ''
-      : jobFolderCount ? ` · ${jobFolderCount} PDF${jobFolderCount === 1 ? '' : 's'}`
-      : ' · <b style="color:var(--amber)">no PDFs found here</b>';
+      : jobFolderCount ? `${jobFolderCount} PDF${jobFolderCount === 1 ? '' : 's'}`
+      : '<b style="color:var(--amber)">no PDFs found here</b>';
     const un = jobUnassigned.length;
     bar.className = 'folder-bar on';
-    bar.innerHTML = `<span class="fb-ico">📁</span><span>PDFs load from <b>${esc(nm)}</b>${cnt}.${
-      un ? ` <b style="color:var(--amber)">${un} new file${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
-      ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new file${un === 1 ? '' : 's'}</button>` : ''}
-      <button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder…</button>
-      <label class="fb-bb" title="On this laptop, open PDFs by downloading them so they open in Bluebeam Revu"><input type="checkbox" ${bluebeamMode ? 'checked' : ''} onchange="toggleBluebeam(this.checked)"> Open in Bluebeam</label>`;
+    bar.innerHTML = `<span class="fb-ico">\u{1F4C1}</span><span>${
+        open ? `PDFs load from <b>${esc(nm)}</b>${cnt ? ' \u00B7 ' + cnt : ''}.`
+             : `PDFs loaded${cnt ? ' \u00B7 ' + cnt : ''}.`}${
+        un ? ` <b style="color:var(--amber)">${un} new file${un === 1 ? '' : 's'} to assign.</b>` : ''}</span>
+      <span class="fb-acts">
+        ${un ? `<button class="btn sm primary" onclick="startAssignUnassigned()">Assign ${un} new file${un === 1 ? '' : 's'}</button>` : ''}
+        ${open ? `<button class="btn sm ghost" onclick="loadJobFolder(true)">Change folder\u2026</button>` : ''}
+        <label class="fb-bb" title="On this laptop, open PDFs by downloading them so they open in Bluebeam Revu"><input type="checkbox" ${bluebeamMode ? 'checked' : ''} onchange="toggleBluebeam(this.checked)"> Open in Bluebeam</label>
+        ${fold()}
+      </span>`;
   } else if (!fsSupported()) {
     bar.className = 'folder-bar warn';
-    bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
+    bar.innerHTML = `<span class="fb-ico">\u{1F4CE}</span><span>This job\u2019s PDFs are in ShareFile. Open this page in <b>Chrome or Edge</b> to view or add them.</span>`;
   } else if (folderRemembered) {
     // We already know this job's folder from a previous session — one click to reconnect.
-    const nm = folderRemembered.name || job.sfFolderName || 'this job’s folder';
+    const nm = folderRemembered.name || job.sfFolderName || 'this job\u2019s folder';
     bar.className = 'folder-bar warn';
-    bar.innerHTML = `<span class="fb-ico">📎</span><span>Reconnect to <b>${esc(nm)}</b> to view or add this job’s PDFs.</span>
-      <button class="btn sm primary" onclick="reconnectJobFolder()">Reconnect folder</button>`;
+    bar.innerHTML = `<span class="fb-ico">\u{1F4CE}</span><span>${
+        open ? `Reconnect to <b>${esc(nm)}</b> to view or add this job\u2019s PDFs.`
+             : 'Reconnect this job\u2019s folder to view or add its PDFs.'}</span>
+      <span class="fb-acts">
+        <button class="btn sm primary" onclick="reconnectJobFolder()">Reconnect folder</button>
+        ${fold()}
+      </span>`;
   } else {
-    const nm = job.sfFolderName ? ` (“${esc(job.sfFolderName)}”)` : '';
+    const nm = job.sfFolderName || '';
     bar.className = 'folder-bar warn';
-    bar.innerHTML = `<span class="fb-ico">📎</span><span>This job’s PDFs live in its ShareFile folder${nm}. <b>Load the folder</b> to view or add PDFs.</span>
-      <button class="btn sm primary" onclick="loadJobFolder()">Load ShareFile folder</button>`;
+    bar.innerHTML = `<span class="fb-ico">\u{1F4CE}</span><span>This job\u2019s PDFs live in its ShareFile folder${
+        open && nm ? ` (\u201C${esc(nm)}\u201D)` : ''}. <b>Load the folder</b> to view or add PDFs.</span>
+      <span class="fb-acts">
+        <button class="btn sm primary" onclick="loadJobFolder()">Load ShareFile folder</button>
+        ${nm ? fold() : ''}
+      </span>`;
   }
 }
 
