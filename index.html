@@ -1529,8 +1529,8 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div class="brand" onclick="go('jobs')">
     <img class="brand-mark" id="brandLogo" alt="Arctic Mechanical" src="">
     <div>
-      <div class="brand-name">The Dingus</div>
-      <div class="brand-sub">Arctic Mechanical · <span id="verLabel"></span></div>
+      <div class="brand-name" id="brandName">The Dingus</div>
+      <div class="brand-sub"><span id="brandSub">Arctic Mechanical · </span><span id="verLabel"></span></div>
     </div>
   </div>
   <span class="crumb" id="crumb" hidden>›</span>
@@ -1698,7 +1698,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.28';
+const APP_VERSION = 'v8.29';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4400,6 +4400,12 @@ function go(where, id) {
   $('view-job').hidden  = where !== 'job';
   $('jobActions').hidden = where !== 'job';
   $('crumb').hidden = where !== 'job';
+  /* Inside a job the top corner is the company and the job — what is on the screen when it is up
+     in front of a GC. The name of the tool belongs on the way in, not on the wall. */
+  const inJob = where === 'job';
+  $('brandName').textContent = inJob ? 'Arctic Mechanical' : 'The Dingus';
+  $('brandSub').textContent = inJob ? '' : 'Arctic Mechanical · ';
+  document.title = inJob && job && job.name ? job.name : 'The Dingus';
   closeDrawer();
   if (where === 'jobs') {
     if (unsubSections) { unsubSections(); unsubSections = null; }
@@ -8056,7 +8062,7 @@ function importEstimateFilePick() {
         await importCoAsWorkbook(c, bytes);
         return;
       }
-      if (!estWorkbookLooksLikeOurs(wb)) { toast('That isn’t a Dingus estimate or change-order spreadsheet — its numbers can’t be read automatically.', true); return; }
+      if (!estWorkbookLooksLikeOurs(wb)) { toast('That isn’t an estimate or change-order spreadsheet from here — its numbers can’t be read automatically.', true); return; }
       const e = makeEstimateFromParsed(parseEstimateWorkbook(wb), file.name.replace(/\.(xlsx|xlsm)$/i, ''));
       e.src = 'estimator';                                          // the estimator owns the uploaded spreadsheet from here on
       estimates = estimates.concat([e]);
@@ -8191,7 +8197,7 @@ async function assignEstimateModal(i, item, total) {
         <select class="input" id="asgXlsxExisting">${estOpts}</select>
         <div class="muted" style="margin-top:4px">Its numbers are replaced with this spreadsheet’s. (Locked estimates aren’t listed.)</div></div>`;
   } else {
-    body = `<div class="muted" style="margin-bottom:6px">This doesn’t look like a Dingus estimate or change-proposal file, so its numbers can’t be read automatically. You can leave it here and ignore it, or open it and re-save it from the website to put it in the right format.</div>`;
+    body = `<div class="muted" style="margin-bottom:6px">This doesn’t look like an estimate or change-proposal file from here, so its numbers can’t be read automatically. You can leave it here and ignore it, or open it and re-save it from the website to put it in the right format.</div>`;
   }
   $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal">
     <div class="modal-head"><h3>New file ${i + 1} of ${total}</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
