@@ -589,6 +589,38 @@ const testCode = `
     ck('notice: it takes no step and adds no time to the section',
       rn.by['xsub'].step === '' && rn.by['xs'].days === 9);
     ck('notice: and it is not nagged about for having no date of its own', rn.rootless === 0);
+
+    /* The usual shape: the submittal goes in under the section it has to be in for, and there is
+       nothing else in that section yet. Plans made before the flat list stamped a star on any line
+       that had a submittal under it, so this is most real plans. */
+    { var st = mk('start', [
+        L('ha', 'Demo', 0, 10, { main:true }), L('hb', 'Demo piping', 2, 20),
+        L('hc', "Set HWP's, HX And ADS", 0, 30, { main:true, date:'2026-12-07' }),
+        L('hd', 'Pump submittal approval', 42, 40, { kind:'submittal', who:'ENFRA' }) ]);
+      var rs = planDates(st, five);
+      ck('notice: a section heading can be the thing it is for',
+        rs.by['hd'].holds === 'hc' && rs.by['hd'].by === '2026-12-07' &&
+        rs.by['hd~by'].start === '2026-10-26');
+      /* and it must not reach past the heading into work that has nothing to do with it */
+      ck('notice: it does not reach into the block above for a date',
+        rs.by['hd'].holds !== 'hb'); }
+
+    { var sx = mk('start', [
+        L('xa', 'Demo', 0, 10, { main:true }), L('xb', 'Demo piping', 2, 20, { date:'2027-03-01' }),
+        L('xc', 'Mech room', 0, 30, { main:true }),
+        L('xd', 'Pump submittal', 42, 40, { kind:'submittal' }) ]);
+      var rx = planDates(sx, five);
+      ck('notice: with nothing above it in its own section but an undated heading, it says so',
+        rx.by['xd'].holds === 'xc' && !rx.by['xd~by']); }
+
+    /* A date left on the record from when it was ordinary work must not fight the worked-out one. */
+    { var pd = mk('start', [
+        L('pa', 'Mech room', 0, 10, { main:true }),
+        L('pb', 'Set pumps', 2, 20, { date:'2026-12-07' }),
+        L('pc', 'Pump submittal', 14, 30, { kind:'submittal', date:'2025-01-01' }) ]);
+      var rp = planDates(pd, five);
+      ck('notice: an old date on the line does not override what it works out to',
+        rp.by['pc~by'].start === '2026-11-23'); }
     ck('notice: the submittal row shows the weeks where the days go, and no start date',
       (function () {
         var h = planOutlineHtml(nt, rn.rows.filter(keepRow), rn);
@@ -766,7 +798,7 @@ const testCode = `
     }
     job = heldJ; statusFilter = heldS; releaseFilter = heldR; query = heldQ2; divFilter = heldD; }
 
-  // the plan, out to Excel
+  // the plan, out to Excel and back again
   { schedules[0].basis = 'start';
     delete schedules[0].flat;
     schedules[0].items = [
@@ -777,54 +809,124 @@ const testCode = `
       { id:'t1', name:'Run flex', who:'Arctic', days:1, order:60, date:'2026-10-12', note:'Night work' },
       { id:'o', name:'Order pumps', kind:'order', days:28, order:65 } ];
     var xr = planDates(currentPlan(), five);
-    var xshown = xr.rows.filter(keepRow);
-    var line = function (id) { return schRow(currentPlan(), xr.by[id]); };
-    ck('excel: a row carries the step, the name indented to its depth, and whose it is',
-      line('t2')[0] === '2' && line('t2')[1] === '    Run rooftop duct' && line('t2')[2] === 'Arctic');
-    ck('excel: a main line gives no whose, because that is on the lines under it',
-      line('tmp')[1] === 'Temp' && line('tmp')[2] === '');
-    ck('excel: dates go out as dates, so they sort and format rather than being retyped',
-      line('t2')[4] instanceof Date && line('t2')[5] instanceof Date &&
-      dISO(line('t2')[4]) === xr.by['t2'].start);
-    ck('excel: a line running alongside another says which step it runs with, and shares its length',
-      line('t3')[0] === '2a' && line('t3')[6] === 'Step 2' && line('t3')[3] === line('t2')[3]);
-    ck('excel: only the lines that are not plain work name a kind',
-      line('o')[7] === 'Order / release' && line('t2')[7] === '');
-    ck('excel: the day a lead time comes to goes out as a line of its own',
-      !!xr.by['o~by'] && schRow(currentPlan(), xr.by['o~by'])[7] === 'Needed by' &&
-      schRow(currentPlan(), xr.by['o~by'])[1].indexOf('has to be in by then') > 0 &&
-      schRow(currentPlan(), xr.by['o~by'])[3] === '');
-    ck('excel: the note and the done mark come along',
-      line('t1')[9] === 'Night work' && line('t1')[10] === '' &&
-      (function () { var it = planItemById(currentPlan(), 't1'); it.done = true;
-        var v = schRow(currentPlan(), planDates(currentPlan(), five).by['t1'])[10];
-        delete it.done; return v === 'Yes'; })());
-    ck('excel: and a line that is behind says so in a column of its own',
+    ck('excel: each line says what kind of thing it is, in words',
+      schKindOut(xr.by['tmp']) === 'Section' && schKindOut(xr.by['t2']) === 'Work' &&
+      schKindOut(xr.by['o']) === 'Order / release' && schKindOut(xr.by['o~by']) === 'Needed by');
+    ck('excel: and a line that is behind says so',
       schFlag(xr.by['o~by']).indexOf('behind') > 0 && schFlag(xr.by['t2']) === '');
-    ck('excel: every row has a cell for every heading',
-      xshown.every(function (r) { return schRow(currentPlan(), r).length === SCH_HEADS.length; }) &&
-      SCH_HEADS.length === SCH_WIDTHS.length);
-    if (!HAVE_XLSX) skip('excel: the workbook itself', 'xlsx engine not installed');
-    else {
-      var wbBytes = await buildScheduleXlsx(currentPlan(), xr, five, xshown);
-      var wb = XLSX.read(wbBytes, { type: 'array', cellDates: true });
-      ck('excel: two sheets \u2014 the plan as it reads, and the same lines in the order they happen',
-        wb.SheetNames.join() === 'Plan,In order');
-      var aoa = XLSX.utils.sheet_to_json(wb.Sheets['Plan'], { header: 1, raw: true });
-      ck('excel: it says which plan, which week the job works and which way it was built',
-        String(aoa[0][0]).indexOf(currentPlan().name) > 0 &&
-        String(aoa[1][4]) === workShiftLabel(five) &&
-        String(aoa[1][7]) === 'Forward from the start');
-      ck('excel: the headings are there and the lines follow them',
-        aoa[4].join() === SCH_HEADS.join() && aoa.length === 5 + xshown.length);
-      var inOrder = XLSX.utils.sheet_to_json(wb.Sheets['In order'], { header: 1, raw: true }).slice(5);
-      ck('excel: that second sheet is flat, because there is no shape to show in a date order',
-        inOrder.every(function (r) { return String(r[1]).charAt(0) !== ' '; }));
-      ck('excel: and that second sheet really is in the order the work happens',
-        inOrder.every(function (r, i) {
-          return i === 0 || !inOrder[i - 1][4] || !r[4] || r[4] >= inOrder[i - 1][4];
-        }));
-    }
+
+    /* The working days the dates are counted on are listed out, in the order the run reaches them,
+       so the sheet never has to work out what a working day is. */
+    var cdays = schedCalDays(xr, five, true);
+    ck('excel: the working days go out as a list, in order, with room either side',
+      cdays.length > 800 && cdays[0] < cdays[cdays.length - 1] &&
+      cdays.every(function (d, i) { return i === 0 || d > cdays[i - 1]; }) &&
+      cdays.every(function (d) { return isWorkDay(d, five); }));
+    ck('excel: and back from the end they are listed the other way round',
+      (function () { var b = schedCalDays(xr, five, false);
+        return b[0] > b[b.length - 1]; })());
+
+    /* The dates in the sheet are worked out by the sheet, not printed into it. */
+    var hf = schHelpFormulas(7, 40, true, "Calendar!$A$2:$A$9");
+    var df = schDateFormulas(7, 40, "Calendar!$A$2:$A$9");
+    ck('excel: every line gets the whole of the working out',
+      hf(9).length === SCH_HELP.length && hf(9).every(function (x) { return x.charAt(0) === '='; }));
+    ck('excel: the dates are formulas off that list, not typed-in answers',
+      df(9).start.indexOf('INDEX(Calendar!') > 0 && df(9).fin.indexOf('INDEX(Calendar!') > 0);
+    ck('excel: a lead time counts back in plain days from the line it is for',
+      df(9).start.indexOf('-$E9*7') > 0);
+    ck('excel: nothing reaches past the last row of the sheet',
+      hf(40).join(' ').indexOf('$41') < 0 && hf(7).join(' ').indexOf('$6:') < 0);
+    ck('excel: going back from the end the run reads the other neighbour',
+      (function () { var bk = schHelpFormulas(7, 40, false, 'C');
+        return bk(9)[10].indexOf('ROW()-1') > 0 && hf(9)[10].indexOf('ROW()+1') > 0; })());
+
+    /* and back the other way */
+    var sheetRows = function () {
+      return planDates(currentPlan(), five).rows.filter(function (r) { return !r.notice; })
+        .map(function (r) {
+          return { at: 0, id: r.id, step: r.main ? '★' : (r.step || ''),
+            was: r.main ? '★' : (r.step || ''), name: r.item.name,
+            who: r.main || r.lead ? '' : (r.item.who || ''),
+            days: r.main ? (r.target || 0) : (r.mate ? r.own : r.days) || 0,
+            weeks: r.lead ? r.weeks : 0, pin: r.pinned ? r.item.date : '',
+            kind: r.main ? 'main' : (r.item.kind || ''),
+            note: r.item.note || '', done: !!r.item.done };
+        });
+    };
+    var before = sheetRows();
+    ck('excel: a sheet that comes back untouched changes nothing',
+      (function () {
+        var got = schPlanFrom(currentPlan(), before);
+        return got.added.length === 0 && got.gone.length === 0 &&
+          got.items.map(function (x) { return x.id; }).join() ===
+          before.map(function (x) { return x.id; }).join() &&
+          got.items.filter(function (x) { return x.alongside === 't2'; }).length === 1;
+      })());
+    ck('excel: a row you typed on the end comes in as a new line',
+      (function () {
+        var rows = before.concat([{ at:0, id:'', step:'', was:'', name:'Flush and fill',
+          who:'Arctic', days:3, weeks:0, pin:'', kind:'', note:'', done:false }]);
+        var got = schPlanFrom(currentPlan(), rows);
+        return got.added.length === 1 && got.added[0].name === 'Flush and fill' &&
+          got.added[0].days === 3 && got.gone.length === 0;
+      })());
+    ck('excel: a line missing from the sheet is reported, never dropped on its own',
+      (function () {
+        var got = schPlanFrom(currentPlan(), before.filter(function (x) { return x.id !== 't5'; }));
+        return got.gone.length === 1 && got.gone[0].id === 't5';
+      })());
+    ck('excel: a letter on a step ties the line to the one holding that number',
+      (function () {
+        var rows = before.map(function (x) { return Object.assign({}, x); });
+        var t5 = rows.filter(function (x) { return x.id === 't5'; })[0];
+        var t2 = rows.filter(function (x) { return x.id === 't2'; })[0];
+        t5.step = t2.step + 'c';
+        var got = schPlanFrom(currentPlan(), rows);
+        return got.items.filter(function (x) { return x.id === 't5'; })[0].alongside === 't2';
+      })());
+    ck('excel: taking the letter off unties it again',
+      (function () {
+        var rows = before.map(function (x) { return Object.assign({}, x); });
+        rows.filter(function (x) { return x.id === 't3'; })[0].step = '9';
+        var got = schPlanFrom(currentPlan(), rows);
+        return !got.items.filter(function (x) { return x.id === 't3'; })[0].alongside;
+      })());
+    ck('excel: changing the type turns a line into a section, or into a lead time',
+      (function () {
+        var rows = before.map(function (x) { return Object.assign({}, x); });
+        rows.filter(function (x) { return x.id === 't5'; })[0].kind = 'main';
+        var sub = rows.filter(function (x) { return x.id === 't1'; })[0];
+        sub.kind = 'submittal'; sub.weeks = 6; sub.pin = '2020-01-01';
+        var got = schPlanFrom(currentPlan(), rows);
+        var a2 = got.items.filter(function (x) { return x.id === 't5'; })[0];
+        var b2 = got.items.filter(function (x) { return x.id === 't1'; })[0];
+        return a2.main === true && !a2.kind && b2.kind === 'submittal' && b2.days === 42 && !b2.date;
+      })());
+    ck('excel: a date typed in the sheet comes back as the date set on the line',
+      (function () {
+        var rows = before.map(function (x) { return Object.assign({}, x); });
+        rows.filter(function (x) { return x.id === 't2'; })[0].pin = new Date('2026-11-09T12:00:00');
+        var got = schPlanFrom(currentPlan(), rows);
+        return got.items.filter(function (x) { return x.id === 't2'; })[0].date === '2026-11-09';
+      })());
+    ck('excel: dates are read however the sheet wrote them',
+      schDateIn('2026-11-09') === '2026-11-09' && schDateIn('11/9/2026') === '2026-11-09' &&
+      schDateIn(new Date('2026-11-09T12:00:00')) === '2026-11-09' && schDateIn('') === '');
+
+    /* Retyping a step number moves the line, the way typing in the box on the page moves it. */
+    ck('excel: a step number you retyped moves the line, one you left alone does not',
+      (function () {
+        var rows = before.map(function (x) { return Object.assign({}, x); });
+        var low = rows.filter(function (x) { return x.id === 't5'; })[0];
+        var held = planTree(currentPlan()).items.map(function (x) { return x.id; }).join();
+        schApplySteps(currentPlan(), rows);
+        var same = planTree(currentPlan()).items.map(function (x) { return x.id; }).join() === held;
+        low.step = '1';
+        schApplySteps(currentPlan(), rows);
+        var moved = planDates(currentPlan(), five).by['t5'].step === '1';
+        return same && moved;
+      })());
     delete schedules[0].basis; }
 
 /* A date box hands out the year a digit at a time \u2014 2026 arrives as 0002, 0020, 0202, 2026 \u2014

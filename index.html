@@ -1698,7 +1698,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.27';
+const APP_VERSION = 'v8.28';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13058,18 +13058,26 @@ function planDates(plan, cal) {
      be in for, give it a lead time, and it lands that far before that line's date. */
   for (const it of tr.items) {
     if (!isLead(it)) continue;
+    const mySec = tr.sectionOf[it.id] || null;
+    const ord = Number(it.order) || 0;
     let holds = null;
     for (const x of tr.items) {
       if (x.main || isLead(x)) continue;
-      if ((Number(x.order) || 0) >= (Number(it.order) || 0)) continue;
+      if ((Number(x.order) || 0) >= ord) continue;
+      /* Only as far as the section it is in. Reaching past the heading into the block above would
+         hang the date off work that has nothing to do with it. */
+      if ((tr.sectionOf[x.id] || null) !== mySec) continue;
       if (!holds || (Number(x.order) || 0) > (Number(holds.order) || 0)) holds = x;
     }
+    /* Nothing above it but the heading, so the heading is what it is for — which is the usual
+       shape, a submittal put in under the section it has to be in for. */
+    if (!holds && mySec) holds = tr.byId[mySec] || null;
     const o = holds ? out[holds.id] : null;
     const by = (o && o.start) || '';
     const n = Math.max(1, dur(it));
-    /* Plain days, counted back from that line's date: six weeks before the seventh is the twenty
-       sixth, not six weeks of the job's working week. */
-    const when = pinnedDate(it) ? String(it.date).trim() : (by ? dShift(by, -n) : '');
+    /* Plain days, counted back from the day that work starts: six weeks before the seventh is the
+       twenty sixth, not six weeks of the job's working week. */
+    const when = by ? dShift(by, -n) : '';
     /* The line itself carries the lead time, not a start date — it is not a stretch of work that
        begins somewhere. The date it comes to goes on a notice of its own, put in underneath. */
     out[it.id] = { start: '', finish: '', anchored: false, clash: false, total: 0,
@@ -13538,7 +13546,8 @@ function editPlanLine(id) {
   renderSchedule();
   /* Focus without the browser scrolling to it: the card is already under the line you clicked, so
      being taken anywhere is being taken away from your place. */
-  const b = $('liName');
+  const it = planItemById(currentPlan(), id);
+  const b = (it && isLead(it) && $('liWeeks')) || $('liDays') || $('liKind');
   if (b && b.focus) { try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); } }
 }
 function cancelPlanLine() { planEdit = null; renderSchedule(); }
@@ -13547,7 +13556,9 @@ async function savePlanLine(id) {
   const it = planItemById(p, id); if (!it) { planEdit = null; renderSchedule(); return; }
   const v = i => { const e = $(i); return e && e.value != null ? String(e.value).trim() : ''; };
   it.kind = v('liKind');
-  if (isLead(it)) it.days = Math.max(1, Math.round(Number(v('liWeeks')) || 0)) * 7;
+  /* A lead time is weeks, and the day it comes to is worked out — so a date left on the record
+     from when it was ordinary work would only fight with it. */
+  if (isLead(it)) { it.days = Math.max(1, Math.round(Number(v('liWeeks')) || 0)) * 7; delete it.date; }
   else if ($('liDays')) it.days = Math.max(0, Math.round(Number(v('liDays')) || 0));
   it.note = autoCap(v('liNote'));
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
@@ -13750,7 +13761,9 @@ function renderScheduleInner() {
         ${esc(workShiftLabel(cal))}${cal.holidays.length ? ' · ' + cal.holidays.length + ' day' + (cal.holidays.length === 1 ? '' : 's') + ' shut' : ''}
         <button class="x" title="Change the working week" onclick="workWeekModal()">✎</button></span>
       <button class="btn sm ghost" onclick="exportSchedule()"
-        title="The plan as it reads here, and the same lines again in the order the work happens">↓ Excel</button>
+        title="The plan as a spreadsheet you can edit — the dates work themselves out in it">↓ Excel</button>
+      <button class="btn sm ghost" onclick="pickScheduleFile()"
+        title="Put an edited schedule back on the job">↑ Excel</button>
       <button class="btn sm" onclick="addPlanLine()">+ Line</button>
     </div>
 
@@ -13940,7 +13953,7 @@ function planOutlineHtml(p, rows, res) {
                  ' under it come to. Click to say how long you want it to take.')}">${r.days}</span>`
           : `<input class="out-days" type="number" min="0" step="1" value="${escAttr(String(r.days))}"
                title="${r.lead ? 'Days of lead time' : 'Working days'}" onchange="setLineDays('${r.id}',this.value)">`}
-        <span class="out-when${r.pinned ? ' is-pinned' : ''}" onclick="editLineDate('${r.id}')"
+        <span class="out-when${r.pinned ? ' is-pinned' : ''}"${r.lead ? '' : ` onclick="editLineDate('${r.id}')"`}
           title="${r.pinned
             ? (res && res.fwd ? 'Starts on this date' : 'Has to be done by this date') + ' — click to change or clear it'
             : 'Click to set ' + (res && res.fwd ? 'the day it starts' : 'the day it has to be done by')}"
@@ -14221,10 +14234,163 @@ function planListHtml(p, shown, res) {
    The plan as it reads on the page, and the same lines again in the order the work happens, because
    the one is for working from and the other is for sending on. Dates go out as dates rather than as
    text, so they sort and format in Excel instead of having to be retyped. */
-const SCH_HEADS = ['Step', 'Line', 'Whose', 'Days', 'Start', 'Finish', 'Runs alongside',
-  'Kind', 'Flag', 'Note', 'Done'];
-const SCH_WIDTHS = [7, 46, 16, 7, 13, 13, 15, 14, 16, 34, 7];
-const SCH_DATE_COLS = [4, 5];
+/* ── the schedule as a spreadsheet ──
+   Not a picture of the plan: the plan itself, with the working out still in it. The dates are
+   formulas, so changing a length or a step number moves everything the way it moves on the site,
+   and what you get back can be put straight back on the job.
+
+   Working days are not left to Excel to decide. A hidden sheet lists every working day on this job,
+   in the order the run reaches them, built from the same working week and the same shut days the
+   site uses — so "four days after the second" means the same thing in both places, on four tens and
+   over a holiday alike. Everything after that is counting rows on that list. */
+const SCH_FIRST = 7;                 // the first line of the plan, under the headings
+const SCH_CAL_PAD = 420;             // working days either side, so there is room to push things out
+function ensureExcelJS() {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  return new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+    s.onload = () => ok(window.ExcelJS);
+    s.onerror = () => no(new Error('Could not load the spreadsheet builder'));
+    document.head.appendChild(s);
+  });
+}
+/* Every working day this plan could reach, in the order the run reaches them. Going back from the
+   end that is latest first, so counting down the list is always counting forward through the run. */
+function schedCalDays(res, cal, fwd) {
+  const all = [];
+  for (const r of res.rows) { if (r.start) all.push(r.start); if (r.finish) all.push(r.finish); }
+  all.push(today());
+  all.sort();
+  let from = nearestWorkDay(all[0], cal, -1), to = nearestWorkDay(all[all.length - 1], cal, 1);
+  for (let i = 0; i < SCH_CAL_PAD; i++) { from = prevWorkDay(from, cal); to = nextWorkDay(to, cal); }
+  const days = [];
+  let at = from;
+  for (let i = 0; i < 20000 && at <= to; i++) { days.push(at); at = nextWorkDay(at, cal); }
+  return fwd ? days : days.reverse();
+}
+const SCH_COLS = [
+  { k: 'step',  head: 'Step',       w: 7.5, edit: true },
+  { k: 'name',  head: 'What has to be done', w: 46, edit: true },
+  { k: 'who',   head: 'Whose',      w: 16, edit: true },
+  { k: 'days',  head: 'Days',       w: 7.5, edit: true },
+  { k: 'weeks', head: 'Lead (wks)', w: 10, edit: true },
+  { k: 'pin',   head: 'Date set',   w: 13, edit: true },
+  { k: 'start', head: 'Start',      w: 13 },
+  { k: 'fin',   head: 'Finish',     w: 13 },
+  { k: 'kind',  head: 'Type',       w: 15, edit: true },
+  { k: 'note',  head: 'Anything else', w: 32, edit: true },
+  { k: 'done',  head: 'Done',       w: 7.5, edit: true },
+  { k: 'id',    head: 'id',         w: 14, hide: true },
+  /* What the step said when it left here. If it comes back different, you typed it, and the line
+     goes to that number; if it is the same, the order of the rows is what you meant. */
+  { k: 'was',   head: 'step was',   w: 10, hide: true }
+];
+const SCH_HELP = ['kind#', 'step#', 'mate?', 'slot?', 'slotLen', 'secRow', 'blkTop', 'pinIx',
+  'blkDays', 'seed', 'in', 'out', 'slotIx', 'leadRow', 'holdRow', 'nextTop', 'top?', 'pinRow', 'row#',
+  'showA', 'showB', 'from', 'anchor', 'next', 'slotIxN', 'runPrev'];
+const SCH_HELP_AT = SCH_COLS.length + 1;        // first helper column, 1-based
+const SCH_INK = {
+  head:   'FF1F2A37', headText: 'FFFFFFFF',
+  band:   'FFF8FAFC', line: 'FFE2E8F0', rule: 'FFCBD5E1',
+  sec:    'FFFEF3C7', secText: 'FF78350F',
+  lead:   'FFFEE2E2', leadText: 'FFB91C1C',
+  made:   'FFFEF2F2',
+  mate:   'FFEFF6FF', mateText: 'FF1D4ED8',
+  calc:   'FFF1F5F9', calcText: 'FF334155',
+  dim:    'FF94A3B8', title: 'FF0F172A'
+};
+const schCol = n => { let s = '', x = n; while (x > 0) { const m = (x - 1) % 26; s = String.fromCharCode(65 + m) + s; x = (x - m - 1) / 26; } return s; };
+/* The working out, column by column. None of it is for reading — it is hidden — but it is what lets
+   the dates move when you change something, instead of being a photograph of today's answer. */
+function schHelpFormulas(top, last, fwd, CAL) {
+  const H = i => schCol(SCH_HELP_AT + i);
+  const K = H(0), SN = H(1), MT = H(2), SL = H(3), LEN = H(4), SR = H(5), BT = H(6), PI = H(7),
+        BD = H(8), BS = H(9), IN = H(10), OUT = H(11), SX = H(12), LD = H(13), HD = H(14),
+        NT = H(15), TOP = H(16), PR = H(17), RN = H(18), DA = H(19), DB = H(20),
+        BF = H(21), BA = H(22), BX = H(23), SXN = H(24), RP = H(25);
+  /* Forward, the run starts at the foot of the page and climbs. Back from the end, it starts at the
+     top and comes down. Everything below is the same counting either way — it is only which
+     neighbour is "the one before this" that turns round. */
+  const near = fwd ? 'ROW()+1' : 'ROW()-1';
+  const edge = fwd ? 'ROW()>=' + last : 'ROW()<=' + top;
+  const rg = c => '$' + c + '$' + top + ':$' + c + '$' + last;
+  const at = (c, row) => 'INDEX(' + rg(c) + ',' + row + '-' + top + '+1)';
+  const mine = '(' + rg(BT) + '=ROW())';
+  return r => {
+    const me = c => '$' + c + r;
+    /* Where the block hangs off: its own date if it has one, else wherever the block below it in
+       the run finished. Blank means nothing before it has a date yet. */
+    const prev = 'IF(' + me(RP) + '="","",' + at(BX, me(RP)) + ')';
+    const from = 'IF(' + me(K) + '=1,IF(' + me(PI) + '<>"",' + me(PI) + ',' + prev + '),' + prev + ')';
+    /* With nothing to hang off, the run is found by counting back from the first date typed inside
+       the block, far enough for the work under it to fit. */
+    const back = 'IF(' + me(PR) + '="","",' + at(PI, me(PR)) + '-SUMIFS(' + rg(LEN) + ',' + rg(BT) +
+      ',ROW(),' + rg(RN) + ',"' + (fwd ? '>' : '<') + '"&' + me(PR) + '))';
+    /* And what the block itself reads as, which is not the same thing: a date typed on the first
+       line of a block seeds the run there, but the block still begins at the earliest day anything
+       in it lands on. */
+    /* Only the rows of this block, not the whole column. Reaching across every block would make
+       each block's beginning depend on every other block's working out, which is a ring — and a
+       ring is the one thing a spreadsheet cannot work out at all. */
+    const hgt = 'IF(' + me(NT) + '="",' + last + '-ROW()+1,' + me(NT) + '-ROW())';
+    const blkIx = 'OFFSET($' + SXN + '$' + top + ',ROW()-' + top + ',0,' + hgt + ',1)';
+    const least = 'SUMPRODUCT(MIN((' + blkIx + '>0)*' + blkIx + '+(1-(' + blkIx + '>0))*1E9))';
+    const chain = 'IF(' + me(OUT) + '="","",' + me(OUT) + ')';
+    const lead = at(SX, me(LD)), leadLen = at(LEN, me(LD));
+    const secA = me(BA), secB = 'IF(' + me(BA) + '="","",' + me(BA) + '+MAX(' + me(BD) + '-1,0))';
+    const linA = lead, linB = 'IF(' + lead + '="","",' + lead + '+MAX(' + leadLen + '-1,0))';
+    const A = fwd ? secA : secB, B = fwd ? secB : secA;
+    const C = fwd ? linA : linB, D = fwd ? linB : linA;
+    return [
+      '=IF($I' + r + '="Section",1,IF(OR($I' + r + '="Submittal",$I' + r + '="RFI",$I' + r + '="Order / release"),2,0))',
+      '=IFERROR(VALUE($A' + r + '),IFERROR(VALUE(LEFT($A' + r + ',LEN($A' + r + ')-1)),""))',
+      '=IF(' + me(K) + '<>0,0,IF(AND(' + me(SN) + '<>"",ISERROR(VALUE($A' + r + '))),1,0))',
+      '=IF(AND(' + me(K) + '=0,' + me(MT) + '=0),1,0)',
+      '=IF(' + me(SL) + '=0,0,IF($D' + r + '>0,$D' + r + ',IF(' + me(SN) + '="",0,' +
+        'SUMPRODUCT(MAX((' + rg(SN) + '=' + me(SN) + ')*(' + rg(K) + '=0)*$D$' + top + ':$D$' + last + ')))))',
+      '=IF(' + me(K) + '=1,ROW(),IFERROR(LOOKUP(2,1/($' + K + '$' + top + ':$' + K + r + '=1),ROW($' + K + '$' + top + ':$' + K + r + ')),0))',
+      '=IF(' + me(SR) + '=0,' + top + ',' + me(SR) + ')',
+      '=IF($F' + r + '="","",IFERROR(MATCH($F' + r + ',' + CAL + ',0),MATCH($F' + r + ',' + CAL + ',' + (fwd ? '1' : '-1') + ')+1))',
+      '=IF(ROW()<>' + me(BT) + ',"",IF(AND(' + me(K) + '=1,$D' + r + '>0),$D' + r + ',SUMIF(' + rg(BT) + ',ROW(),' + rg(LEN) + ')))',
+      '=IF(ROW()<>' + me(BT) + ',' + at(BS, me(BT)) + ',IF(' + me(BF) + '<>"",' + me(BF) + ',' + back + '))',
+      '=IF(' + edge + ',' + me(BS) + ',IF(' + at(BT, near) + '=' + me(BT) + ',' + at(OUT, near) + ',' + me(BS) + '))',
+      '=IF(' + me(SL) + '=0,' + me(IN) + ',IF(' + me(SX) + '="","",' + me(SX) + '+' + me(LEN) + '))',
+      '=IF(' + me(SL) + '=0,"",IF(' + me(PI) + '<>"",' + me(PI) + ',IF(' + me(IN) + '="","",' + me(IN) + ')))',
+      '=IF(' + me(SL) + '=1,ROW(),IF(' + me(SN) + '="","",IFERROR(LOOKUP(2,1/((' + rg(SL) + '=1)*(' + rg(SN) + '=' + me(SN) + ')),' + rg(RN) + '),"")))',
+      '=IF(' + me(K) + '<>2,"",IFERROR(LOOKUP(2,1/((' + rg(RN) + '<ROW())*(' + rg(K) + '=0)*(' + rg(SR) + '=' + me(SR) + ')),' + rg(RN) + '),IF(' + me(SR) + '=0,"",' + me(SR) + ')))',
+      '=IF(ROW()>=' + last + ',"",IFERROR(MATCH(1,OFFSET($' + TOP + '$' + top + ',ROW()-' + top + '+1,0,' + last + '-ROW(),1),0)+ROW(),""))',
+      '=IF(ROW()=' + me(BT) + ',1,0)',
+      (function () {
+        const cond = '(' + rg(BT) + '=ROW())*(' + rg(SL) + '=1)*(' + rg(PI) + '<>"")';
+        const got = fwd ? 'SUMPRODUCT(MAX(' + cond + '*' + rg(RN) + '))'
+          : 'SUMPRODUCT(MIN(' + cond + '*' + rg(RN) + '+(1-' + cond + ')*1E9))';
+        return '=IF(ROW()<>' + me(BT) + ',"",IF(OR(' + got + '=0,' + got + '>=1E9),"",' + got + '))';
+      })(),
+      '=ROW()',
+      '=IF(' + me(K) + '=2,"",IF(' + me(K) + '=1,' + A + ',IF(' + me(LD) + '="","",' + C + ')))',
+      '=IF(' + me(K) + '=2,"",IF(' + me(K) + '=1,' + B + ',IF(' + me(LD) + '="","",' + D + ')))',
+      '=IF(ROW()<>' + me(BT) + ',' + at(BF, me(BT)) + ',' + from + ')',
+      '=IF(ROW()<>' + me(BT) + ',' + at(BA, me(BT)) + ',IF(' + me(BF) + '<>"",' + me(BF) + ',IF(' + least + '>=1E9,"",' + least + ')))',
+      '=IF(ROW()<>' + me(BT) + ',"",IF(' + me(BA) + '="",' + chain + ',IF(' + me(BD) + '>0,' + me(BA) + '+' + me(BD) + ',' + chain + ')))',
+      '=IF(' + me(SX) + '="",0,' + me(SX) + ')',
+      fwd ? '=' + me(NT)
+          : '=IF(ROW()<=' + top + ',"",IFERROR(LOOKUP(2,1/($' + TOP + '$' + top + ':$' + TOP +
+            (r - 1) + '=1),$' + RN + '$' + top + ':$' + RN + (r - 1) + '),""))'
+    ];
+  };
+}
+function schDateFormulas(top, last, CAL) {
+  const H = i => schCol(SCH_HELP_AT + i);
+  const K = H(0), HD = H(14), DA = H(19), DB = H(20);
+  const rg = c => '$' + c + '$' + top + ':$' + c + '$' + last;
+  return r => ({
+    start: '=IF($B' + r + '="","",IF($' + K + r + '=2,IF($' + HD + r + '="","",IFERROR(INDEX(' + CAL + ',INDEX(' + rg(DA) + ',$' + HD + r + '-' + top + '+1))-$E' + r + '*7,"")),' +
+           'IF($' + DA + r + '="","",INDEX(' + CAL + ',$' + DA + r + '))))',
+    fin:   '=IF($B' + r + '="","",IF($' + K + r + '=2,$G' + r + ',IF($' + DB + r + '="","",INDEX(' + CAL + ',$' + DB + r + '))))'
+  });
+}
+const schKindOut = r => r.notice ? 'Needed by' : r.main ? 'Section' : (kindLabel(r.item.kind) || 'Work');
 function schFlag(r) {
   const out = [];
   if (r.clash) out.push('Clashes');
@@ -14232,61 +14398,389 @@ function schFlag(r) {
   if (r.slack != null && r.slack !== 0) out.push(r.slack < 0 ? (0 - r.slack) + 'd over' : r.slack + 'd left');
   return out.join(' · ');
 }
-function schRow(p, r, flat) {
-  const it = r.item;
-  return [
-    r.step || '',
-    /* On the plan the shape of it is the point, so the indent comes along. In a list sorted by date
-       there is no shape to show, and an indent there only reads as a mistake. */
-    (flat ? '' : new Array(r.depth + 1).join('    ')) + (it.name || '(unnamed)') +
-      (r.notice ? ' — has to be in by then' : ''),
-    r.head || r.notice ? '' : (it.who || ''),
-    r.days || '',
-    r.start ? dAt(r.start) : '',
-    r.finish ? dAt(r.finish) : '',
-    r.mate ? 'Step ' + r.mateStep : '',
-    r.notice ? 'Needed by' : it.kind ? kindLabel(it.kind) : '',
-    schFlag(r),
-    it.note || '',
-    it.done ? 'Yes' : ''
-  ];
+async function buildScheduleWorkbook(p, res, cal) {
+  const XJ = await ensureExcelJS();
+  const fwd = res.fwd;
+  const days = schedCalDays(res, cal, fwd);
+  const CAL = "Calendar!$A$2:$A$" + (days.length + 1);
+  /* The plan whole, never the filtered view: a sheet with lines missing would come back looking
+     like the lines had been taken off, and the working out would have holes in it. */
+  const rows = res.rows.filter(r => !r.notice);
+  /* Room to type on the end, already wired up, so adding work is not a copying job. The working out
+     reaches over those rows too — blank ones weigh nothing, so they change no date until used. */
+  const spare = 14;
+  const top = SCH_FIRST, last = top + rows.length - 1, end = last + spare;
+  const wb = new XJ.Workbook();
+  wb.creator = 'The Dingus'; wb.created = new Date();
+  const ws = wb.addWorksheet('Schedule', {
+    views: [{ state: 'frozen', ySplit: top - 1, xSplit: 2 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: (SCH_FIRST - 1) + ':' + (SCH_FIRST - 1),
+      margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
+  });
+  ws.columns = SCH_COLS.map(c => ({ width: c.w })).concat(SCH_HELP.map(() => ({ width: 9 })));
+  SCH_COLS.forEach((c, i) => { if (c.hide) ws.getColumn(i + 1).hidden = true; });
+  SCH_HELP.forEach((_, i) => { ws.getColumn(SCH_HELP_AT + i).hidden = true; });
+  const nCols = SCH_COLS.length;
+  const span = (r, text, style) => {
+    ws.mergeCells(r, 1, r, nCols);
+    const c = ws.getCell(r, 1); c.value = text; Object.assign(c, style || {}); return c;
+  };
+  span(1, 'Arctic Sheet Metal — ' + (p.name || 'Pull plan'),
+    { font: { bold: true, size: 15, color: { argb: SCH_INK.title } },
+      alignment: { vertical: 'middle' } });
+  ws.getRow(1).height = 26;
+  span(2, [(job && job.name) || 'Job', workShiftLabel(cal),
+    fwd ? 'Built forward from the start' : 'Built back from the end',
+    rows.length + ' lines', (res.slots || 0) + ' steps',
+    'Exported ' + shortDate(today())].join('    ·    '),
+    { font: { size: 10, color: { argb: SCH_INK.dim } } });
+  span(3, 'Change the step numbers, the days, whose it is or the type — the dates work themselves '
+    + 'out. A letter on a step (8a, 8b) means it runs alongside step 8. Then upload it back on the '
+    + 'Schedule tab to put it on the job.',
+    { font: { size: 10, italic: true, color: { argb: SCH_INK.calcText } },
+      alignment: { wrapText: true, vertical: 'middle' } });
+  ws.getRow(3).height = 28;
+  ws.getRow(4).height = 6;
+  const hr = ws.getRow(top - 1);
+  SCH_COLS.forEach((c, i) => {
+    const cell = hr.getCell(i + 1);
+    cell.value = c.head;
+    cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    cell.alignment = { vertical: 'middle', horizontal: i === 1 || i === 9 ? 'left' : 'center' };
+    cell.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
+  });
+  SCH_HELP.forEach((h, i) => { hr.getCell(SCH_HELP_AT + i).value = h; });
+  hr.height = 20;
+  const help = schHelpFormulas(top, end, fwd, CAL);
+  const dates = schDateFormulas(top, end, CAL);
+  const people = planPeople(p).filter(Boolean);
+  rows.forEach((r, n) => {
+    const i = top + n, row = ws.getRow(i), it = r.item;
+    const put = (c, v) => { row.getCell(c).value = v; return row.getCell(c); };
+    put(1, r.main ? '★' : (r.step || ''));
+    put(2, it.name || '');
+    put(3, r.main ? '' : (it.who || ''));
+    /* A line that runs alongside another keeps its own length in the box, not the one the group
+       shares — that is what you would be editing, and the sheet works the shared one out again. */
+    if (!r.main && !r.lead) put(4, (r.mate ? r.own : r.days) || 0);
+    else if (r.main && r.target) put(4, r.target);
+    if (r.lead) put(5, r.weeks || 0);
+    if (r.pinned && it.date) { const c = put(6, dAt(it.date)); c.numFmt = 'mmm d, yyyy'; }
+    const f = dates(i);
+    [[7, f.start, r.start], [8, f.fin, r.finish]].forEach(([c, formula, iso]) => {
+      const cell = row.getCell(c);
+      cell.value = { formula: formula.slice(1), result: iso ? dAt(iso) : null };
+      cell.numFmt = 'mmm d, yyyy';
+      cell.font = { size: 10, color: { argb: SCH_INK.calcText } };
+      cell.alignment = { horizontal: 'center' };
+    });
+    put(9, schKindOut(r));
+    put(10, it.note || '');
+    put(11, it.done ? 'Yes' : '');
+    put(12, it.id);
+    put(13, r.main ? '\u2605' : (r.step || ''));
+    help(i).forEach((formula, k) => { row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
+    /* What each line is, at a glance: a section is the band the work sits in, a lead time is the
+       thing that has to be chased, and one running alongside another is tied to it. */
+    const tone = r.main ? { fill: SCH_INK.sec, text: SCH_INK.secText, bold: true }
+      : r.lead ? { fill: SCH_INK.lead, text: SCH_INK.leadText, bold: true }
+      : r.mate ? { fill: SCH_INK.mate, text: SCH_INK.mateText }
+      : { fill: n % 2 ? SCH_INK.band : null, text: SCH_INK.title };
+    for (let c = 1; c <= nCols; c++) {
+      const cell = row.getCell(c);
+      if (tone.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone.fill } };
+      cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      if (!cell.font) cell.font = {};
+      cell.font = Object.assign({ size: 10 }, cell.font, {
+        color: { argb: tone.text }, bold: !!tone.bold,
+        strike: !!it.done && c <= 2 });
+      if (c === 1 || (c >= 4 && c <= 8) || c === 11) cell.alignment = { horizontal: 'center' };
+      else cell.alignment = { vertical: 'top', wrapText: c === 2 || c === 10 };
+    }
+    if (r.main) row.getCell(2).font = Object.assign({}, row.getCell(2).font, { size: 11 });
+    row.getCell(9).dataValidation = { type: 'list', allowBlank: true,
+      formulae: ['"Work,Section,Submittal,RFI,Order / release"'] };
+    row.getCell(11).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Yes"'] };
+    if (people.length) row.getCell(3).dataValidation = { type: 'list', allowBlank: true,
+      formulae: ['Lists!$A$2:$A$' + (people.length + 1)] };
+    const flag = schFlag(r);
+    if (flag) row.getCell(10).note = flag;
+  });
+  for (let n = 0; n < spare; n++) {
+    const i = last + 1 + n, row = ws.getRow(i);
+    const f = dates(i);
+    row.getCell(7).value = { formula: f.start.slice(1) };
+    row.getCell(8).value = { formula: f.fin.slice(1) };
+    [7, 8].forEach(c => { row.getCell(c).numFmt = 'mmm d, yyyy';
+      row.getCell(c).alignment = { horizontal: 'center' }; });
+    help(i).forEach((formula, k) => { row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
+    for (let c = 1; c <= nCols; c++) row.getCell(c).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+    row.getCell(9).dataValidation = { type: 'list', allowBlank: true,
+      formulae: ['"Work,Section,Submittal,RFI,Order / release"'] };
+    row.getCell(11).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Yes"'] };
+  }
+  ws.autoFilter = { from: { row: top - 1, column: 1 }, to: { row: end, column: nCols } };
+  return { wb: wb, ws: ws, rows: rows, days: days, top: top, last: last, end: end, XJ: XJ, people: people };
 }
 async function buildScheduleXlsx(p, res, cal, shown) {
-  const XL = await loadSheetJS();
-  const dated = shown.slice().sort((a, b) => {
-    if (a.start && b.start && a.start !== b.start) return a.start < b.start ? -1 : 1;
-    if (a.start && !b.start) return -1;
-    if (!a.start && b.start) return 1;
-    return String(a.item.name || '').localeCompare(String(b.item.name || ''));
+  const b = await buildScheduleWorkbook(p, res, cal);
+  const wb = b.wb, XJ = b.XJ;
+  /* The same work again, in the order it actually happens, for anybody who only wants to know what
+     is coming. Read only — the plan is the sheet before this one. */
+  const byDay = (shown || res.rows).slice().filter(r => r.start).sort((a, b2) => {
+    if (a.start !== b2.start) return a.start < b2.start ? -1 : 1;
+    return String(a.item.name || '').localeCompare(String(b2.item.name || ''));
   });
-  const head = [
-    ['Arctic Sheet Metal — ' + (p.name || 'Pull plan')],
-    ['Job:', (job && job.name) || '', '', 'Working week:', workShiftLabel(cal),
-      '', 'Built:', res.fwd ? 'Forward from the start' : 'Back from the end'],
-    ['Exported:', dAt(today()), '', 'Lines:', shown.length, '', 'Steps:', res.slots || ''],
-    []
-  ];
-  const sheet = rows => {
-    const ws = XL.utils.aoa_to_sheet(rows, { cellDates: true });
-    ws['!cols'] = SCH_WIDTHS.map(w => ({ wch: w }));
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: SCH_HEADS.length - 1 } }];
-    ws['!freeze'] = { xSplit: 0, ySplit: head.length + 1 };
-    for (let r = 0; r < rows.length; r++) {
-      for (const c of SCH_DATE_COLS) {
-        const cell = ws[XL.utils.encode_cell({ r: r, c: c })];
-        if (cell && cell.t === 'd') cell.z = 'mmm d, yyyy';
-      }
+  const o = wb.addWorksheet('In order', { views: [{ state: 'frozen', ySplit: 2 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: '2:2', margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } } });
+  const oh = ['Start', 'Finish', 'Step', 'What has to be done', 'Whose', 'Days', 'Type', 'Flag', 'Anything else'];
+  o.columns = [{ width: 13 }, { width: 13 }, { width: 7.5 }, { width: 46 }, { width: 16 },
+    { width: 7.5 }, { width: 15 }, { width: 18 }, { width: 32 }];
+  o.getCell(1, 1).value = 'In the order the work happens — ' + (p.name || 'Pull plan');
+  o.mergeCells(1, 1, 1, oh.length);
+  o.getCell(1, 1).font = { bold: true, size: 13, color: { argb: SCH_INK.title } };
+  o.getRow(1).height = 24;
+  oh.forEach((h, i) => {
+    const c = o.getCell(2, i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    c.alignment = { vertical: 'middle', horizontal: i === 3 || i === 8 ? 'left' : 'center' };
+  });
+  o.getRow(2).height = 20;
+  byDay.forEach((r, n) => {
+    const row = o.getRow(3 + n), it = r.item;
+    const vals = [r.start ? dAt(r.start) : '', r.finish ? dAt(r.finish) : '',
+      r.main ? '★' : (r.step || ''), (it.name || '') + (r.notice ? ' — has to be in by then' : ''),
+      r.main || r.lead ? '' : (it.who || ''), r.notice || r.main ? '' : (r.days || 0),
+      schKindOut(r), schFlag(r), it.note || ''];
+    const tone = r.main ? SCH_INK.sec : r.notice ? SCH_INK.made : r.lead ? SCH_INK.lead
+      : (n % 2 ? SCH_INK.band : null);
+    const ink = r.main ? SCH_INK.secText : (r.notice || r.lead) ? SCH_INK.leadText : SCH_INK.title;
+    vals.forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = v;
+      if (i < 2 && v) c.numFmt = 'mmm d, yyyy';
+      if (tone) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone } };
+      c.font = { size: 10, color: { argb: ink }, bold: !!r.main };
+      c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      c.alignment = (i === 3 || i === 8) ? { vertical: 'top', wrapText: true } : { horizontal: 'center' };
+    });
+  });
+  o.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + byDay.length, column: oh.length } };
+  /* The names the Whose box offers, and the working days the dates are counted on. */
+  const ls = wb.addWorksheet('Lists');
+  ls.getCell(1, 1).value = 'Whose';
+  b.people.forEach((w, i) => { ls.getCell(2 + i, 1).value = w; });
+  ls.state = 'veryHidden';
+  const cs = wb.addWorksheet('Calendar');
+  cs.getCell(1, 1).value = 'Working days on this job, in the order the run reaches them';
+  b.days.forEach((d, i) => { const c = cs.getCell(2 + i, 1); c.value = dAt(d); c.numFmt = 'yyyy-mm-dd'; });
+  cs.getColumn(1).width = 14;
+  cs.state = 'veryHidden';
+  return await wb.xlsx.writeBuffer();
+}
+/* ── the schedule back from the spreadsheet ──
+   What comes back is a plan, not a patch: every line is matched on the id it went out with, so a
+   line you renamed is still the same line. Rows you added are added, numbers you retyped move the
+   line the way typing in the step box moves it, and a line that is simply not in the sheet is never
+   taken off the job without being asked about. */
+const SCH_KIND_IN = { 'section': 'main', 'submittal': 'submittal', 'rfi': 'rfi',
+  'order / release': 'order', 'order': 'order', 'order/release': 'order', 'work': '', '': '' };
+const schNum = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return n === n ? n : 0; };
+function schDateIn(v) {
+  if (v == null || v === '') return '';
+  if (v instanceof Date) return dISO(v);
+  const t = String(v).trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return m[3] + '-' + String(m[1]).padStart(2, '0') + '-' + String(m[2]).padStart(2, '0');
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? '' : dISO(d);
+}
+/* Rows out of the sheet, in the order they sit on the page. */
+function schReadSheet(XL, wb) {
+  const ws = wb.Sheets['Schedule'] || wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error('no sheet in that file');
+  const aoa = XL.utils.sheet_to_json(ws, { header: 1, raw: true, cellDates: true, defval: '' });
+  let head = -1;
+  for (let i = 0; i < aoa.length && i < 40; i++) {
+    const a = String((aoa[i] || [])[0] || '').trim().toLowerCase();
+    const b = String((aoa[i] || [])[1] || '').trim().toLowerCase();
+    if (a === 'step' && b.indexOf('what has to be done') === 0) { head = i; break; }
+  }
+  if (head < 0) throw new Error('that does not look like a schedule exported from here — the headings are missing');
+  const out = [];
+  for (let i = head + 1; i < aoa.length; i++) {
+    const r = aoa[i] || [];
+    const name = String(r[1] == null ? '' : r[1]).trim();
+    const id = String(r[11] == null ? '' : r[11]).trim();
+    if (!name && !id) continue;
+    if (!name) continue;                       // a line with its name rubbed out is a line removed
+    out.push({ at: i + 1, id: id, step: String(r[0] == null ? '' : r[0]).trim(),
+      was: String(r[12] == null ? '' : r[12]).trim(), name: name,
+      who: String(r[2] == null ? '' : r[2]).trim(), days: schNum(r[3]), weeks: schNum(r[4]),
+      pin: schDateIn(r[5]),
+      kind: SCH_KIND_IN[String(r[8] == null ? '' : r[8]).trim().toLowerCase()],
+      note: String(r[9] == null ? '' : r[9]).trim(),
+      done: /^(y|yes|true|1|x|✓|✔)$/i.test(String(r[10] == null ? '' : r[10]).trim()) });
+  }
+  return out;
+}
+const schStepNum = s => { const m = String(s || '').match(/^\s*(\d+)/); return m ? Number(m[1]) : null; };
+const schStepLetter = s => { const m = String(s || '').match(/^\s*\d+\s*([a-z])\s*$/i); return m ? m[1].toLowerCase() : ''; };
+/* The sheet turned back into lines. Nothing is written to the plan here — it hands back what the
+   plan would become, so it can be shown to you first. */
+function schPlanFrom(p, lines) {
+  const have = Object.create(null);
+  for (const it of planItems(p)) have[it.id] = it;
+  const seen = Object.create(null), items = [], added = [];
+  lines.forEach((ln0, i) => {
+    /* However the sheet wrote the date — a real one, or text somebody typed over it. */
+    const ln = Object.assign({}, ln0, { pin: schDateIn(ln0.pin) });
+    const old = ln.id && have[ln.id];
+    const it = old ? Object.assign({}, old) : { id: uid('li'), note: '', done: false };
+    if (!old) added.push(it);
+    seen[it.id] = 1;
+    it.name = ln.name;
+    it.note = ln.note;
+    it.done = !!ln.done;
+    it.order = (i + 1) * 10;
+    delete it.main; delete it.kind; delete it.alongside; delete it.overlap;
+    if (ln.kind === 'main') {
+      it.main = true; it.who = ''; it.days = Math.max(0, Math.round(ln.days) || 0);
+      it.date = ln.pin || '';
+    } else if (ln.kind) {
+      /* A lead time is weeks, and the day it comes to is worked out — never typed. */
+      it.kind = ln.kind; it.who = ln.who;
+      it.days = Math.max(1, Math.round(ln.weeks) || 1) * 7;
+      delete it.date;
+    } else {
+      it.who = ln.who; it.days = Math.max(0, Math.round(ln.days) || 0); it.date = ln.pin || '';
     }
-    const cell = ws[XL.utils.encode_cell({ r: 2, c: 1 })];
-    if (cell && cell.t === 'd') cell.z = 'mmm d, yyyy';
-    return ws;
+    if (!it.date) delete it.date;
+    items.push(it);
+  });
+  /* A letter on a step says it runs alongside the line holding that number. */
+  const byStep = Object.create(null);
+  lines.forEach((ln, i) => {
+    const n = schStepNum(ln.step);
+    if (n != null && !schStepLetter(ln.step) && ln.kind !== 'main' && !ln.kind) byStep[n] = items[i];
+  });
+  lines.forEach((ln, i) => {
+    const n = schStepNum(ln.step), L = schStepLetter(ln.step);
+    if (!L || n == null) return;
+    const lead = byStep[n];
+    if (lead && lead.id !== items[i].id && !items[i].main && !items[i].kind) items[i].alongside = lead.id;
+  });
+  const gone = planItems(p).filter(x => !seen[x.id]);
+  return { items: items, added: added, gone: gone };
+}
+/* A step number you retyped moves the line there, the same as typing in the step box on the page.
+   One you left alone says nothing — the order of the rows is what you meant. */
+function schApplySteps(p, lines) {
+  const want = [];
+  for (const ln of lines) {
+    if (!ln.id || !ln.step || ln.step === ln.was) continue;
+    if (ln.kind === 'main' || ln.kind) continue;
+    const n = schStepNum(ln.step);
+    if (n == null) continue;
+    want.push({ id: ln.id, n: n });
+  }
+  for (const w of want) {
+    const by = planDates(p, workCal(job)).by;
+    const units = planUnits(p);
+    const from = units.findIndex(u => u.some(x => x.id === w.id));
+    if (from < 0) continue;
+    const numbered = units.map((u, i) => ({ i: i, n: parseInt(String((by[u[u.length - 1].id] || {}).step || ''), 10) }))
+      .filter(x => x.n === x.n);
+    if (!numbered.length) continue;
+    let best = numbered[0];
+    for (const x of numbered) if (Math.abs(x.n - w.n) < Math.abs(best.n - w.n)) best = x;
+    if (best.i === from) continue;
+    renumberUnits(p, slideTo(units, from, from < best.i ? best.i + 1 : best.i));
+  }
+}
+/* Lines on the job that are not in the sheet. Never guessed at: a sheet somebody filtered, or
+   trimmed to send on, would otherwise quietly take live work off the plan. */
+function schMissingAsk(gone) {
+  return new Promise(ok => {
+    const list = gone.slice(0, 12).map(x => '<li>' + esc(x.name || '(unnamed)') + '</li>').join('');
+    $('modalHost').innerHTML = `<div class="modal-scrim"><div class="modal" style="max-width:520px">
+      <div class="modal-head"><h3>${gone.length} line${gone.length === 1 ? '' : 's'} on the plan ${
+        gone.length === 1 ? 'is' : 'are'} not in that sheet</h3></div>
+      <div class="modal-body">
+        <ul style="margin:0 0 12px 18px;padding:0;font-size:13px;line-height:1.7">${list}${
+          gone.length > 12 ? '<li class="muted">and ' + (gone.length - 12) + ' more</li>' : ''}</ul>
+        <div class="muted" style="font-size:12.5px">If you trimmed the sheet down to send it on,
+          leave them. If you took them off on purpose, take them off here too.</div>
+      </div>
+      <div class="sch-form-foot" style="padding:0 16px 16px">
+        <button class="btn sm" id="schKeep">Leave them on the plan</button>
+        <button class="btn sm ghost" id="schDrop">Take them off</button>
+      </div></div></div>`;
+    const go = v => { $('modalHost').innerHTML = ''; ok(v); };
+    $('schKeep').onclick = () => go(false);
+    $('schDrop').onclick = () => go(true);
+  });
+}
+async function importScheduleFile(file) {
+  const p = currentPlan();
+  if (!p) { toast('Open a plan first', true); return; }
+  const XL = await loadSheetJS();
+  const wb = XL.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', cellDates: true });
+  const lines = schReadSheet(XL, wb);
+  if (!lines.length) throw new Error('there are no lines in that sheet');
+  const built = schPlanFrom(p, lines);
+  let drop = false;
+  if (built.gone.length) drop = await schMissingAsk(built.gone);
+  const keep = drop ? [] : built.gone.slice();
+  /* Anything kept goes back where it was, under the line it used to follow, so leaving a line on
+     the plan does not mean finding it at the bottom afterwards. */
+  const before = planItems(p).slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+  const place = Object.create(null);
+  before.forEach((x, i) => { place[x.id] = i; });
+  const all = built.items.slice();
+  for (const g of keep) {
+    let at = all.length;
+    for (let i = 0; i < all.length; i++) if ((place[all[i].id] == null ? 1e9 : place[all[i].id]) > place[g.id]) { at = i; break; }
+    all.splice(at, 0, g);
+  }
+  all.forEach((x, i) => { x.order = (i + 1) * 10; });
+  p.items = all;
+  flattenPlan(p); p.flat = 1;
+  dropStrayMates(p);
+  renumberUnits(p, planUnits(p));
+  schApplySteps(p, lines);
+  dropStrayMates(p);
+  renumberUnits(p, planUnits(p));
+  renderSchedule();
+  await savePlan(p);
+  const bits = [];
+  bits.push((built.items.length - built.added.length) + ' line' + (built.items.length - built.added.length === 1 ? '' : 's') + ' updated');
+  if (built.added.length) bits.push(built.added.length + ' added');
+  if (built.gone.length) bits.push(built.gone.length + (drop ? ' taken off' : ' left as they were'));
+  toast('Schedule updated — ' + bits.join(', '));
+}
+function pickScheduleFile() {
+  let inp = $('schUp');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file'; inp.id = 'schUp'; inp.accept = '.xlsx'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+  }
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    inp.value = '';
+    if (!f) return;
+    try { stickyToast('Reading the sheet…'); await importScheduleFile(f); }
+    catch (e) { console.error(e); toast('Could not read that sheet: ' + (e.message || e), true); }
   };
-  const wb = XL.utils.book_new();
-  XL.utils.book_append_sheet(wb,
-    sheet(head.concat([SCH_HEADS.slice()], shown.map(r => schRow(p, r)))), 'Plan');
-  XL.utils.book_append_sheet(wb,
-    sheet(head.concat([SCH_HEADS.slice()], dated.map(r => schRow(p, r, true)))), 'In order');
-  return XL.write(wb, { bookType: 'xlsx', type: 'array' });
+  inp.click();
 }
 async function exportSchedule() {
   const p = currentPlan();
@@ -14309,9 +14803,10 @@ async function exportSchedule() {
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
-    toast(shown.length < res.rows.length
-      ? 'Schedule exported — ' + shown.length + ' of ' + res.rows.length + ' lines, matching the filter you have set'
-      : 'Schedule exported — ' + shown.length + ' line' + (shown.length === 1 ? '' : 's'));
+    /* The plan sheet is always the whole plan, filter or no filter: a sheet with lines missing
+       would read as lines taken off when it came back. The filter only narrows the date-order
+       sheet, which is the one for reading. */
+    toast('Schedule exported — edit it and upload it back to put the changes on the job');
   } catch (e) {
     console.error(e);
     toast('Could not build the schedule: ' + (e.message || e), true);
