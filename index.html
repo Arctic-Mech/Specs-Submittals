@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.35';
+const APP_VERSION = 'v8.36';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20040,12 +20040,19 @@ async function exportReleaseXlsx() {
    picked, so what each of them is owed is a list you already have. */
 const STARTER_SLOT_COLS = [
   { h: 'Vendor', w: 16, k: 'vendor' }, { h: 'Price', w: 11.5, k: 'price' },
-  { h: 'Lead (wks)', w: 8, k: 'lead' }, { h: 'Notes', w: 17, k: 'note' }
+  { h: 'Lead (wks)', w: 8, k: 'lead' }, { h: 'Where it stands', w: 19, k: 'state' },
+  { h: 'Notes', w: 15, k: 'note' }
 ];
 const STARTER_FIXED = [
-  { h: 'Item', w: 12 }, { h: 'What it is', w: 34 }, { h: 'Qty', w: 6.5 },
-  { h: 'Spec section', w: 12 }, { h: 'Who the spec will take', w: 40 }, { h: 'Must meet', w: 40 }
+  { h: 'Item', w: 12 }, { h: 'What it is', w: 32 }, { h: 'Qty', w: 6.5 },
+  { h: 'Spec section', w: 12 }, { h: 'Who the spec will take', w: 36 }, { h: 'Must meet', w: 36 }
 ];
+/* Where a quote stands, and so what has to happen to it next. Asked for in the slot it belongs to,
+   because one line can be out to three firms at once and each of them is at a different stage. */
+const STARTER_ASK = 'Request from vendor';
+const STARTER_GOT = 'Received from vendor';
+const STARTER_WIN = 'Going with this one';
+const STARTER_STATES = [STARTER_ASK, STARTER_GOT, STARTER_WIN];
 /* An article is the line, not each lettered paragraph under it. The read splits "2.04 MANUAL GAS
    SHUTOFF VALVES" into its six kinds of valve, which is right for the register and far too much for
    a sheet somebody has to price — one section would run to forty lines. Rolled back up, the article
@@ -20133,7 +20140,7 @@ function starterClip(text, per, lines) {
   return (sp > room * 0.6 ? cut.slice(0, sp) : cut).replace(/[ ,;:.\u00B7\-]+$/, '') + '\u2026';
 }
 const STARTER_TAIL = [
-  { h: 'Going with', w: 11 }, { h: 'Vendor chosen', w: 17 }, { h: 'Price chosen', w: 13 }
+  { h: 'Going with', w: 17 }, { h: 'At', w: 13 }
 ];
 const STARTER_HEAD = 6;                 // the heading row; lines start under it
 /* The order the articles are worth reading in: what you have to hand over to get the thing
@@ -20230,7 +20237,8 @@ async function buildStarterXlsx(lines, opts) {
   const tailAt = nFix + N * SW + 1;
   const nCols = tailAt + STARTER_TAIL.length - 1;
   const C = n => schCol(n);
-  const GOING = C(tailAt), VCH = C(tailAt + 1), PCH = C(tailAt + 2);
+  const VCH = C(tailAt), PCH = C(tailAt + 1);
+  const ST = i => C(slotAt(i) + 3);                 // where that slot stands
   const wb = new XJ.Workbook();
   wb.creator = 'Arctic Mechanical'; wb.created = new Date();
   const ws = wb.addWorksheet('Quote sheet', {
@@ -20349,17 +20357,26 @@ async function buildStarterXlsx(lines, opts) {
     }
     /* Which slot won, and the two cells that follow it out so the vendors tab has something plain
        to read rather than having to know where the slots sit. */
+    /* Whichever slot says we are going with it is the one — there is no second place to say it. */
     const pick = (col) => {
       let f = '""';
-      for (let i = N - 1; i >= 0; i--) f = 'IF($' + GOING + r + '="Quote ' + (i + 1) + '",' + C(slotAt(i) + col) + r + ',' + f + ')';
-      return '=IF($' + GOING + r + '="","",' + f + ')';
+      for (let i = N - 1; i >= 0; i--)
+        f = 'IF($' + ST(i) + r + '="' + STARTER_WIN + '",' + C(slotAt(i) + col) + r + ',' + f + ')';
+      return '=' + f;
     };
-    row.getCell(tailAt + 1).value = { formula: pick(0).slice(1) };
-    const pc = row.getCell(tailAt + 2);
+    row.getCell(tailAt).value = { formula: pick(0).slice(1) };
+    const pc = row.getCell(tailAt + 1);
     pc.value = { formula: pick(1).slice(1) };
     pc.numFmt = '#,##0';
-    row.getCell(tailAt).dataValidation = { type: 'list', allowBlank: true,
-      formulae: ['"' + Array.from({ length: N }, (_, i) => 'Quote ' + (i + 1)).join(',') + '"'] };
+    for (let i = 0; i < N; i++) {
+      const sc = row.getCell(slotAt(i) + 3);
+      /* Put a name in the slot and it is something to ask for, until you say otherwise. Picking
+         from the list writes over this, which is how it stops defaulting. */
+      sc.value = { formula: 'IF(' + C(slotAt(i)) + r + '="","","' + STARTER_ASK + '")' };
+      sc.dataValidation = { type: 'list', allowBlank: true,
+        formulae: ['"' + STARTER_STATES.join(',') + '"'] };
+      sc.font = { size: 9 };
+    }
     for (let c = 1; c <= nCols; c++) {
       const cell = row.getCell(c);
       cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
@@ -20404,27 +20421,34 @@ async function buildStarterXlsx(lines, opts) {
   }
   const last = r - 1;
   return { wb: wb, ws: ws, XJ: XJ, N: N, SW: SW, nFix: nFix, nCols: nCols, slotAt: slotAt,
-    tailAt: tailAt, top: top, last: last, itemRows: itemRows, C: C, GOING: GOING, VCH: VCH, PCH: PCH };
+    tailAt: tailAt, top: top, last: last, itemRows: itemRows, C: C, ST: ST, VCH: VCH, PCH: PCH };
 }
 function starterFinish(b, lines, opts) {
-  const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, C, GOING, VCH, PCH } = b;
+  const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, C, ST, VCH, PCH } = b;
   /* The one you picked goes green across its four cells, so a glance down the sheet says who the
      job is being bought from without reading a word. */
+  /* Each slot coloured by where it stands, so a glance down the sheet says what is waiting on a
+     vendor, what has come back and what has been bought. */
+  const TONE = [
+    [STARTER_WIN, 'FFD7F0DB', 'FF14532D', true],
+    [STARTER_GOT, 'FFDDEBFB', 'FF1E3A8A', false],
+    [STARTER_ASK, 'FFFDF0D5', 'FF854D0E', false]
+  ];
   if (itemRows.length) {
+    let pri = 1;
     for (let i = 0; i < N; i++) {
       const a = C(slotAt(i)), z = C(slotAt(i) + SW - 1);
-      ws.addConditionalFormatting({
+      for (const t of TONE) ws.addConditionalFormatting({
         ref: a + top + ':' + z + last,
-        rules: [{ type: 'expression', priority: i + 1,
-          formulae: ['$' + GOING + top + '="Quote ' + (i + 1) + '"'],
-          style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD7F0DB' } },
-            font: { bold: true, color: { argb: 'FF14532D' } } } }]
+        rules: [{ type: 'expression', priority: pri++,
+          formulae: ['$' + ST(i) + top + '="' + t[0] + '"'],
+          style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: t[1] } },
+            font: { bold: t[3], color: { argb: t[2] } } } }]
       });
     }
-    /* A line nobody has been picked on yet, so what is left to decide is visible. */
     ws.addConditionalFormatting({
       ref: C(tailAt) + top + ':' + C(tailAt) + last,
-      rules: [{ type: 'expression', priority: N + 1, formulae: ['$' + GOING + top + '=""'],
+      rules: [{ type: 'expression', priority: pri++, formulae: ['$' + C(tailAt) + top + '=""'],
         style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } } } }]
     });
   }
@@ -20435,7 +20459,7 @@ function starterFinish(b, lines, opts) {
   sr.getCell(1).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
   sr.getCell(1).alignment = { vertical: 'middle' };
   const picked = itemRows.length
-    ? '=COUNTIF(' + GOING + top + ':' + GOING + last + ',"<>")&" of ' + itemRows.length + ' picked"' : '""';
+    ? '=COUNTIF(' + VCH + top + ':' + VCH + last + ',"?*")&" of ' + itemRows.length + ' picked"' : '""';
   sr.getCell(6).value = { formula: picked.slice(1) };
   sr.getCell(6).font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
   sr.getCell(6).alignment = { horizontal: 'left' };
@@ -20501,12 +20525,12 @@ function starterFinish(b, lines, opts) {
     /* the lead and the note belong to the slot that won, same as the price */
     const pickOf = (off) => {
       let f = '""';
-      for (let i = N - 1; i >= 0; i--) f = 'IF(' + Q + '$' + GOING + src + '="Quote ' + (i + 1) + '",' +
+      for (let i = N - 1; i >= 0; i--) f = 'IF(' + Q + '$' + ST(i) + src + '="' + STARTER_WIN + '",' +
         blankIf(Q + C(slotAt(i) + off) + src) + ',' + f + ')';
       return f;
     };
     put(6, pickOf(2));
-    put(7, pickOf(3)).alignment = { vertical: 'top' };
+    put(7, pickOf(4)).alignment = { vertical: 'top' };
     row.getCell(1).alignment = { horizontal: 'left' };
     /* Two columns nobody sees, which turn the award list into a list of firms: the first time each
        name appears, and how many distinct names have appeared by that line. */
@@ -20553,6 +20577,101 @@ function starterFinish(b, lines, opts) {
     gr.getCell(c).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
     gr.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
     gr.getCell(c).alignment = { horizontal: c === 1 ? 'left' : 'center' };
+  }
+  /* ── what is in hand ──
+     Every quote that is waiting on somebody, with what has to be done to it and the line it belongs
+     to, so chasing them is a list rather than a hunt across the sheet. A quote already bought is
+     done with and lives on the Vendors tab instead. It reads itself off the quote sheet: change
+     where something stands there and it moves here on its own. */
+  const ip = wb.addWorksheet('In progress', {
+    views: [{ state: 'frozen', ySplit: 3 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: '3:3', margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
+  });
+  const IH = ['What to do', 'Vendor', 'Item', 'What it is', 'Spec section', 'Quote', 'Price', 'Lead (wks)', 'Notes'];
+  ip.columns = [{ width: 21 }, { width: 24 }, { width: 12 }, { width: 34 }, { width: 13 },
+    { width: 8 }, { width: 12 }, { width: 10 }, { width: 24 }];
+  ip.mergeCells(1, 1, 1, IH.length);
+  ip.getCell(1, 1).value = 'What is in hand \u2014 ' + (job.name || 'Job');
+  ip.getCell(1, 1).font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
+  ip.getRow(1).height = 24;
+  ip.mergeCells(2, 1, 2, IH.length);
+  ip.getCell(2, 1).value = 'Every quote still to be asked for or still to be decided on. It follows '
+    + 'the Where it stands boxes on the quote sheet \u2014 say you are going with one there and it '
+    + 'leaves this list for the Vendors tab.';
+  ip.getCell(2, 1).font = { size: 10, italic: true, color: { argb: SCH_INK.dim } };
+  IH.forEach((h, i) => {
+    const c = ip.getCell(3, i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    c.alignment = { vertical: 'middle', horizontal: (i === 3 || i === 8) ? 'left' : 'center' };
+  });
+  ip.getRow(3).height = 20;
+  /* The hidden half: every line against every slot, what it says, and — for the ones that want
+     doing — their place in the list. The visible half is then dense, so what needs chasing is at
+     the top rather than scattered down two hundred mostly empty rows. */
+  const H0 = IH.length + 2;                       // first hidden column
+  const pairs = [];
+  for (const src of itemRows) for (let i = 0; i < N; i++) pairs.push({ src: src, slot: i });
+  const pTop = 4, pEnd = pTop + Math.max(pairs.length, 1) - 1;
+  const hc = k => schCol(H0 + k);
+  pairs.forEach((pr, n) => {
+    const rr = pTop + n, row = ip.getRow(rr);
+    const put = (k, f) => { row.getCell(H0 + k).value = { formula: f }; };
+    const at = (off) => Q + C(slotAt(pr.slot) + off) + pr.src;
+    put(0, Q + '$' + ST(pr.slot) + pr.src + '&""');
+    put(1, 'IF(OR($' + hc(0) + rr + '="' + STARTER_ASK + '",$' + hc(0) + rr + '="' + STARTER_GOT + '"),1,0)');
+    put(2, 'IF($' + hc(1) + rr + '=0,"",SUM($' + hc(1) + '$' + pTop + ':' + hc(1) + rr + '))');
+    put(3, at(0) + '&""');
+    put(4, 'IF(' + at(1) + '="","",' + at(1) + ')');
+    put(5, 'IF(' + at(2) + '="","",' + at(2) + ')');
+    put(6, at(4) + '&""');
+    put(7, Q + '$A' + pr.src + '&""');
+    put(8, Q + '$B' + pr.src + '&""');
+    put(9, Q + '$D' + pr.src + '&""');
+    row.getCell(H0 + 10).value = 'Quote ' + (pr.slot + 1);
+  });
+  for (let k = 0; k <= 10; k++) ip.getColumn(H0 + k).hidden = true;
+  const ordR = '$' + hc(2) + '$' + pTop + ':$' + hc(2) + '$' + pEnd;
+  const show = Math.max(pairs.length, 1);
+  for (let n = 0; n < show; n++) {
+    const rr = 4 + n, row = ip.getRow(rr);
+    const WH = schCol(H0 + 11);                  // which pair this visible row is showing
+    row.getCell(H0 + 11).value = { formula: 'IFERROR(MATCH(ROW()-3,' + ordR + ',0),"")' };
+    const pull = (col, k, fmt) => {
+      const c = row.getCell(col);
+      c.value = { formula: 'IF($' + WH + rr + '="","",INDEX($' + hc(k) + '$' + pTop + ':$' + hc(k) +
+        '$' + pEnd + ',$' + WH + rr + '))' };
+      if (fmt) c.numFmt = fmt;
+      c.font = { size: 10, color: { argb: SCH_INK.title } };
+      c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      c.alignment = (col === 4 || col === 9) ? { vertical: 'top', wrapText: true } : { horizontal: 'center' };
+      return c;
+    };
+    pull(1, 0).font = { size: 10, bold: true, color: { argb: SCH_INK.title } };
+    pull(2, 3).alignment = { horizontal: 'left' };
+    pull(3, 7);
+    pull(4, 8).alignment = { vertical: 'top', wrapText: true };
+    pull(5, 9);
+    pull(6, 10);
+    pull(7, 4, '#,##0');
+    pull(8, 5);
+    pull(9, 6).alignment = { vertical: 'top' };
+    row.getCell(1).alignment = { horizontal: 'left' };
+  }
+  ip.getColumn(H0 + 11).hidden = true;
+  if (pairs.length) {
+    ip.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + show, column: IH.length } };
+    ip.addConditionalFormatting({
+      ref: 'A4:I' + (3 + show),
+      rules: [
+        { type: 'expression', priority: 1, formulae: ['$A4="' + STARTER_ASK + '"'],
+          style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D5' } } } },
+        { type: 'expression', priority: 2, formulae: ['$A4="' + STARTER_GOT + '"'],
+          style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDEBFB' } } } }
+      ]
+    });
   }
   return wb;
 }
