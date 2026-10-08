@@ -1703,7 +1703,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.39';
+const APP_VERSION = 'v8.40';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -14356,6 +14356,9 @@ function planListHtml(p, shown, res) {
    site uses — so "four days after the second" means the same thing in both places, on four tens and
    over a holiday alike. Everything after that is counting rows on that list. */
 const SCH_FIRST = 7;                 // the first line of the plan, under the headings
+/* Every date says what day of the week it is, the same as on the plan — it is the first thing
+   anybody asks of a date on a schedule, and on a line tied to Saturdays it is the whole point. */
+const SCH_DATE_FMT = 'ddd mmm d, yyyy';
 const SCH_CAL_PAD = 420;             // working days either side, so there is room to push things out
 function ensureExcelJS() {
   if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
@@ -14387,9 +14390,9 @@ const SCH_COLS = [
   { k: 'who',   head: 'Whose',      w: 16, edit: true },
   { k: 'days',  head: 'Days',       w: 7.5, edit: true },
   { k: 'weeks', head: 'Lead (wks)', w: 10, edit: true },
-  { k: 'pin',   head: 'Date set',   w: 13, edit: true },
-  { k: 'start', head: 'Start',      w: 13 },
-  { k: 'fin',   head: 'Finish',     w: 13 },
+  { k: 'pin',   head: 'Date set',   w: 16, edit: true },
+  { k: 'start', head: 'Start',      w: 16 },
+  { k: 'fin',   head: 'Finish',     w: 16 },
   { k: 'kind',  head: 'Type',       w: 15, edit: true },
   { k: 'note',  head: 'Anything else', w: 32, edit: true },
   { k: 'done',  head: 'Done',       w: 7.5, edit: true },
@@ -14400,7 +14403,7 @@ const SCH_COLS = [
 ];
 const SCH_HELP = ['kind#', 'step#', 'mate?', 'slot?', 'slotLen', 'secRow', 'blkTop', 'pinIx',
   'blkDays', 'seed', 'in', 'out', 'slotIx', 'leadRow', 'holdRow', 'nextTop', 'top?', 'pinRow', 'row#',
-  'showA', 'showB', 'from', 'anchor', 'next', 'slotIxN', 'runPrev'];
+  'showA', 'showB', 'from', 'anchor', 'next', 'slotIxN', 'runPrev', 'dayIx', 'dayAt'];
 const SCH_HELP_AT = SCH_COLS.length + 1;        // first helper column, 1-based
 const SCH_INK = {
   head:   'FF1F2A37', headText: 'FFFFFFFF',
@@ -14420,7 +14423,7 @@ function schHelpFormulas(top, last, fwd, CAL) {
   const K = H(0), SN = H(1), MT = H(2), SL = H(3), LEN = H(4), SR = H(5), BT = H(6), PI = H(7),
         BD = H(8), BS = H(9), IN = H(10), OUT = H(11), SX = H(12), LD = H(13), HD = H(14),
         NT = H(15), TOP = H(16), PR = H(17), RN = H(18), DA = H(19), DB = H(20),
-        BF = H(21), BA = H(22), BX = H(23), SXN = H(24), RP = H(25);
+        BF = H(21), BA = H(22), BX = H(23), SXN = H(24), RP = H(25), DY = H(26), DT = H(27);
   /* Forward, the run starts at the foot of the page and climbs. Back from the end, it starts at the
      top and comes down. Everything below is the same counting either way — it is only which
      neighbour is "the one before this" that turns round. */
@@ -14467,7 +14470,8 @@ function schHelpFormulas(top, last, fwd, CAL) {
       '=IF(ROW()<>' + me(BT) + ',"",IF(AND(' + me(K) + '=1,$D' + r + '>0),$D' + r + ',SUMIF(' + rg(BT) + ',ROW(),' + rg(LEN) + ')))',
       '=IF(ROW()<>' + me(BT) + ',' + at(BS, me(BT)) + ',IF(' + me(BF) + '<>"",' + me(BF) + ',' + back + '))',
       '=IF(' + edge + ',' + me(BS) + ',IF(' + at(BT, near) + '=' + me(BT) + ',' + at(OUT, near) + ',' + me(BS) + '))',
-      '=IF(' + me(SL) + '=0,' + me(IN) + ',IF(' + me(SX) + '="","",' + me(SX) + '+' + me(LEN) + '))',
+      '=IF(' + me(SL) + '=0,' + me(IN) + ',IF(' + me(DY) + '<>"",' + me(DY) + '+MAX(' + me(LEN) +
+        ',1)-1,IF(' + me(SX) + '="","",' + me(SX) + '+' + me(LEN) + ')))',
       '=IF(' + me(SL) + '=0,"",IF(' + me(PI) + '<>"",' + me(PI) + ',IF(' + me(IN) + '="","",' + me(IN) + ')))',
       '=IF(' + me(SL) + '=1,ROW(),IF(' + me(SN) + '="","",IFERROR(LOOKUP(2,1/((' + rg(SL) + '=1)*(' + rg(SN) + '=' + me(SN) + ')),' + rg(RN) + '),"")))',
       '=IF(' + me(K) + '<>2,"",IFERROR(LOOKUP(2,1/((' + rg(RN) + '<ROW())*(' + rg(K) + '=0)*(' + rg(SR) + '=' + me(SR) + ')),' + rg(RN) + '),IF(' + me(SR) + '=0,"",' + me(SR) + ')))',
@@ -14485,10 +14489,15 @@ function schHelpFormulas(top, last, fwd, CAL) {
       '=IF(ROW()<>' + me(BT) + ',' + at(BF, me(BT)) + ',' + from + ')',
       '=IF(ROW()<>' + me(BT) + ',' + at(BA, me(BT)) + ',IF(' + me(BF) + '<>"",' + me(BF) + ',IF(' + least + '>=1E9,"",' + least + ')))',
       '=IF(ROW()<>' + me(BT) + ',"",IF(' + me(BA) + '="",' + chain + ',IF(' + me(BD) + '>0,' + me(BA) + '+' + me(BD) + ',' + chain + ')))',
-      '=IF(' + me(SX) + '="",0,' + me(SX) + ')',
+      /* A row with nothing on it is not part of any block, so it is kept out of where the block
+         begins — the empty rows at the foot all chain back to where the run started, and letting
+         them count would put every band back there with them. */
+      '=IF($B' + r + '="",0,IF(' + me(DT) + '<>"",' + me(DT) + ',IF(' + me(SX) + '="",0,' + me(SX) + ')))',
       fwd ? '=' + me(NT)
           : '=IF(ROW()<=' + top + ',"",IFERROR(LOOKUP(2,1/($' + TOP + '$' + top + ':$' + TOP +
-            (r - 1) + '=1),$' + RN + '$' + top + ':$' + RN + (r - 1) + '),""))'
+            (r - 1) + '=1),$' + RN + '$' + top + ':$' + RN + (r - 1) + '),""))',
+      '',  /* dayIx and dayAt — plain numbers put on the row itself, where there are any */
+      ''
     ];
   };
 }
@@ -14497,7 +14506,10 @@ function schDateFormulas(top, last, CAL) {
   const K = H(0), HD = H(14), DA = H(19), DB = H(20);
   const rg = c => '$' + c + '$' + top + ':$' + c + '$' + last;
   return r => ({
-    start: '=IF($B' + r + '="","",IF($' + K + r + '=2,IF($' + HD + r + '="","",IFERROR(INDEX(' + CAL + ',INDEX(' + rg(DA) + ',$' + HD + r + '-' + top + '+1))-$E' + r + '*7,"")),' +
+    /* A lead time hangs off the day the line it holds up actually comes to — read off that line's
+       own date, not worked out again from the calendar. A line tied to a day of the week is not on
+       the calendar at all, and the notice still has to land its weeks before the day it is for. */
+    start: '=IF($B' + r + '="","",IF($' + K + r + '=2,IF($' + HD + r + '="","",IFERROR(INDEX($G$' + top + ':$G$' + last + ',$' + HD + r + '-' + top + '+1)-$E' + r + '*7,"")),' +
            'IF($' + DA + r + '="","",INDEX(' + CAL + ',$' + DA + r + '))))',
     fin:   '=IF($B' + r + '="","",IF($' + K + r + '=2,$G' + r + ',IF($' + DB + r + '="","",INDEX(' + CAL + ',$' + DB + r + '))))'
   });
@@ -14568,6 +14580,30 @@ async function buildScheduleWorkbook(p, res, cal) {
   const help = schHelpFormulas(top, end, fwd, CAL);
   const dates = schDateFormulas(top, end, CAL);
   const people = planPeople(p).filter(Boolean);
+  /* A line tied to a day of the week is the one thing on the sheet that does not count in working
+     days: the run jumps on to the day it has to be — a Saturday is not a working day at all — and
+     steps over whatever lies in between. So that date travels as a date, and the row carries the
+     place in the calendar where the run picks up again, which is what the slot after it hangs off.
+     Change the days around it here and the date stays put, as it would on the job. */
+  const stepOf = r => String(r.step || '').replace(/[a-z]+$/, '');
+  const tiedOn = Object.create(null), leadRowAt = Object.create(null);
+  rows.forEach((r, n) => {
+    const k = stepOf(r);
+    if (!k || r.main || r.lead) return;
+    if (!r.mate) leadRowAt[k] = top + n;
+    if (r.onDay != null) tiedOn[k] = (fwd ? r.start : r.finish) || '';
+  });
+  /* Where the calendar picks up after that day: the first working day past it, the way the run
+     goes. The day itself may well not be on the list, which is the whole point of it. */
+  const pastDay = iso => {
+    for (let x = 0; x < days.length; x++) if (fwd ? days[x] > iso : days[x] < iso) return x + 1;
+    return 0;
+  };
+  /* And where it starts: the day itself if that is a working day, else the first one after it. */
+  const atDay = iso => {
+    for (let x = 0; x < days.length; x++) if (fwd ? days[x] >= iso : days[x] <= iso) return x + 1;
+    return 0;
+  };
   rows.forEach((r, n) => {
     const i = top + n, row = ws.getRow(i), it = r.item;
     const put = (c, v) => { row.getCell(c).value = v; return row.getCell(c); };
@@ -14582,13 +14618,28 @@ async function buildScheduleWorkbook(p, res, cal) {
     /* A line tied to a day of the week goes out on the day it worked out to. The sheet counts in
        working days and a Saturday is not one, so it travels as a date already set — which is what
        it is. Change the days around it here and that date stays put, as it would on the job. */
-    const pinIso = r.pinned && it.date ? it.date : (r.onDay != null && r.start ? r.start : '');
-    if (pinIso) { const c = put(6, dAt(pinIso)); c.numFmt = 'mmm d, yyyy'; }
+    if (r.pinned && it.date) { const c = put(6, dAt(it.date)); c.numFmt = SCH_DATE_FMT; }
     const f = dates(i);
+    const tied = (r.main || r.lead) ? '' : (tiedOn[stepOf(r)] || '');
+    const dayIx = tied ? pastDay(tied) : 0;
+    if (tied && dayIx && !r.mate) {
+      row.getCell(SCH_HELP_AT + 26).value = dayIx;
+      row.getCell(SCH_HELP_AT + 27).value = atDay(tied) || dayIx;
+    }
+    /* The tied day itself, then the rest of the slot counted on from the working day after it.
+       A line running alongside reads off the one holding the number, so the two never drift. */
+    const fixed = c => {
+      if (!tied || !dayIx) return null;
+      const d = dAt(tied), lit = 'DATE(' + d.getFullYear() + ',' + (d.getMonth() + 1) + ',' + d.getDate() + ')';
+      if (r.mate) return leadRowAt[stepOf(r)] ? '$' + schCol(c) + leadRowAt[stepOf(r)] : lit;
+      if ((c === 7) === fwd) return lit;
+      const LEN = '$' + schCol(SCH_HELP_AT + 4) + i, DY = '$' + schCol(SCH_HELP_AT + 26) + i;
+      return 'IF(' + LEN + '<=1,' + lit + ',INDEX(' + CAL + ',' + DY + '+' + LEN + '-2))';
+    };
     [[7, f.start, r.start], [8, f.fin, r.finish]].forEach(([c, formula, iso]) => {
       const cell = row.getCell(c);
-      cell.value = { formula: formula.slice(1), result: iso ? dAt(iso) : null };
-      cell.numFmt = 'mmm d, yyyy';
+      cell.value = { formula: fixed(c) || formula.slice(1), result: iso ? dAt(iso) : null };
+      cell.numFmt = SCH_DATE_FMT;
       cell.font = { size: 10, color: { argb: SCH_INK.calcText } };
       cell.alignment = { horizontal: 'center' };
     });
@@ -14597,7 +14648,8 @@ async function buildScheduleWorkbook(p, res, cal) {
     put(11, it.done ? 'Yes' : '');
     put(12, it.id);
     put(13, r.main ? '\u2605' : (r.step || ''));
-    help(i).forEach((formula, k) => { row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
+    help(i).forEach((formula, k) => {
+      if (formula) row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
     /* What each line is, at a glance: a section is the band the work sits in, a lead time is the
        thing that has to be chased, and one running alongside another is tied to it. */
     const tone = r.main ? { fill: SCH_INK.sec, text: SCH_INK.secText, bold: true }
@@ -14629,9 +14681,10 @@ async function buildScheduleWorkbook(p, res, cal) {
     const f = dates(i);
     row.getCell(7).value = { formula: f.start.slice(1) };
     row.getCell(8).value = { formula: f.fin.slice(1) };
-    [7, 8].forEach(c => { row.getCell(c).numFmt = 'mmm d, yyyy';
+    [7, 8].forEach(c => { row.getCell(c).numFmt = SCH_DATE_FMT;
       row.getCell(c).alignment = { horizontal: 'center' }; });
-    help(i).forEach((formula, k) => { row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
+    help(i).forEach((formula, k) => {
+      if (formula) row.getCell(SCH_HELP_AT + k).value = { formula: formula.slice(1) }; });
     for (let c = 1; c <= nCols; c++) row.getCell(c).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
     row.getCell(9).dataValidation = { type: 'list', allowBlank: true,
       formulae: ['"Work,Section,Submittal,RFI,Order / release"'] };
@@ -14653,7 +14706,7 @@ async function buildScheduleXlsx(p, res, cal, shown) {
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
       printTitlesRow: '2:2', margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } } });
   const oh = ['Start', 'Finish', 'Step', 'What has to be done', 'Whose', 'Days', 'Type', 'Flag', 'Anything else'];
-  o.columns = [{ width: 13 }, { width: 13 }, { width: 7.5 }, { width: 46 }, { width: 16 },
+  o.columns = [{ width: 16 }, { width: 16 }, { width: 7.5 }, { width: 46 }, { width: 16 },
     { width: 7.5 }, { width: 15 }, { width: 18 }, { width: 32 }];
   o.getCell(1, 1).value = 'In the order the work happens — ' + (p.name || 'Pull plan');
   o.mergeCells(1, 1, 1, oh.length);
@@ -14679,7 +14732,7 @@ async function buildScheduleXlsx(p, res, cal, shown) {
     vals.forEach((v, i) => {
       const c = row.getCell(i + 1);
       c.value = v;
-      if (i < 2 && v) c.numFmt = 'mmm d, yyyy';
+      if (i < 2 && v) c.numFmt = SCH_DATE_FMT;
       if (tone) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone } };
       c.font = { size: 10, color: { argb: ink }, bold: !!r.main };
       c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };

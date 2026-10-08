@@ -931,12 +931,30 @@ const testCode = `
     /* The dates in the sheet are worked out by the sheet, not printed into it. */
     var hf = schHelpFormulas(7, 40, true, "Calendar!$A$2:$A$9");
     var df = schDateFormulas(7, 40, "Calendar!$A$2:$A$9");
+    /* All but the last two, which are plain numbers written on to the rows that need them: where a
+       line tied to a day of the week starts, and where the run picks up after it. */
     ck('excel: every line gets the whole of the working out',
-      hf(9).length === SCH_HELP.length && hf(9).every(function (x) { return x.charAt(0) === '='; }));
+      hf(9).length === SCH_HELP.length &&
+      hf(9).slice(0, -2).every(function (x) { return x.charAt(0) === '='; }) &&
+      hf(9).slice(-2).every(function (x) { return x === ''; }));
     ck('excel: the dates are formulas off that list, not typed-in answers',
       df(9).start.indexOf('INDEX(Calendar!') > 0 && df(9).fin.indexOf('INDEX(Calendar!') > 0);
     ck('excel: a lead time counts back in plain days from the line it is for',
       df(9).start.indexOf('-$E9*7') > 0);
+    /* And it reads that line own date off the sheet rather than working it out from the calendar a
+       second time, because a line tied to a day of the week is not on the calendar at all. */
+    ck('excel: a lead time reads the date off the line it is for',
+      df(9).start.indexOf('INDEX($G$7:$G$40,') > 0);
+
+    /* A line tied to a day of the week is the one thing on the sheet that does not count in
+       working days: the run jumps on to the day it has to be and steps over what lies between. */
+    var DY = '$' + schCol(SCH_HELP_AT + 26), DT = '$' + schCol(SCH_HELP_AT + 27);
+    ck('excel: a slot tied to a day of the week hands the run on from after that day',
+      hf(9)[11].indexOf(DY + '9<>""') > 0 && hf(9)[11].indexOf(DY + '9+MAX(') > 0);
+    ck('excel: and the band over it begins on the day it is tied to',
+      hf(9)[24].indexOf(DT + '9<>""') > 0);
+    ck('excel: a row with nothing on it is no part of where a block begins',
+      hf(9)[24].indexOf('$B9=""') > 0);
     ck('excel: nothing reaches past the last row of the sheet',
       hf(40).join(' ').indexOf('$41') < 0 && hf(7).join(' ').indexOf('$6:') < 0);
     ck('excel: going back from the end the run reads the other neighbour',
