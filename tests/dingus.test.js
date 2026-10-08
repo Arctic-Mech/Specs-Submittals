@@ -1020,6 +1020,16 @@ const testCode = `
     ck('starter: and the section says it is ready to send',
       sec2.status === 'ready_gc' && (sec2.submittals || []).length === 1 &&
       sec2.submittals[0].status === 'ready_gc' && sec2.submittals[0].vendor === 'Ferguson');
+    /* Text out of a spec book has to be fit to go in a cell, or the workbook will not open. */
+    ck('excel: control characters out of a spec read are taken out of a cell',
+      xlSafe('A. Steel' + String.fromCharCode(3) + ' Pipe' + String.fromCharCode(31) + '.')
+        === 'A. Steel  Pipe .' &&
+      xlSafe('keeps' + NL + 'its breaks' + TAB + 'and tabs') === 'keeps' + NL + 'its breaks' + TAB + 'and tabs');
+    ck('excel: and a cell that would run past what one holds is cut',
+      xlSafe(new Array(40000).join('x')).length === XL_CELL_MAX);
+    ck('excel: no row is asked to be taller than a sheet allows',
+      xlTall(900) === 408 && xlTall(60) === 60 && xlTall(0) === 1);
+
     /* One already going is not a question — it opens rather than asking what to build it from. */
     ck('starter: an untouched sheet is not a started one', !starterStarted(null) &&
       !starterStarted({ rows: {}, add: {} }) &&

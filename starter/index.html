@@ -605,8 +605,9 @@ function drawProgress() {
       + '<span class="firmsay">' + g.n + ' item' + (g.n === 1 ? '' : 's') + ' across '
       + g.order.length + ' section' + (g.order.length === 1 ? '' : 's')
       + (g.ask ? '  \u00b7  ' + g.ask + ' still to ask for' : '') + '</span>'
-      + (g.named ? '<button class="btn ask" data-askfor="' + esc(g.who) + '">\u2913 Their list '
-        + '\u2014 with the spec</button>' : '') + '</div>';
+      + (g.named ? '<button class="btn ask" data-askfor="' + esc(g.who)
+        + '" title="A PDF to send them: their items under each spec section, with what the spec '
+        + 'asks of each one">\u2913 Their list (PDF)</button>' : '') + '</div>';
     for (var k = 0; k < g.order.length; k++) {
       var sg = g.secs[g.order[k]];
       h += '<div class="firmsec">' + esc(String(sg.sec.number || sg.sec.key || '') + '   '

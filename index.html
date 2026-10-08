@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.44';
+const APP_VERSION = 'v8.45';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20271,6 +20271,19 @@ function starterWrap(text, per) {
   }
   return lines;
 }
+/* Text out of a spec book, made fit to go in a cell. A PDF read can leave control characters in
+   it that are not allowed in the XML a workbook is made of — a spreadsheet opening such a file
+   says it found a problem with the content and shows you nothing. And a cell holds 32,767
+   characters, which a wordy section can run past. Neither is anything the person exporting can do
+   about, so neither is left to chance. */
+const XL_CELL_MAX = 32000;
+function xlSafe(text) {
+  let t = String(text == null ? '' : text).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+  if (t.length > XL_CELL_MAX) t = t.slice(0, XL_CELL_MAX - 1) + '\u2026';
+  return t;
+}
+/* And a row is at most 409.5 points tall; ask for more and the file will not open. */
+const xlTall = pt => Math.max(1, Math.min(408, pt));
 /* How many lines a block of text comes to, counting the breaks in it. starterWrap treats a line
    break as a space, which is right for a cell holding one phrase and wrong for a passage out of
    the spec book — a list of eight numbered clauses is eight lines before any of them wraps, and
@@ -20283,7 +20296,7 @@ function starterTall(text, per) {
 }
 /* Cut to what will fit, at a word, with the mark that says there is more of it. */
 function starterClip(text, per, lines) {
-  const t = String(text || '');
+  const t = xlSafe(text);
   const room = per * lines - 2;
   if (starterWrap(t, per) <= lines) return t;
   const cut = t.slice(0, room), sp = cut.lastIndexOf(' ');
@@ -20526,7 +20539,7 @@ async function buildStarterXlsx(lines, opts) {
       if (div && !sawDiv[div]) { sawDiv[div] = 1; bandAt.push({ div: div, row: r }); }
       ws.mergeCells(r, 1, r, nCols);
       const c = row.getCell(1);
-      c.value = '  ' + (ln.sec.number || ln.sec.key) + '   ' + String(ln.sec.title || '').toUpperCase();
+      c.value = xlSafe('  ' + (ln.sec.number || ln.sec.key) + '   ' + String(ln.sec.title || '').toUpperCase());
       c.font = { bold: true, size: 11, color: { argb: SCH_INK.secText } };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
       c.alignment = { vertical: 'middle' };
@@ -20557,7 +20570,7 @@ async function buildStarterXlsx(lines, opts) {
       row.getCell(4).value = ln.sec.number || ln.sec.key;
       row.getCell(4).font = { size: 9, color: { argb: SCH_INK.dim } };
     }
-    row.getCell(1).value = ln.mark || '';
+    row.getCell(1).value = xlSafe(ln.mark || '');
     row.getCell(2).value = starterClip(sayOf(ln), perB, tall);
     /* The same mark on two different things. Not folded together, because they may well be two
        different things \u2014 said plainly instead, so somebody decides which. */
@@ -20585,7 +20598,7 @@ async function buildStarterXlsx(lines, opts) {
         .filter(Boolean).join('  —  ');
       if (said) {
         const fc = row.getCell(a + 4);
-        fc.value = said;
+        fc.value = xlSafe(said);
         fc.font = { size: 8.5, color: { argb: got.n ? SCH_INK.title : SCH_INK.dim } };
         fc.alignment = { vertical: 'middle', wrapText: true };
       }
@@ -20644,15 +20657,15 @@ async function buildStarterXlsx(lines, opts) {
     const wide = STARTER_FIXED.slice(2).reduce((a2, x) => a2 + x.w, 0);
     for (const say of says) {
       const d = ws.getRow(r);
-      d.getCell(2).value = say[0];
+      d.getCell(2).value = xlSafe(say[0]);
       d.getCell(2).font = { size: 8.5, bold: true, color: { argb: SCH_INK.dim } };
       d.getCell(2).alignment = { vertical: 'top', horizontal: 'right' };
       ws.mergeCells(r, 3, r, nFix);
       const c = d.getCell(3);
-      c.value = say[1];
+      c.value = xlSafe(say[1]);
       c.font = { size: 9, color: { argb: SCH_INK.calcText } };
       c.alignment = { vertical: 'top', wrapText: true };
-      d.height = Math.min(400, Math.max(13, starterTall(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
+      d.height = xlTall(Math.max(13, starterTall(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
       for (let k = 1; k <= nCols; k++) {
         d.getCell(k).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
         d.getCell(k).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
@@ -21338,13 +21351,9 @@ async function starterToExcel(d) {
    in, with what that section demands of it beside them and the book's own wording folded under —
    so the question and the answer to "what does the spec say about this one" travel together.
    Columns for them to fill in, so the sheet comes back as the quote. */
-const ASK_COLS = [
-  { h: 'Item', w: 12 }, { h: 'What it is', w: 38 }, { h: 'Qty', w: 6.5 },
-  { h: 'Must meet', w: 34 }, { h: 'Who the spec will take', w: 34 },
-  { h: 'Make & model you are proposing', w: 30 }, { h: 'Price', w: 13 },
-  { h: 'Lead (wks)', w: 11 }, { h: 'Notes / anything you cannot meet', w: 30 }
-];
-const ASK_HEAD = 6;
+const ASK_PDF_INK = [15, 23, 42], ASK_PDF_DIM = [120, 128, 142];
+const ASK_PDF_BAND = [254, 243, 199], ASK_PDF_BANDINK = [120, 53, 15];
+const ASK_PDF_SPEC = [248, 250, 252], ASK_PDF_YOURS = [20, 83, 45];
 function askListRows(vendor, state) {
   const want = String(vendor || '').trim().toLowerCase();
   const rows = (state && state.rows) || {};
@@ -21383,138 +21392,108 @@ function askListRows(vendor, state) {
   out.sort((a, b) => String((a.sec || {}).number || '') < String((b.sec || {}).number || '') ? -1 : 1);
   return out;
 }
-async function buildAskListXlsx(vendor, groups) {
-  const XJ = await ensureExcelJS();
-  const nCols = ASK_COLS.length;
-  const wb = new XJ.Workbook();
-  wb.creator = 'Arctic Mechanical'; wb.created = new Date();
-  wb.calcProperties.fullCalcOnLoad = true;
-  const ws = wb.addWorksheet('What we need', {
-    properties: { outlineLevelRow: 1, outlineProperties: { summaryBelow: false, summaryRight: false } },
-    views: [{ state: 'frozen', ySplit: ASK_HEAD, xSplit: 2, showOutlineSymbols: true }],
-    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-      printTitlesRow: ASK_HEAD + ':' + ASK_HEAD,
-      margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
-  });
-  ws.columns = ASK_COLS.map(c => ({ width: c.w }));
-  const span = (r, text, style) => {
-    ws.mergeCells(r, 1, r, nCols);
-    const c = ws.getCell(r, 1); c.value = text; Object.assign(c, style || {}); return c;
-  };
+/* As a PDF, because this is a thing you send somebody rather than a thing you work in. Their
+   items under each spec section, what that section asks to be submitted on said once underneath
+   it, the book's own wording under the line it belongs to, and room on the right for them to write
+   back on paper. */
+async function buildAskListPdf(vendor, groups) {
+  const jspdf = await ensureJsPDF();
+  const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 34;
+  const avail = pageW - M * 2;
   const items = groups.reduce((n, g) => n + g.lines.length, 0);
-  span(1, 'Arctic Mechanical — what we need from ' + vendor,
-    { font: { bold: true, size: 15, color: { argb: SCH_INK.title } }, alignment: { vertical: 'middle' } });
-  ws.getRow(1).height = 26;
-  span(2, [(job && job.name) || 'Job', job && job.number ? 'Job ' + job.number : '',
-    items + ' item' + (items === 1 ? '' : 's') + ' across ' + groups.length + ' spec section'
-      + (groups.length === 1 ? '' : 's'),
-    'Sent ' + shortDate(today())].filter(Boolean).join('    ·    '),
-    { font: { size: 10, color: { argb: SCH_INK.dim } } });
-  span(3, 'Under each section is what that section of the spec demands. Fill in the four columns on '
-    + 'the right and send it back. The + at the left of a line opens the book’s own wording for '
-    + 'it; the 1 and 2 at the top left open or shut them all.',
-    { font: { size: 10, italic: true, color: { argb: SCH_INK.calcText } },
-      alignment: { wrapText: true, vertical: 'middle' } });
-  ws.getRow(3).height = 26;
-  ws.getRow(4).height = 6;
-  const hr = ws.getRow(ASK_HEAD);
-  ASK_COLS.forEach((c, i) => {
-    const cell = hr.getCell(i + 1);
-    cell.value = c.h;
-    cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i >= 5 ? 'FF14532D' : SCH_INK.head } };
-    cell.alignment = { vertical: 'middle', horizontal: (i === 1 || i === 3 || i === 4 || i === 8) ? 'left' : 'center', wrapText: true };
-    cell.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
-  });
-  hr.height = 24;
-  const perB = starterPerLine(ASK_COLS[1].w, 9.5);
-  const perM = starterPerLine(ASK_COLS[3].w, 8.5);
-  const perK = starterPerLine(ASK_COLS[4].w, 8.5);
-  const wide = ASK_COLS.slice(2).reduce((a, x) => a + x.w, 0);
-  let r = ASK_HEAD + 1;
+  const header = () => {
+    try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 18, 38, 38); } catch (e) {}
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor.apply(doc, ARCTIC_INK);
+    doc.text('WHAT WE NEED FROM ' + String(vendor || '').toUpperCase(), M + 48, 36);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
+    doc.text([(job && job.name) || '', job && job.number ? 'Job ' + job.number : '',
+      items + ' item' + (items === 1 ? '' : 's') + ' across ' + groups.length + ' spec section'
+        + (groups.length === 1 ? '' : 's'),
+      'Sent ' + csvDate(today())].filter(Boolean).join('   \u00b7   '), M + 48, 50);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+    doc.text('ARCTIC SHEET METAL', pageW - M, 30, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 155, 165);
+    doc.text('HVAC \u00b7 Pipefitting \u00b7 Plumbing \u00b7 Fabrication', pageW - M, 41, { align: 'right' });
+    doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.2); doc.line(M, 62, pageW - M, 62);
+  };
+  header();
+  const W = [52, 176, 26, 138, 138, 84, 50, 44];      // adds up to the width we have
+  const cols = {
+    0: { cellWidth: W[0], fontStyle: 'bold' },
+    1: { cellWidth: W[1] },
+    2: { cellWidth: W[2], halign: 'center' },
+    3: { cellWidth: W[3], fontSize: 6.8, textColor: [71, 85, 105] },
+    4: { cellWidth: W[4], fontSize: 6.8, textColor: [71, 85, 105] },
+    5: { cellWidth: W[5], fillColor: [243, 250, 245] },
+    6: { cellWidth: W[6], fillColor: [243, 250, 245], halign: 'right' },
+    7: { cellWidth: W[7], fillColor: [243, 250, 245], halign: 'center' }
+  };
+  const HEAD = [[
+    'Item', 'What it is', 'Qty', 'Must meet', 'Who the spec will take',
+    { content: 'Make & model you are proposing', styles: { fillColor: ASK_PDF_YOURS } },
+    { content: 'Price', styles: { fillColor: ASK_PDF_YOURS } },
+    { content: 'Lead (wks)', styles: { fillColor: ASK_PDF_YOURS } }
+  ]];
+  const base = { margin: { top: 74, left: M, right: M, bottom: 34 }, tableWidth: avail,
+    didDrawPage: () => header(),
+    styles: { font: 'helvetica', fontSize: 7.6, cellPadding: 3.2, overflow: 'linebreak',
+      textColor: ASK_PDF_INK, valign: 'top', lineColor: [226, 232, 240], lineWidth: 0.5 },
+    headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold',
+      fontSize: 7.4, valign: 'middle' } };
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
+  doc.text('Under each section is what that section of the spec asks to be submitted on. The book\u2019s '
+    + 'own wording is under the line it belongs to. The three columns on the right are yours to '
+    + 'fill in.', M, 74, { maxWidth: avail });
+  let y = 90;
   for (const g of groups) {
     const sec = g.sec || {};
-    ws.mergeCells(r, 1, r, nCols);
-    const b = ws.getRow(r).getCell(1);
-    b.value = '  ' + String(sec.number || sec.key || '') + '   ' + String(sec.title || '').toUpperCase();
-    b.font = { bold: true, size: 11.5, color: { argb: SCH_INK.secText } };
-    b.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
-    b.alignment = { vertical: 'middle' };
-    ws.getRow(r).height = 20;
-    r++;
-    /* What this section demands, said once under the band rather than on every line of it. */
+    /* the section it all falls under */
+    doc.autoTable(Object.assign({}, base, { startY: y, theme: 'plain',
+      body: [[String(sec.number || sec.key || '') + '    ' + String(sec.title || '').toUpperCase()]],
+      styles: Object.assign({}, base.styles, { fontSize: 10, fontStyle: 'bold', cellPadding: 5,
+        fillColor: ASK_PDF_BAND, textColor: ASK_PDF_BANDINK, lineWidth: 0 }),
+      columnStyles: { 0: { cellWidth: avail } } }));
+    y = doc.lastAutoTable.finalY;
     const must = ((g.lines[0] || {}).ln || {}).must || {};
     if (must.full) {
-      ws.mergeCells(r, 1, r, nCols);
-      const m = ws.getRow(r).getCell(1);
-      m.value = 'What this section asks to be submitted on:\n' + must.full;
-      m.font = { size: 9, color: { argb: SCH_INK.calcText } };
-      m.alignment = { vertical: 'top', wrapText: true };
-      m.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
-      ws.getRow(r).height = Math.min(460,
-        Math.max(16, starterTall(must.full, starterPerLine(ASK_COLS.reduce((a, x) => a + x.w, 0), 9)) * 11.4 + 18));
-      r++;
+      doc.autoTable(Object.assign({}, base, { startY: y, theme: 'plain',
+        body: [['What this section asks to be submitted on\n' + must.full]],
+        styles: Object.assign({}, base.styles, { fontSize: 7.2, cellPadding: 6,
+          fillColor: [255, 251, 235], textColor: [71, 85, 105], lineWidth: 0 }),
+        columnStyles: { 0: { cellWidth: avail } } }));
+      y = doc.lastAutoTable.finalY;
     }
+    /* a line, then whatever the book said about it under it */
+    const body = [];
     for (const x of g.lines) {
-      const ln = x.ln, row = ws.getRow(r);
-      const who = ln.makers || { short: '', all: '', count: 0 };
-      const tall = Math.min(STARTER_MAX_LINES, Math.max(2,
-        starterWrap(x.name, perB), starterWrap((ln.must || {}).short || '', perM),
-        starterWrap(who.short || '', perK)));
-      row.getCell(1).value = x.item || '';
-      row.getCell(2).value = starterClip(x.name, perB, tall);
-      row.getCell(3).value = x.qty === '' ? '' : x.qty;
-      row.getCell(4).value = starterClip((ln.must || {}).short || '', perM, tall);
-      row.getCell(5).value = starterClip(who.short || '', perK, tall);
-      for (let c = 6; c <= 9; c++) {
-        const cell = row.getCell(c);
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3FAF5' } };
-        cell.border = { left: { style: 'thin', color: { argb: 'FFBBE0C6' } },
-          right: { style: 'thin', color: { argb: 'FFBBE0C6' } },
-          bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
-      }
-      row.getCell(7).numFmt = '#,##0';
-      /* Whatever they have already told us, so the sheet going back out is not blank again. */
-      if (x.slot && x.slot.p != null && x.slot.p !== '') row.getCell(7).value = x.slot.p;
-      if (x.slot && x.slot.lead != null && x.slot.lead !== '') row.getCell(8).value = x.slot.lead;
-      if (x.slot && x.slot.n) row.getCell(9).value = x.slot.n;
-      for (let c = 1; c <= nCols; c++) {
-        const cell = row.getCell(c);
-        if (c <= 5) cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
-        cell.font = Object.assign({ size: c === 2 ? 9.5 : (c >= 4 && c <= 5 ? 8.5 : 10),
-          color: { argb: SCH_INK.title } }, cell.font || {});
-        cell.alignment = (c === 2 || c === 4 || c === 5 || c === 9)
-          ? { vertical: 'middle', wrapText: true }
-          : { vertical: 'middle', horizontal: c === 1 ? 'left' : 'center' };
-      }
-      row.height = tall * 11.6 + 5;
-      r++;
+      const ln = x.ln, who = ln.makers || {};
+      body.push([x.item || '', x.name || '', x.qty === '' ? '' : String(x.qty),
+        (ln.must || {}).all || (ln.must || {}).short || '',
+        who.all || who.short || '',
+        (x.slot && x.slot.make) || '', (x.slot && x.slot.p != null && x.slot.p !== '') ? String(x.slot.p) : '',
+        (x.slot && x.slot.lead != null && x.slot.lead !== '') ? String(x.slot.lead) : '']);
       const says = [];
-      if (ln.covers) says.push(['Covers', ln.covers]);
-      if (who.all && who.count > 1) says.push(['Will take', who.all]);
-      if (ln.wording) says.push(['The book says', ln.wording]);
-      for (const say of says) {
-        const d = ws.getRow(r);
-        d.getCell(1).value = say[0];
-        d.getCell(1).font = { size: 8.5, bold: true, color: { argb: SCH_INK.dim } };
-        d.getCell(1).alignment = { vertical: 'top', horizontal: 'right' };
-        ws.mergeCells(r, 2, r, nCols);
-        const c = d.getCell(2);
-        c.value = say[1];
-        c.font = { size: 9, color: { argb: SCH_INK.calcText } };
-        c.alignment = { vertical: 'top', wrapText: true };
-        d.height = Math.min(400, Math.max(13, starterTall(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
-        for (let k = 1; k <= nCols; k++) {
-          d.getCell(k).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
-          d.getCell(k).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
-        }
-        d.outlineLevel = 1;
-        d.hidden = true;
-        r++;
-      }
+      if (ln.covers) says.push('Covers: ' + ln.covers);
+      if (ln.wording) says.push(ln.wording);
+      if (x.slot && x.slot.n) says.push('Our note: ' + x.slot.n);
+      if (says.length) body.push([{ content: says.join('\n\n'), colSpan: 8,
+        styles: { fontSize: 6.8, fontStyle: 'normal', textColor: [100, 116, 139],
+          fillColor: ASK_PDF_SPEC, cellPadding: { top: 4, bottom: 5, left: 10, right: 6 } } }]);
     }
+    doc.autoTable(Object.assign({}, base, { startY: y, head: HEAD, body: body,
+      columnStyles: cols }));
+    y = doc.lastAutoTable.finalY + 16;
   }
-  return wb;
+  const pages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 155, 165);
+    doc.text('Arctic Sheet Metal  \u00b7  ' + ((job && job.name) || '') + '  \u00b7  for ' + vendor,
+      M, pageH - 14);
+    doc.text('Page ' + i + ' of ' + pages, pageW - M, pageH - 14, { align: 'right' });
+  }
+  return doc;
 }
 async function exportAskList(d) {
   const vendor = String(d.vendor || '').trim();
@@ -21524,17 +21503,8 @@ async function exportAskList(d) {
     const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {});
     const items = groups.reduce((n, g) => n + g.lines.length, 0);
     if (!items) { toStarter('starter-say', { text: 'Nothing out to ' + vendor + ' to make a list from', bad: true }); return; }
-    const wb = await buildAskListXlsx(vendor, groups);
-    const bytes = await wb.xlsx.writeBuffer();
-    const url = URL.createObjectURL(new Blob([bytes],
-      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = sanitizeAnyName(jobFileBase() + ' — for ' + vendor, 'vendor list') + '.xlsx';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    const doc = await buildAskListPdf(vendor, groups);
+    doc.save(sanitizeAnyName(jobFileBase() + ' \u2014 for ' + vendor, 'vendor list') + '.pdf');
     toStarter('starter-say', { text: vendor + ': ' + items + ' item' + (items === 1 ? '' : 's')
       + ' across ' + groups.length + ' section' + (groups.length === 1 ? '' : 's') + ' downloaded' });
   } catch (e) {
