@@ -98,7 +98,20 @@
   tr.odd td{background:var(--band)}
   tr.band td.froze{background:var(--sec)}
   tr.sub td.froze{background:var(--sub)}
-  td.ro{color:#475569}
+  /* grey means not yours to type in */
+  td.ro{color:#475569;background:#f1f3f6}
+  tr.odd td.ro{background:#eceff4}
+  td.starcell{padding:0}
+  .star{border:0;background:none;cursor:pointer;color:#cbd5e1;font-size:13px;line-height:1;
+    padding:2px 4px}
+  .star:hover{color:#f59e0b}
+  td.starcell.lit .star{color:#f59e0b}
+  td.starred{font-weight:600}
+  td.shutq,th.shutq{background:#eef2f7;padding:0;text-align:center}
+  thead th.shutq{background:#2b3a4d}
+  .qtog{border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:2px 6px;
+    width:100%}
+  .qtog:hover{text-decoration:underline}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   td.mid{text-align:center}
   td.on{box-shadow:inset 0 0 0 2px var(--pick);border-radius:2px}
@@ -160,8 +173,18 @@
   .firmhead .btn.ask{margin-left:auto;background:rgba(255,255,255,.12);
     border-color:rgba(255,255,255,.3);color:#fff}
   .firmhead .btn.ask:hover{background:rgba(255,255,255,.22)}
-  .firmsec{padding:5px 12px;background:var(--sec);color:var(--secink);font-weight:700;
-    font-size:12px;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+  .firmsec{display:flex;align-items:center;gap:12px;padding:4px 8px 4px 12px;background:var(--sec);
+    color:var(--secink);font-weight:700;font-size:12px;
+    border-left:1px solid var(--line);border-right:1px solid var(--line)}
+  .firmsec .btn.ask{margin-left:auto;background:rgba(0,0,0,.07);border-color:rgba(0,0,0,.18);
+    color:var(--secink);font-size:11.5px;font-weight:600}
+  .firmsec .btn.ask:hover{background:rgba(0,0,0,.14)}
+  .howbar{display:flex;align-items:center;gap:8px;margin:0 0 12px;flex-wrap:wrap}
+  .howbar .gap{flex:1}
+  .how{color:var(--dim);font-size:12.5px}
+  .how b{color:var(--ink)}
+  .howbar .btn.on{background:var(--head);border-color:var(--head);color:#fff}
+  table.list tr.lit td{box-shadow:inset 3px 0 0 -1px #f59e0b}
   table.list.tight{border-radius:0;border-top:0}
   .firm table.list.tight:last-child{border-radius:0 0 7px 7px}
   #say{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--head);
@@ -231,12 +254,16 @@ var READY = false;
 
 /* ── the shape of the sheet ── */
 var FIX = [
+  /* The star is a column of its own, the way a spreadsheet gives a row its own margin: it is the
+     one thing you want to be able to hit without first landing on the line. */
+  { k: 'star',   h: '\u2605',       w: 30,  star: 1 },
   { k: 'item',   h: 'Item',        w: 104, edit: 1 },
-  { k: 'name',   h: 'What it is',  w: 280, edit: 1, left: 1 },
+  { k: 'name',   h: 'What it is',  w: 300, edit: 1, left: 1 },
   { k: 'qty',    h: 'Qty',         w: 52,  edit: 1, num: 1 },
-  { k: 'sec',    h: 'Spec section', w: 104 },
+  /* The section a line is under is the band it sits in, said once — not repeated down a column.
+     What it must meet is in what the spec says, under the line, where there is room for it. */
   { k: 'makers', h: 'Who the spec will take', w: 250, left: 1 },
-  { k: 'must',   h: 'Must meet',   w: 250, left: 1 }
+  { k: 'note',   h: 'Notes',       w: 230, edit: 1, left: 1 }
 ];
 var SLOT = [
   { k: 'v',    h: 'Vendor',     w: 150, edit: 1, left: 1 },
@@ -254,14 +281,21 @@ var TAIL = [
 var NUMKEY = { p: 1, lead: 1 };
 var ASK = 'Request from vendor', GOT = 'Received from vendor', WIN = 'Going with this one';
 var STATES = ['', ASK, GOT, WIN];
-var FROZEN = 2;                  // columns that stay put when you scroll sideways
+var FROZEN = 3;                  // the star, the item and what it is stay put
 
 var COLS = [];                   // the flat column list, built once the slot count is known
+/* A quote nobody is looking at takes one narrow column saying so, not six. Quote 1 is open to
+   begin with and the rest are a click away, because most lines only ever go to one firm and six
+   empty columns apiece is a sheet you have to scroll past rather than read. */
+var SHUT_COL = { k: '_shut', h: '', w: 30, shut: 1 };
+function quoteOpen(i) { return i === 0 || !!(ST && ST.qopen && ST.qopen[i]); }
 function layOut(n) {
   COLS = [];
   for (var i = 0; i < FIX.length; i++) COLS.push({ c: FIX[i], fix: i });
-  for (var s = 0; s < n; s++)
+  for (var s = 0; s < n; s++) {
+    if (!quoteOpen(s)) { COLS.push({ c: SHUT_COL, slot: s, shut: 1 }); continue; }
     for (var j = 0; j < SLOT.length; j++) COLS.push({ c: SLOT[j], slot: s });
+  }
   for (var t = 0; t < TAIL.length; t++) COLS.push({ c: TAIL[t], tail: t });
   for (var x = 0; x < COLS.length; x++) {
     COLS[x].at = x;
@@ -322,7 +356,8 @@ function open(d) {
 function fill(state, slots) {
   var s = state && typeof state === 'object' ? state : {};
   return { slots: Math.max(2, Math.min(8, s.slots || slots)), rows: s.rows || {},
-    add: s.add || {}, w: s.w || {}, open: s.open || {}, shut: s.shut || {}, at: s.at || 0 };
+    add: s.add || {}, w: s.w || {}, open: s.open || {}, shut: s.shut || {},
+    qopen: s.qopen || {}, at: s.at || 0 };
 }
 function count() { var n = 0; for (var i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'item') n++; return n; }
 
@@ -383,7 +418,7 @@ function saysOf(ln) {
   if (who.all && who.count > 1) out.push(['Will take', who.all]);
   var must = ln.must || {};
   if (must.full || must.all) out.push(['Must meet', must.full || must.all]);
-  if (ln.wording) out.push(['The book says', ln.wording]);
+  if (ln.wording) out.push(['The spec says', ln.wording]);
   return out;
 }
 function cellText(d, col) {
@@ -396,9 +431,9 @@ function cellText(d, col) {
       var q = pick2(r && r.qty, own && own.qty, ln.qty || '');
       return q === '' ? '' : String(q);
     }
-    if (k === 'sec') return String((ln.sec || {}).number || (ln.sec || {}).key || '');
     if (k === 'makers') return ((ln.makers || {}).short || '');
-    if (k === 'must') return ((ln.must || {}).short || '');
+    if (k === 'note') return (r && r.note) || (own && own.note) || '';
+    if (k === 'star') return '';
   }
   if (col.slot != null) {
     var sl = (r && r.s && r.s[col.slot]) || {};
@@ -493,12 +528,17 @@ function progressRows() {
     for (var k = 0; k < r.s.length; k++) {
       var sl = r.s[k];
       if (!sl || (sl.st !== ASK && sl.st !== GOT)) continue;
-      out.push({ key: p.key, slot: k, todo: sl.st, vendor: sl.v || '', item: p.item,
-        name: p.name, sec: p.sec, price: sl.p, lead: sl.lead, note: sl.n, file: sl.f || null });
+      /* A slot whose firm was taken out again is not something anybody is waiting on. It stays on
+         the quote sheet where it was typed; it does not stand in this list saying nobody. */
+      if (!String(sl.v || '').trim()) continue;
+      out.push({ key: p.key, slot: k, todo: sl.st, vendor: String(sl.v).trim(), item: p.item,
+        name: p.name, sec: p.sec, price: sl.p, lead: sl.lead, note: sl.n, file: sl.f || null,
+        star: !!(r && r.star) });
     }
   }
-  /* What is only asked for comes first — that is the list somebody has to ring round. */
+  /* Starred first, then what is only asked for — that is the list somebody has to ring round. */
   out.sort(function (a, b) {
+    if (a.star !== b.star) return a.star ? -1 : 1;
     if (a.todo !== b.todo) return a.todo === ASK ? -1 : 1;
     return String(a.vendor).toLowerCase() < String(b.vendor).toLowerCase() ? -1 : 1;
   });
@@ -563,64 +603,83 @@ function drawVendors() {
   document.getElementById('tabSay').textContent = rows.length
     ? rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' picked' : '';
 }
-/* Gathered the way you would actually work it: a firm at a time, and under each of them the spec
-   sections their items fall in — because what goes out to Ferguson is one list covering 22 40 00
-   and 23 21 13, not five separate asks. */
-function byVendor(rows) {
+/* Gathered the way you would actually work it. Which way round is yours to pick: a firm at a
+   time, with the spec sections their items fall in under them — or a section at a time, with the
+   firms quoting it under that. Whichever is on, the sheet says so in as many words at the top. */
+var PROG = 'vendor';
+function goProg(which) { PROG = which; draw(); }
+function gather(rows, outerBy, innerBy) {
   var at = {}, order = [];
   for (var i = 0; i < rows.length; i++) {
-    var v = rows[i].vendor || '';
-    var who = v || '\u2014 nobody named yet \u2014';
-    if (!at[who]) { at[who] = { who: who, named: !!v, secs: {}, order: [], n: 0, ask: 0 }; order.push(who); }
-    var g = at[who];
-    var sk = (rows[i].sec || {}).key || '';
-    if (!g.secs[sk]) { g.secs[sk] = { sec: rows[i].sec || {}, rows: [] }; g.order.push(sk); }
-    g.secs[sk].rows.push(rows[i]);
+    var o = outerBy(rows[i]);
+    if (!at[o.key]) { at[o.key] = { key: o.key, label: o.label, sort: o.sort, vendor: o.vendor || '',
+      secKey: o.secKey || '', inner: {}, order: [], n: 0, ask: 0, star: 0 }; order.push(o.key); }
+    var g = at[o.key], j = innerBy(rows[i]);
+    if (!g.inner[j.key]) { g.inner[j.key] = { key: j.key, label: j.label, sort: j.sort,
+      vendor: j.vendor || '', secKey: j.secKey || '', rows: [] }; g.order.push(j.key); }
+    g.inner[j.key].rows.push(rows[i]);
     g.n++;
     if (rows[i].todo === ASK) g.ask++;
+    if (rows[i].star) g.star++;
   }
-  order.sort(function (a, b) {
-    var ga = at[a], gb = at[b];
-    if (ga.named !== gb.named) return ga.named ? -1 : 1;
-    return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
-  });
-  for (var j = 0; j < order.length; j++) at[order[j]].order.sort(function (x, y) {
-    var sx = at[order[j]].secs[x].sec, sy = at[order[j]].secs[y].sec;
-    return String(sx.number || sx.key || '') < String(sy.number || sy.key || '') ? -1 : 1;
-  });
-  return order.map(function (k) { return at[k]; });
+  var by = function (m) { return function (x, y) {
+    var a = m[x].sort, b = m[y].sort;
+    return a === b ? 0 : (a < b ? -1 : 1); }; };
+  order.sort(by(at));
+  for (var k = 0; k < order.length; k++) at[order[k]].order.sort(by(at[order[k]].inner));
+  return order.map(function (x) { return at[x]; });
 }
+var byFirm = function (r) { return { key: 'v:' + r.vendor.toLowerCase(), label: r.vendor,
+  sort: r.vendor.toLowerCase(), vendor: r.vendor }; };
+var bySec = function (r) { var s2 = r.sec || {};
+  return { key: 's:' + (s2.key || ''), secKey: s2.key || '',
+    label: String(s2.number || s2.key || '') + '   ' + String(s2.title || '').toUpperCase(),
+    sort: String(s2.number || s2.key || '') }; };
 function drawProgress() {
   var rows = progressRows();
-  var firms = byVendor(rows);
+  var firstFirm = PROG === 'vendor';
+  var groups = firstFirm ? gather(rows, byFirm, bySec) : gather(rows, bySec, byFirm);
+  var waiting = rows.filter(function (x) { return x.todo === ASK; }).length;
   var h = '<div class="pad"><h2>What is in hand</h2>'
-    + '<p>Every quote still to be asked for, and every one back and waiting on somebody to decide, '
-    + 'under the firm it is with and the spec section it falls in. Say you are going with one on '
-    + 'the quote sheet and it leaves this list for Vendors.</p>';
-  if (!firms.length)
+    + '<div class="howbar"><span class="how">' + (firstFirm
+        ? 'Grouped by <b>firm</b>, and under each of them by <b>spec section</b>'
+        : 'Grouped by <b>spec section</b>, and under each of them by <b>firm</b>')
+    + '</span><span class="gap"></span><span class="how">Group by</span>'
+    + '<button class="btn' + (firstFirm ? ' on' : '') + '" onclick="goProg(\'vendor\')">Firm</button>'
+    + '<button class="btn' + (firstFirm ? '' : ' on') + '" onclick="goProg(\'section\')">Spec section</button>'
+    + '</div>'
+    + '<p>Every quote still to be asked for, and every one back and waiting on somebody to decide. '
+    + 'Say you are going with one on the quote sheet and it leaves this list for Vendors. '
+    + 'A list goes out one spec section at a time \u2014 the button is on the section.</p>';
+  if (!groups.length)
     h += '<div id="none">Nothing out to anybody yet. Put a vendor in a quote slot and it lands here.</div>';
-  for (var f = 0; f < firms.length; f++) {
-    var g = firms[f];
-    h += '<div class="firm"><div class="firmhead"><b>' + esc(g.who) + '</b>'
+  for (var f = 0; f < groups.length; f++) {
+    var g = groups[f];
+    h += '<div class="firm"><div class="firmhead"><b>' + esc(g.label) + '</b>'
       + '<span class="firmsay">' + g.n + ' item' + (g.n === 1 ? '' : 's') + ' across '
-      + g.order.length + ' section' + (g.order.length === 1 ? '' : 's')
-      + (g.ask ? '  \u00b7  ' + g.ask + ' still to ask for' : '') + '</span>'
-      + (g.named ? '<button class="btn ask" data-askfor="' + esc(g.who)
-        + '" title="A PDF to send them: their items under each spec section, with what the spec '
-        + 'asks of each one">\u2913 Their list (PDF)</button>' : '') + '</div>';
+      + g.order.length + (firstFirm ? ' section' : ' firm') + (g.order.length === 1 ? '' : 's')
+      + (g.ask ? '  \u00b7  ' + g.ask + ' still to ask for' : '')
+      + (g.star ? '  \u00b7  \u2605 ' + g.star : '') + '</span></div>';
     for (var k = 0; k < g.order.length; k++) {
-      var sg = g.secs[g.order[k]];
-      h += '<div class="firmsec">' + esc(String(sg.sec.number || sg.sec.key || '') + '   '
-        + String(sg.sec.title || '').toUpperCase()) + '</div>';
+      var sg = g.inner[g.order[k]];
+      var who = firstFirm ? g.vendor : sg.vendor;
+      var sk = firstFirm ? sg.secKey : g.secKey;
+      h += '<div class="firmsec"><span>' + esc(sg.label) + '</span>'
+        + '<button class="btn ask" data-askfor="' + esc(who) + '" data-asksec="' + esc(sk)
+        + '" title="A PDF to send ' + esc(who) + ': their items in this section, with what the '
+        + 'spec asks of each one">\u2913 Send ' + esc(who) + ' this section</button></div>';
       h += '<table class="list tight"><thead><tr>'
+        + '<th style="width:30px">\u2605</th>'
         + '<th class="left" style="width:160px">What to do</th>'
-        + '<th style="width:96px">Item</th><th class="left" style="width:300px">What it is</th>'
-        + '<th class="left" style="width:160px">Quote</th><th style="width:96px">Price</th>'
-        + '<th style="width:86px">Lead (wks)</th><th class="left" style="width:220px">Notes</th>'
+        + '<th style="width:96px">Item</th><th class="left" style="width:280px">What it is</th>'
+        + '<th class="left" style="width:150px">Quote</th><th style="width:92px">Price</th>'
+        + '<th style="width:84px">Lead (wks)</th><th class="left" style="width:210px">Notes</th>'
         + '</tr></thead><tbody>';
       for (var r = 0; r < sg.rows.length; r++) {
         var x = sg.rows[r];
-        h += '<tr data-go="' + esc(x.key) + '" class="' + (r % 2 ? 'odd' : '') + '">'
+        h += '<tr data-go="' + esc(x.key) + '" class="' + (r % 2 ? 'odd' : '')
+          + (x.star ? ' lit' : '') + '">'
+          + '<td class="mid">' + (x.star ? '\u2605' : '') + '</td>'
           + '<td class="left"><span class="chip ' + (x.todo === ASK ? 'ask' : 'got') + '">'
           + esc(x.todo) + '</span></td>'
           + '<td>' + esc(x.item) + '</td><td class="left">' + esc(x.name) + '</td>'
@@ -635,12 +694,17 @@ function drawProgress() {
     h += '</div>';
   }
   document.getElementById('wrap').innerHTML = h + '</div>';
-  var waiting = rows.filter(function (x) { return x.todo === ASK; }).length;
   document.getElementById('tabSay').textContent = rows.length
-    ? firms.length + ' firm' + (firms.length === 1 ? '' : 's') + '  \u00b7  ' + waiting
-      + ' to ask for, ' + (rows.length - waiting) + ' back' : '';
+    ? groups.length + (firstFirm ? ' firm' : ' section') + (groups.length === 1 ? '' : 's')
+      + '  \u00b7  ' + waiting + ' to ask for, ' + (rows.length - waiting) + ' back' : '';
 }
 function draw() {
+  /* Where the sheet is scrolled to is not something a redraw gets to change. Opening what the
+     spec says under a line rebuilds the table, and without this the line you opened jumps away
+     from under you and you have to go and find it again. */
+  var box = document.getElementById('wrap');
+  var wasY = box ? box.scrollTop : 0, wasX = box ? box.scrollLeft : 0;
+  var keepAt = VIEW === 'sheet';
   if (VIEW === 'vendors') { drawVendors(); return; }
   if (VIEW === 'progress') { drawProgress(); return; }
   document.getElementById('tabSay').textContent = '';
@@ -653,9 +717,16 @@ function draw() {
   for (var c = 0; c < COLS.length; c++) h += '<col style="width:' + COLS[c].w + 'px">';
   h += '</colgroup><thead><tr class="slots">';
   h += '<th colspan="' + FIX.length + '">WHAT IS BEING PRICED</th>';
-  for (var s = 0; s < ST.slots; s++)
-    h += '<th class="q gs ge ' + (s % 2 ? 'qb' : 'qa') + '" colspan="' + SLOT.length + '">QUOTE '
-      + (s + 1) + '</th>';
+  for (var s = 0; s < ST.slots; s++) {
+    var open = quoteOpen(s);
+    h += '<th class="q gs ge ' + (s % 2 ? 'qb' : 'qa') + (open ? '' : ' shutq')
+      + '" colspan="' + (open ? SLOT.length : 1) + '">'
+      + (s === 0 ? 'QUOTE 1'
+        : '<button class="qtog" data-quote="' + s + '" title="'
+          + (open ? 'Shut quote ' + (s + 1) : 'Open quote ' + (s + 1)) + '">'
+          + (open ? 'QUOTE ' + (s + 1) + '  \u00d7' : (s + 1)) + '</button>')
+      + '</th>';
+  }
   h += '<th class="qt gs ge" colspan="' + TAIL.length + '">GOING WITH</th></tr><tr class="heads">';
   for (var k = 0; k < COLS.length; k++) {
     var cc = COLS[k].c;
@@ -682,6 +753,7 @@ function draw() {
   marks();
   runFind(true);
   able();
+  if (keepAt) { var b2 = document.getElementById('wrap'); b2.scrollTop = wasY; b2.scrollLeft = wasX; }
   if (CUR) show(CUR.r, CUR.c, true);
 }
 function froze(k, left) { return k < FROZEN ? ' class="froze" style="left:' + left[k] + 'px"' : ''; }
@@ -722,13 +794,31 @@ function cellHtml(d, col, k, left, r) {
   if (k < FROZEN) { cls.push('froze'); style = 'left:' + left[k] + 'px'; }
   if (col.grp) cls.push(col.grp);
   if (cc.num) cls.push('num');
-  if (!cc.edit && !cc.pick && !cc.file) cls.push('ro');
+  /* A cell you cannot type in is greyed, so the sheet says plainly which of it is yours. */
+  if (!cc.edit && !cc.pick && !cc.file && !cc.star && !cc.shut) cls.push('ro');
+  /* A quote nobody has opened: one narrow column that says which it is. */
+  if (cc.shut) {
+    cls.push('shutq');
+    return '<td data-c="' + k + '" class="' + cls.join(' ') + '"'
+      + (style ? ' style="' + style + '"' : '') + '></td>';
+  }
+  if (cc.star) {
+    var on = !!(r && r.star);
+    cls.push('mid', 'starcell');
+    if (on) cls.push('lit');
+    return '<td data-c="' + k + '" class="' + cls.join(' ') + '"'
+      + (style ? ' style="' + style + '"' : '')
+      + '><button class="star" data-star="' + esc(d.key) + '" title="'
+      + (on ? 'Take the star off \u2014 it is no longer a priority' : 'Star it \u2014 this one is a priority')
+      + '">' + (on ? '\u2605' : '\u2606') + '</button></td>';
+  }
   if (cc.k === 'item' && d.line.dupTag) inner = '<span class="tag dup" title="'
     + esc('This mark is on more than one line: ' + (d.line.dupWith || '')) + '">' + inner + '</span>';
   /* What the spec said, opened under the line rather than squeezed into it. */
   if (cc.k === 'name' && saysOf(d.line).length)
     inner = '<button class="opener" data-open="' + esc(d.key) + '">'
       + (ST.open && ST.open[d.key] ? '\u2296' : '\u2295') + '</button>' + inner;
+  if (cc.k === 'name' && r && r.star) cls.push('starred');
   if (cc.pick) {
     var now = ((r && r.s && r.s[col.slot]) || {}).st || '';
     if (now === ASK) cls.push('ask'); else if (now === GOT) cls.push('got');
@@ -939,7 +1029,7 @@ function keep() {
   _save = setTimeout(function () {
     _mine = Date.now();
     tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
-      open: ST.open, shut: ST.shut }, at: _mine });
+      open: ST.open, shut: ST.shut, qopen: ST.qopen }, at: _mine });
   }, 500);
 }
 /* Somebody else changed it. Theirs wins unless we are in the middle of typing, in which case we
@@ -1085,12 +1175,17 @@ document.addEventListener('mousedown', function (e) {
   }
   /* A line on either list is the line on the quote sheet — click it and you are on it. */
   var askfor = e.target.closest && e.target.closest('[data-askfor]');
-  if (askfor) { e.preventDefault(); e.stopPropagation(); askList(askfor.getAttribute('data-askfor')); return; }
+  if (askfor) { e.preventDefault(); e.stopPropagation();
+    askList(askfor.getAttribute('data-askfor'), askfor.getAttribute('data-asksec')); return; }
   var see2 = e.target.closest && e.target.closest('[data-see2]');
   if (see2) { e.preventDefault(); e.stopPropagation(); seeByKey(see2.getAttribute('data-see2'),
     Number(see2.getAttribute('data-slot') || -1)); return; }
   var go = e.target.closest && e.target.closest('[data-go]');
   if (go) { goLine(go.getAttribute('data-go')); return; }
+  var star = e.target.closest && e.target.closest('[data-star]');
+  if (star) { e.preventDefault(); e.stopPropagation(); starOne(star.getAttribute('data-star')); return; }
+  var qtog = e.target.closest && e.target.closest('[data-quote]');
+  if (qtog) { e.preventDefault(); e.stopPropagation(); showQuote(Number(qtog.getAttribute('data-quote'))); return; }
   var fold = e.target.closest && e.target.closest('[data-fold]');
   if (fold) { e.preventDefault(); e.stopPropagation(); foldOne(fold.getAttribute('data-fold')); return; }
   var opener = e.target.closest && e.target.closest('[data-open]');
@@ -1150,6 +1245,22 @@ document.addEventListener('scroll', function (e) {
   if (EDIT && e.target && e.target.id === 'wrap') { var a = EDIT; stop(true); paint(CUR); }
 }, true);
 
+/* A line that matters more than the ones around it. Nothing else changes about it — it is still
+   in its section, in its order — but it is marked, and the lists put the marked ones first. */
+function starOne(key) {
+  mark();
+  var r = row(key);
+  if (r.star) delete r.star; else r.star = 1;
+  at(key, function (i) { redo(i); });
+  keep();
+}
+function showQuote(i) {
+  if (!ST.qopen) ST.qopen = {};
+  if (ST.qopen[i]) delete ST.qopen[i]; else ST.qopen[i] = 1;
+  CUR = null; SEL = null;
+  layOut(ST.slots);
+  draw(); keep();
+}
 function foldOne(secKey) {
   if (!ST.shut) ST.shut = {};
   if (ST.shut[secKey]) delete ST.shut[secKey]; else ST.shut[secKey] = 1;
@@ -1268,16 +1379,21 @@ function seeFile(tr, k) {
 
 /* ── find, and the jumps ── */
 var HITS = [], SPOT = -1;
+/* A spec section is written "23 09 13" and typed "2309", so everything is looked at twice: as it
+   is, and with everything that is not a letter or a number taken out of it. */
+function bare(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 function hay(d) {
-  var bits = [];
+  var bits = [], ln = d.line;
   for (var k = 0; k < COLS.length; k++) {
     var col = COLS[k];
-    if (col.c.k === 'must' || col.c.k === 'makers' || col.fix != null || col.c.k === 'v')
-      bits.push(cellText(d, col));
+    if (col.c.star || col.c.shut) continue;
+    if (col.fix != null || col.c.k === 'v') bits.push(cellText(d, col));
   }
-  var sec = d.line.sec || {};
-  bits.push(sec.number || '', sec.title || '');
-  return bits.join(' · ').toLowerCase();
+  var sec = ln.sec || {};
+  bits.push(sec.number || '', sec.title || '', ln.tag || '', ln.mark || '', ln.covers || '',
+    (ln.must || {}).all || '', (ln.makers || {}).all || '');
+  var all = bits.join(' · ');
+  return { plain: all.toLowerCase(), bare: bare(all) };
 }
 function runFind(quietly) {
   var q = String(document.getElementById('q').value || '').trim().toLowerCase();
@@ -1290,7 +1406,8 @@ function runFind(quietly) {
     var d = ROWS[r];
     if (d.kind === 'band') { bands[d.secKey] = r; continue; }
     if (d.kind !== 'item') continue;
-    if (hay(d).indexOf(q) < 0) continue;
+    var look = hay(d);
+    if (look.plain.indexOf(q) < 0 && look.bare.indexOf(bare(q)) < 0) continue;
     HITS.push(r);
     var tr = TBL.tBodies[0].rows[r];
     if (tr) tr.classList.add('hit');
@@ -1341,15 +1458,15 @@ function jump(r) {
 function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST.rows, add: ST.add } }); }
 /* What one firm has to come back on, as a sheet to send them: their items gathered under the spec
    section each falls in, with what that section demands of it alongside. */
-function askList(vendor) {
-  tell('starter-ask-list', { vendor: vendor,
+function askList(vendor, secKey) {
+  tell('starter-ask-list', { vendor: vendor, secKey: secKey || '',
     state: { slots: ST.slots, rows: ST.rows, add: ST.add } });
   say('Building the list for ' + vendor + '\u2026');
 }
 function leave() {
   clearTimeout(_save);
   tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
-    open: ST.open, shut: ST.shut }, at: Date.now(), final: true });
+    open: ST.open, shut: ST.shut, qopen: ST.qopen }, at: Date.now(), final: true });
 }
 
 tell('starter-ready', {});

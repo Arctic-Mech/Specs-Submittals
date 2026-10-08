@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.45';
+const APP_VERSION = 'v8.46';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21354,8 +21354,12 @@ async function starterToExcel(d) {
 const ASK_PDF_INK = [15, 23, 42], ASK_PDF_DIM = [120, 128, 142];
 const ASK_PDF_BAND = [254, 243, 199], ASK_PDF_BANDINK = [120, 53, 15];
 const ASK_PDF_SPEC = [248, 250, 252], ASK_PDF_YOURS = [20, 83, 45];
-function askListRows(vendor, state) {
+function askListRows(vendor, state, secKey) {
   const want = String(vendor || '').trim().toLowerCase();
+  /* One spec section at a time. A firm covering 22 40 00 and 23 21 13 gets two asks, because that
+     is how they come back — one submittal per section — and a list spanning both would have to be
+     pulled apart at the other end. */
+  const onlySec = secKey == null || secKey === '' ? null : String(secKey);
   const rows = (state && state.rows) || {};
   const out = [], at = Object.create(null), order = [];
   const take = (ln, key) => {
@@ -21370,6 +21374,7 @@ function askListRows(vendor, state) {
     if (!mine) return;
     const sec = ln.sec || {};
     const sk = sec.key || '';
+    if (onlySec != null && sk !== onlySec) return;
     if (!at[sk]) { at[sk] = { sec: sec, lines: [] }; order.push(sk); }
     at[sk].lines.push({ ln: ln, rec: r, slot: mine,
       item: (r.item != null && r.item !== '') ? r.item : (ln.tag || ln.mark || ''),
@@ -21500,11 +21505,12 @@ async function exportAskList(d) {
   if (!vendor) { toStarter('starter-say', { text: 'No firm to build a list for', bad: true }); return; }
   if (_stHost && d.state) _stHost.state = Object.assign({}, _stHost.state, d.state);
   try {
-    const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {});
+    const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {}, d.secKey);
     const items = groups.reduce((n, g) => n + g.lines.length, 0);
     if (!items) { toStarter('starter-say', { text: 'Nothing out to ' + vendor + ' to make a list from', bad: true }); return; }
     const doc = await buildAskListPdf(vendor, groups);
-    doc.save(sanitizeAnyName(jobFileBase() + ' \u2014 for ' + vendor, 'vendor list') + '.pdf');
+    const only = groups.length === 1 ? ' ' + String((groups[0].sec || {}).number || '').trim() : '';
+    doc.save(sanitizeAnyName(jobFileBase() + only + ' \u2014 for ' + vendor, 'vendor list') + '.pdf');
     toStarter('starter-say', { text: vendor + ': ' + items + ' item' + (items === 1 ? '' : 's')
       + ' across ' + groups.length + ' section' + (groups.length === 1 ? '' : 's') + ' downloaded' });
   } catch (e) {
