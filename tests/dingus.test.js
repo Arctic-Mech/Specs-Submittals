@@ -584,6 +584,50 @@ const testCode = `
         return h.indexOf('M ') > 0 && h.indexOf('W ') > 0;
       })()); }
 
+  /* The same mark twice. Only what is provably the same thing is folded together; anything else
+     sharing a mark is kept and marked, because two different drains called RD-1 is something you
+     need to see rather than something to quietly throw half of away. */
+  { var L2 = function (sec, tag, name) {
+      return { sec: { key: sec, number: sec }, tag: tag, mark: tag, name: name,
+        must: { short: '', all: '' }, makers: { short: '' } }; };
+    var got = starterOneEach([
+      { band: true, sec: { key: '224000', number: '22 40 00' } },
+      L2('224000', 'RD-1', 'Roof Drain (Large Area)'),
+      L2('224000', 'RD-1', 'Roof Drain (Large Area)'),          // said twice, the same thing
+      L2('224000', 'RD 1', 'Roof drain (large area)'),           // and again, spelt differently
+      L2('224000', 'WCO', 'Wall Cleanout'),
+      L2('224000', 'WCO', 'Wall Cleanout (Acid Resistant)'),     // one mark, two different things
+      L2('224000', 'FCO', 'Floor Cleanout'),
+      { blank: true, sec: { key: '224000' } } ]);
+    var names = got.filter(function (x) { return x.tag; }).map(function (x) { return x.tag + ' ' + x.name; });
+    ck('marks: the same thing said twice is one line, however it was spelt',
+      names.filter(function (n) { return n.indexOf('RD') === 0; }).length === 1);
+    ck('marks: and it says how many times the book said it',
+      got.filter(function (x) { return x.tag === 'RD-1'; })[0].alsoSaid === 3);
+    ck('marks: two different things sharing a mark are both kept',
+      names.filter(function (n) { return n.indexOf('WCO') === 0; }).length === 2);
+    ck('marks: and both are marked, each naming the other',
+      got.filter(function (x) { return x.tag === 'WCO'; }).every(function (x) { return x.dupTag; }) &&
+      got.filter(function (x) { return x.tag === 'WCO'; })[0].dupWith.indexOf('Acid Resistant') > 0 &&
+      got.filter(function (x) { return x.tag === 'WCO'; })[1].dupWith.indexOf('Wall Cleanout') >= 0);
+    ck('marks: a mark used once is left alone',
+      !got.filter(function (x) { return x.tag === 'FCO'; })[0].dupTag &&
+      !got.filter(function (x) { return x.tag === 'RD-1'; })[0].dupTag);
+    ck('marks: headings and the blank lines are never touched',
+      got[0].band === true && got[got.length - 1].blank === true);
+
+    /* The same mark in two sections is two sections' worth of drawings, so it stays. */
+    var two = starterOneEach([
+      L2('224000', 'RD-1', 'Roof Drain'),
+      L2('230500', 'RD-1', 'Roof Drain') ]);
+    ck('marks: the same mark in two sections is kept, and both are marked',
+      two.length === 2 && two[0].dupTag === true && two[1].dupTag === true &&
+      two[0].dupWith.indexOf('230500') === 0 && two[1].dupWith.indexOf('224000') === 0);
+
+    ck('marks: a line with no mark at all is never folded away',
+      starterOneEach([{ sec: { key: 'a' }, tag: '', mark: '2.01', name: 'Joining Materials' },
+                      { sec: { key: 'a' }, tag: '', mark: '2.01', name: 'Joining Materials' }]).length === 2); }
+
   /* Typing a number in the step box. */
   { schedules = [mk('start', [
       L('ts', 'Temp', 0, 10, { main:true }), L('t1', 'One', 1, 20),

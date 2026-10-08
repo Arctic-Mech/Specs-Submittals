@@ -1703,7 +1703,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.38';
+const APP_VERSION = 'v8.39';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20271,6 +20271,7 @@ async function starterLines(secs, mode) {
       for (const p of starterByArticle(items)) {
       if (p.sub) { out.push({ sec: s, sub: true, article: p.article, name: p.name }); continue; }
       out.push({ sec: s, must: must, makers: starterMakers(p),
+        tag: marksLabel(p) || p.tag || '',
         mark: marksLabel(p) || p.tag || p.article || '',
         name: p.name || '',
         /* What the article covers, not the book's own wording — that is a paragraph, and a
@@ -20290,7 +20291,43 @@ async function starterLines(secs, mode) {
       out.push({ sec: s, blank: true, mark: '', name: '', desc: '', qty: '', lead: '',
         must: { short: '', full: '', count: 0 }, makers: { short: '', full: '', count: 0 } });
   });
-  return out;
+  return starterOneEach(out);
+}
+/* ── the same mark twice ──
+   A spec can name RD-1 in two places. Sometimes that is the same drain written out again, and
+   sometimes it is two different drains the spec writer gave one mark to — 22 40 00 does exactly
+   that with WCO, for a wall cleanout and an acid-resistant one.
+
+   So only what is provably the same thing is folded together: the same section, the same mark and
+   the same name. Everything else that shares a mark is left where it is and marked, because a
+   mark used twice for two different things is something you need to see, not something to quietly
+   throw half of away. */
+function starterOneEach(lines) {
+  const key = t => String(t || '').toUpperCase().replace(/[\s.\u2013-]+/g, '');
+  const same = Object.create(null), kept = [];
+  for (const ln of lines) {
+    if (ln.band || ln.sub || ln.blank || !ln.tag) { kept.push(ln); continue; }
+    const k = (ln.sec.key || '') + '|' + key(ln.tag) + '|' + key(ln.name);
+    if (same[k]) { same[k].alsoSaid = (same[k].alsoSaid || 1) + 1; continue; }
+    same[k] = ln;
+    kept.push(ln);
+  }
+  const where = Object.create(null);
+  for (const ln of kept) {
+    if (ln.band || ln.sub || ln.blank || !ln.tag) continue;
+    const t = key(ln.tag);
+    (where[t] = where[t] || []).push(ln);
+  }
+  for (const t in where) {
+    const group = where[t];
+    if (group.length < 2) continue;
+    for (const ln of group) {
+      ln.dupTag = true;
+      ln.dupWith = group.filter(x => x !== ln)
+        .map(x => (x.sec.number || x.sec.key || '') + '  ' + (x.name || '')).join(';  ');
+    }
+  }
+  return kept;
 }
 async function buildStarterXlsx(lines, opts) {
   const XJ = await ensureExcelJS();
@@ -20324,8 +20361,11 @@ async function buildStarterXlsx(lines, opts) {
   ws.getRow(1).height = 26;
   span(2, [job.number ? 'Job ' + job.number : '', opts.sourceLabel,
     opts.items + ' item' + (opts.items === 1 ? '' : 's') + ' across ' + opts.sections + ' section' + (opts.sections === 1 ? '' : 's'),
-    N + ' quotes a line', 'Started ' + shortDate(today())].filter(Boolean).join('    ·    '),
-    { font: { size: 10, color: { argb: SCH_INK.dim } } });
+    N + ' quotes a line',
+    lines.filter(x => x.dupTag).length
+      ? lines.filter(x => x.dupTag).length + ' lines share a mark — shown in red' : '',
+    'Started ' + shortDate(today())].filter(Boolean).join('    ·    '),
+    { font: { size: 10, color: { argb: lines.some(x => x.dupTag) ? 'FFB91C1C' : SCH_INK.dim } } });
   span(3, 'Name the vendor in the slot you put their number in — slot 1 does not have to be the same '
     + 'firm all the way down. The 1 and 2 buttons at the top left shut and open what the spec says '
     + 'under every line. Pick who you are going with at the end of the line and it lights up and '
@@ -20419,6 +20459,8 @@ async function buildStarterXlsx(lines, opts) {
     }
     row.getCell(1).value = ln.mark || '';
     row.getCell(2).value = starterClip(sayOf(ln), perB, tall);
+    /* The same mark on two different things. Not folded together, because they may well be two
+       different things \u2014 said plainly instead, so somebody decides which. */
     row.getCell(3).value = ln.qty === '' ? '' : ln.qty;
     if (!ln.blank) row.getCell(4).value = ln.sec.number || ln.sec.key;
     const who = ln.makers || { short: '' };
@@ -20458,6 +20500,10 @@ async function buildStarterXlsx(lines, opts) {
       const cell = row.getCell(c);
       cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
       cell.font = Object.assign({ size: 10, color: { argb: SCH_INK.title } }, cell.font || {});
+      if (c === 1 && ln.dupTag) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+        cell.font = { size: 10, bold: true, color: { argb: 'FFB91C1C' } };
+      }
       if (c === 2 || c === 5 || c === 6) cell.alignment = { vertical: 'middle', wrapText: true };
       else if (c === 1 || c === 4) cell.alignment = { vertical: 'middle', horizontal: 'left' };
       else cell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -20471,6 +20517,7 @@ async function buildStarterXlsx(lines, opts) {
        1 and 2 at the top left of the sheet shut them all or open them all; the + beside a line
        opens just that one. Nothing is behind a hover, and nothing has to be guessed at. */
     const says = [];
+    if (ln.dupTag) says.push(['Same mark as', ln.dupWith]);
     if (ln.underArticle) says.push(['Part of', ln.underArticle]);
     if (ln.covers) says.push(['Covers', ln.covers]);
     if (who.all && who.count > 1) says.push(['Will take', who.all]);
