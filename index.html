@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.48';
+const APP_VERSION = 'v8.49';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2627,7 +2627,7 @@ function parenBrands(text) {
    always follows one. Kept out of the list and remembered as the note it is. */
 /* Permission to put somebody else forward, in the several ways a spec words it: "Or approved
    equal.", "Approved equal", "Or equal", "Other manufacturers", "Comparable product". None of
-   them is a firm to ring, and one read as a brand ends up in a vendor list. */
+   them is a vendor to ring, and one read as a brand ends up in a vendor list. */
 const isSubstitution = b => /^(?:or\s+)?(?:other\s+manufacturers?|approved\s+equals?|equals?|comparable(?:\s+products?)?|substitutions?)\b/i
   .test(String(b == null ? '' : b).trim());
 /* An article called MANUFACTURERS is sometimes just the list: "A. Carnes. B. Titus. C. Trane."
@@ -2739,7 +2739,7 @@ function extractProducts(lines) {
     const keep = [];
     const addMaker = (name, forWhat) => {
       if (!name) return;
-      /* "Or approved equal" is permission, not a firm. It belongs on the article as the note that
+      /* "Or approved equal" is permission, not a vendor. It belongs on the article as the note that
          somebody else may be put forward, not in the list of who to ring. */
       if (isSubstitution(name)) { p.anyOther = true; return; }
       if (p.makers.some(x => normPhrase(x.name) === normPhrase(name))) return;
@@ -2758,7 +2758,7 @@ function extractProducts(lines) {
       }
       /* The shape a section takes when it describes several products in one article: the lettered
          paragraph names the product — "D. Two-Piece, Full-Port, Bronze Ball Valves" — and who may
-         supply it sits under that as "1. Manufacturers:" with the firms lettered beneath again.
+         supply it sits under that as "1. Manufacturers:" with the vendors lettered beneath again.
          Reading only the top level missed every one of them, which on a real gas-piping section
          was five articles' worth of acceptable manufacturers. */
       const subs = n.sub || [];
@@ -3136,7 +3136,7 @@ const STATUS_DIR = {
    book in Specs is always the one in force. */
 const SPEC_OLD_DIR = 'Submittals/Specs/Superseded';
 /* What vendors send in while a line is still being priced, kept well away from the submittal
-   process. Two or three firms quote a piece of equipment and we go with one of them; the other
+   process. Two or three vendors quote a piece of equipment and we go with one of them; the other
    proposals must never be somewhere a person looking for the submittal could pick one up by
    mistake. So they live in a folder of their own, named to sort to the top of Submittals and to
    read as what it is. Nothing files out of here — going with a vendor copies that one proposal
@@ -20214,7 +20214,7 @@ const STARTER_FIXED = [
   { h: 'Spec section', w: 12 }, { h: 'Who the spec will take', w: 36 }, { h: 'Must meet', w: 36 }
 ];
 /* Where a quote stands, and so what has to happen to it next. Asked for in the slot it belongs to,
-   because one line can be out to three firms at once and each of them is at a different stage. */
+   because one line can be out to three vendors at once and each of them is at a different stage. */
 const STARTER_ASK = 'Request from vendor';
 const STARTER_GOT = 'Received from vendor';
 const STARTER_WIN = 'Going with this one';
@@ -20278,7 +20278,7 @@ function starterMakers(p) {
   const full = order.map(w => (w ? w + ':' : 'Any of:') + '\n' +
     by[w].map(n => '   \u00B7 ' + n).join('\n')).join('\n\n') +
     (p.anyOther ? '\n\nor an approved equal.' : '');
-  /* Thirteen firms will not read across a cell, and a row grown tall enough to hold them makes
+  /* Thirteen vendors will not read across a cell, and a row grown tall enough to hold them makes
      every other row on the sheet as tall. The first few here, all of them on the cell, grouped by
      which product in the article each is named against. */
   const SHOW = 3;
@@ -20855,7 +20855,7 @@ function starterFinish(b, lines, opts) {
 
   /* ── the vendors tab ──
      Everything you have said yes to, under whoever you said it to. It reads itself off the quote
-     sheet, so picking a different slot moves the line from one firm to the other on its own. */
+     sheet, so picking a different slot moves the line from one vendor to the other on its own. */
   const v = wb.addWorksheet('Vendors', {
     views: [{ state: 'frozen', ySplit: 3 }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
@@ -20868,7 +20868,7 @@ function starterFinish(b, lines, opts) {
   v.getCell(1, 1).font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
   v.getRow(1).height = 24;
   v.mergeCells(2, 1, 2, VH.length);
-  v.getCell(2, 1).value = 'Filter the Vendor column to one firm and you have their award list. '
+  v.getCell(2, 1).value = 'Filter the Vendor column to one vendor and you have their award list. '
     + 'It follows the Going with boxes on the quote sheet — change one there and it changes here.';
   v.getCell(2, 1).font = { size: 10, italic: true, color: { argb: SCH_INK.dim } };
   VH.forEach((h, i) => {
@@ -20910,7 +20910,7 @@ function starterFinish(b, lines, opts) {
     put(6, pickOf(2));
     put(7, pickOf(4)).alignment = { vertical: 'top' };
     row.getCell(1).alignment = { horizontal: 'left' };
-    /* Two columns nobody sees, which turn the award list into a list of firms: the first time each
+    /* Two columns nobody sees, which turn the award list into a list of vendors: the first time each
        name appears, and how many distinct names have appeared by that line. */
     const h = row.getCell(8), k = row.getCell(9);
     h.value = { formula: 'IF($A' + (4 + n) + '="",0,IF(COUNTIF($A$4:$A' + (4 + n) + ',$A' + (4 + n) + ')=1,1,0))' };
@@ -20919,11 +20919,11 @@ function starterFinish(b, lines, opts) {
   v.getColumn(8).hidden = true; v.getColumn(9).hidden = true;
   const vLast = 3 + itemRows.length;
   if (itemRows.length) v.autoFilter = { from: { row: 3, column: 1 }, to: { row: vLast, column: VH.length } };
-  /* What each firm comes to, worked out off the same list rather than guessed at beforehand — you
+  /* What each vendor comes to, worked out off the same list rather than guessed at beforehand — you
      may well go with somebody who was never on the job before today. */
   const sTop = vLast + 3;
   v.mergeCells(sTop, 1, sTop, 3);
-  v.getCell(sTop, 1).value = 'WHAT EACH FIRM COMES TO';
+  v.getCell(sTop, 1).value = 'WHAT EACH VENDOR COMES TO';
   v.getCell(sTop, 1).font = { bold: true, size: 11, color: { argb: SCH_INK.title } };
   ['Vendor', 'Items', 'Total'].forEach((h, i) => {
     const c = v.getCell(sTop + 1, i + 1);
@@ -21398,7 +21398,7 @@ async function starterToExcel(d) {
   try { await exportStarterXlsx(_stHost ? _stHost.state : null); toStarter('starter-say', { text: 'Excel file downloaded' }); }
   catch (e) { toStarter('starter-say', { text: 'Could not build it: ' + (e.message || e), bad: true }); }
 }
-/* ── what one firm has to come back on ──
+/* ── what one vendor has to come back on ──
    Ferguson have three things in 22 40 00 and two in 23 21 13, and what goes out to them is one
    list covering both, not five separate asks. Their items gathered under the section each falls
    in, with what that section demands of it beside them and the book's own wording folded under —
@@ -21409,7 +21409,7 @@ const ASK_PDF_BAND = [254, 243, 199], ASK_PDF_BANDINK = [120, 53, 15];
 const ASK_PDF_SPEC = [248, 250, 252], ASK_PDF_YOURS = [20, 83, 45];
 function askListRows(vendor, state, secKey) {
   const want = String(vendor || '').trim().toLowerCase();
-  /* One spec section at a time. A firm covering 22 40 00 and 23 21 13 gets two asks, because that
+  /* One spec section at a time. A vendor covering 22 40 00 and 23 21 13 gets two asks, because that
      is how they come back — one submittal per section — and a list spanning both would have to be
      pulled apart at the other end. */
   const onlySec = secKey == null || secKey === '' ? null : String(secKey);
@@ -21621,7 +21621,7 @@ function askListFeet(doc, vendor, listedTo) {
 }
 async function exportAskList(d) {
   const vendor = String(d.vendor || '').trim();
-  if (!vendor) { toStarter('starter-say', { text: 'No firm to build a list for', bad: true }); return; }
+  if (!vendor) { toStarter('starter-say', { text: 'No vendor to build a list for', bad: true }); return; }
   if (_stHost && d.state) _stHost.state = Object.assign({}, _stHost.state, d.state);
   try {
     const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {}, d.secKey);

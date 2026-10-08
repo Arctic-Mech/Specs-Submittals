@@ -285,7 +285,7 @@ var FROZEN = 3;                  // the star, the item and what it is stay put
 
 var COLS = [];                   // the flat column list, built once the slot count is known
 /* A quote nobody is looking at takes one narrow column saying so, not six. Quote 1 is open to
-   begin with and the rest are a click away, because most lines only ever go to one firm and six
+   begin with and the rest are a click away, because most lines only ever go to one vendor and six
    empty columns apiece is a sheet you have to scroll past rather than read. */
 var SHUT_COL = { k: '_shut', h: '', w: 30, shut: 1 };
 function quoteOpen(i) { return i === 0 || !!(ST && ST.qopen && ST.qopen[i]); }
@@ -452,6 +452,21 @@ function cellText(d, col) {
   }
   return '';
 }
+/* What gets typed into the sheet comes out looking like the rest of it: every word starts with a
+   capital. A word that already carries a capital is left exactly as it was typed, so HB-1, FCO,
+   NIBCO INC. and McWane all stand. It happens when you finish the cell, not as you type, so it
+   never fights you mid-word. */
+function capWords(t) {
+  return String(t == null ? '' : t).replace(
+    /[A-Za-z\u00C0-\u024F][A-Za-z0-9\u00C0-\u024F'\u2019.\u2013-]*/g,
+    function (w) { return /[A-Z]/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1); });
+}
+/* The cells it applies to: the ones holding words. Not a price, not a length of time, and not the
+   boxes that are picked from a list. */
+var CAPS = { item: 1, name: 1, note: 1, v: 1, n: 1 };
+function typedIn(col, v) {
+  return (col && col.c && CAPS[col.c.k]) ? capWords(v) : v;
+}
 function pick2(a, b, c) {
   if (a != null && a !== '') return a;
   if (b != null && b !== '') return b;
@@ -505,7 +520,7 @@ function cash(n) {
   var v = Number(n);
   return isNaN(v) || n === '' || n == null ? '' : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
-/* Everything we have said yes to, under whoever we said it to, and what each firm comes to. */
+/* Everything we have said yes to, under whoever we said it to, and what each vendor comes to. */
 function vendorRows() {
   var out = [];
   var all = priced();
@@ -533,7 +548,7 @@ function progressRows() {
     for (var k = 0; k < r.s.length; k++) {
       var sl = r.s[k];
       if (!sl || (sl.st !== ASK && sl.st !== GOT)) continue;
-      /* A slot whose firm was taken out again is not something anybody is waiting on. It stays on
+      /* A slot whose vendor was taken out again is not something anybody is waiting on. It stays on
          the quote sheet where it was typed; it does not stand in this list saying nobody. */
       if (!String(sl.v || '').trim()) continue;
       out.push({ key: p.key, slot: k, todo: sl.st, vendor: String(sl.v).trim(), item: p.item,
@@ -569,7 +584,7 @@ function drawVendors() {
   var head = [['Vendor', 180, 1], ['Item', 100, 0], ['What it is', 300, 1], ['Spec section', 110, 0],
     ['Price', 100, 0], ['Lead (wks)', 90, 0], ['Quote', 170, 1], ['Notes', 240, 1]];
   var h = '<div class="pad"><h2>Who we are going with</h2>'
-    + '<p>Everything picked on the quote sheet, under the firm it went to. Change who you are going '
+    + '<p>Everything picked on the quote sheet, under the vendor it went to. Change who you are going '
     + 'with there and this changes with it.</p>'
     + listHtml(head, rows, function (x, c) {
       if (c === 0) return '<b>' + esc(x.vendor) + '</b>';
@@ -581,7 +596,7 @@ function drawVendors() {
       if (c === 6) return x.file ? '<a href="#" data-see2="' + esc(x.key) + '">' + esc(x.file.name || x.file.file) + '</a>' : '';
       return esc(x.note || '');
     }, 'Nothing picked yet. Say you are going with somebody on the quote sheet and it lands here.');
-  /* What each firm comes to, off the same list — you may well go with somebody who was never on
+  /* What each vendor comes to, off the same list — you may well go with somebody who was never on
      the job before today. */
   if (rows.length) {
     var by = {}, order = [];
@@ -592,7 +607,7 @@ function drawVendors() {
       var p = Number(rows[i].price);
       if (!isNaN(p)) by[v].sum += p;
     }
-    h += '<h2 class="later">What each firm comes to</h2><table class="list sum"><thead><tr>'
+    h += '<h2 class="later">What each vendor comes to</h2><table class="list sum"><thead><tr>'
       + '<th class="left" style="width:260px">Vendor</th><th style="width:90px">Items</th>'
       + '<th style="width:140px">Total</th></tr></thead><tbody>';
     var all = 0;
@@ -608,10 +623,11 @@ function drawVendors() {
   document.getElementById('tabSay').textContent = rows.length
     ? rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' picked' : '';
 }
-/* Gathered the way you would actually work it. Which way round is yours to pick: a firm at a
+/* Gathered the way you would actually work it. Which way round is yours to pick: a vendor at a
    time, with the spec sections their items fall in under them — or a section at a time, with the
-   firms quoting it under that. Whichever is on, the sheet says so in as many words at the top. */
-var PROG = 'vendor';
+   vendors quoting it under that. Whichever is on, the sheet says so in as many words at the top. */
+/* The spec section is the thing you work a job by, so that is the way round it opens. */
+var PROG = 'section';
 function goProg(which) { PROG = which; draw(); }
 function gather(rows, outerBy, innerBy) {
   var at = {}, order = [];
@@ -647,10 +663,10 @@ function drawProgress() {
   var waiting = rows.filter(function (x) { return x.todo === ASK; }).length;
   var h = '<div class="pad"><h2>What is in hand</h2>'
     + '<div class="howbar"><span class="how">' + (firstFirm
-        ? 'Grouped by <b>firm</b>, and under each of them by <b>spec section</b>'
-        : 'Grouped by <b>spec section</b>, and under each of them by <b>firm</b>')
+        ? 'Grouped by <b>vendor</b>, and under each of them by <b>spec section</b>'
+        : 'Grouped by <b>spec section</b>, and under each of them by <b>vendor</b>')
     + '</span><span class="gap"></span><span class="how">Group by</span>'
-    + '<button class="btn' + (firstFirm ? ' on' : '') + '" onclick="goProg(\'vendor\')">Firm</button>'
+    + '<button class="btn' + (firstFirm ? ' on' : '') + '" onclick="goProg(\'vendor\')">Vendor</button>'
     + '<button class="btn' + (firstFirm ? '' : ' on') + '" onclick="goProg(\'section\')">Spec section</button>'
     + '</div>'
     + '<p>Every quote still to be asked for, and every one back and waiting on somebody to decide. '
@@ -662,7 +678,7 @@ function drawProgress() {
     var g = groups[f];
     h += '<div class="firm"><div class="firmhead"><b>' + esc(g.label) + '</b>'
       + '<span class="firmsay">' + g.n + ' item' + (g.n === 1 ? '' : 's') + ' across '
-      + g.order.length + (firstFirm ? ' section' : ' firm') + (g.order.length === 1 ? '' : 's')
+      + g.order.length + (firstFirm ? ' section' : ' vendor') + (g.order.length === 1 ? '' : 's')
       + (g.ask ? '  \u00b7  ' + g.ask + ' still to ask for' : '')
       + (g.star ? '  \u00b7  \u2605 ' + g.star : '') + '</span></div>';
     for (var k = 0; k < g.order.length; k++) {
@@ -700,7 +716,7 @@ function drawProgress() {
   }
   document.getElementById('wrap').innerHTML = h + '</div>';
   document.getElementById('tabSay').textContent = rows.length
-    ? groups.length + (firstFirm ? ' firm' : ' section') + (groups.length === 1 ? '' : 's')
+    ? groups.length + (firstFirm ? ' vendor' : ' section') + (groups.length === 1 ? '' : 's')
       + '  \u00b7  ' + waiting + ' to ask for, ' + (rows.length - waiting) + ' back' : '';
 }
 function draw() {
@@ -949,6 +965,7 @@ function stop(save) {
 function write(r, c, v) {
   var d = ROWS[r], col = COLS[c];
   if (!d || d.kind !== 'item') return;
+  v = typedIn(col, v);
   if (cellText(d, col) === String(v)) return;
   mark();
   var rec = row(d.key);
@@ -1123,6 +1140,7 @@ function wipe() {
 /* The same write, without a fresh undo mark — a range is one go, not one per cell. */
 function quiet(r, c, v) {
   var d = ROWS[r], col = COLS[c], rec = row(d.key);
+  v = typedIn(col, v);
   if (col.fix != null) { if (col.c.k === 'qty') rec.qty = v === '' ? '' : Number(v) || v; else rec[col.c.k] = v;
     if (d.own) d.own[col.c.k] = v; return; }
   if (col.slot == null) return;
@@ -1461,7 +1479,7 @@ function jump(r) {
 }
 
 function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST.rows, add: ST.add } }); }
-/* What one firm has to come back on, as a sheet to send them: their items gathered under the spec
+/* What one vendor has to come back on, as a sheet to send them: their items gathered under the spec
    section each falls in, with what that section demands of it alongside. */
 function askList(vendor, secKey) {
   tell('starter-ask-list', { vendor: vendor, secKey: secKey || '',
