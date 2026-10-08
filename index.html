@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.46';
+const APP_VERSION = 'v8.47';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -18419,6 +18419,10 @@ function chooseSpecModal(specs) {
               n} section${n === 1 ? '' : 's'} in the register${
               sp.supersededAt ? ' · replaced ' + esc(fmtDate(sp.supersededAt)) : ''}</span>
           </button>
+          ${sp.url ? '' : `<button class="btn sm" title="Read this same book again — for when the
+            reading missed something, or the app has learnt to read it better. Nothing you have
+            done is touched: statuses, uploads, products, releases and the log all stand."
+            onclick="closePdf();rereadSpec('${sp.id}')">Re-read</button>`}
           <button class="btn sm ghost" title="Remove this spec file" onclick="closePdf();removeSpecPrompt('${sp.id}')">✕</button>
         </div>`;
       }).join('')}
@@ -18515,7 +18519,31 @@ function promptImportSpec() {
   inp.click();
 }
 
+/* Reading the same book again, for when the reading missed something or the app has learnt to
+   read it better. It goes through exactly the same review as an upload — which sections came,
+   went or were renumbered, and what to do about each — so nothing changes without being shown.
+   What it does not do is file a second copy of the book or mark the one on the job superseded:
+   the book has not changed, only our reading of it. */
+let rereadOf = null;
+async function rereadSpec(specId) {
+  if (!job) return;
+  const sp = specId ? specById(specId) : (specsOf(job)[0] || null);
+  if (!sp) { toast('No spec book is stored on this job', true); return; }
+  if (sp.url) { toast('That spec is a link rather than a file we hold — upload the PDF to read it again', true); return; }
+  if (!jobFolder && !(await ensureJobFolder())) {
+    toast('Load this job’s ShareFile folder to read the spec again', true); return; }
+  stickyToast('Fetching ' + sp.name + '…');
+  let blob = null;
+  try { blob = await readDocBlob(sp); } catch (e) {}
+  if (!blob) { toast(await docReadError(sp), true); return; }
+  toast(' ');
+  rereadOf = sp;
+  importQueue = []; importTotal = 1;
+  importMode = null;
+  await importSpec(new File([blob], sp.name, { type: 'application/pdf' }));
+}
 function nextImport() {
+  rereadOf = null;
   importMode = null;                  // the next file is a fresh question, not this one's answer
   const file = importQueue.shift();
   if (file) importSpec(file);
@@ -18523,7 +18551,7 @@ function nextImport() {
 }
 
 function cancelImport() {
-  importQueue = []; importTotal = 0; pendingImport = null; importMode = null;
+  importQueue = []; importTotal = 0; pendingImport = null; importMode = null; rereadOf = null;
   closePdf();
 }
 
@@ -19284,24 +19312,31 @@ async function confirmImport() {
     <div class="progress"><div id="upBar"></div></div></div>`);
 
   try {
-    const specId = uid('spec');
+    /* Reading the same book again points at the book already on the job. Nothing is filed and
+       nothing is superseded — there is only one book and it has not changed. */
+    const again = rereadOf && specsOf(job).some(x => x.id === rereadOf.id) ? rereadOf : null;
+    const specId = again ? again.id : uid('spec');
     const step = $('upStep'), bar = $('upBar');
     if (bar) bar.style.width = '60%';
-    const { dir, file: onDisk } = await putFile(file, 'spec');   // files/Specs/<name>
+    if (!again) {
+      const put = await putFile(file, 'spec');                   // files/Specs/<name>
+      var dir = put.dir, onDisk = put.file;
+    }
     if (bar) bar.style.width = '100%';
-    if (step) step.textContent = 'Saved. Filing the sections…';
+    if (step) step.textContent = again ? 'Filing the sections…' : 'Saved. Filing the sections…';
     job.specs = job.specs || [];
     /* The book being replaced is kept — an approved submittal was made against it and the page it
        was made against still matters — but it moves to Specs/Superseded so the one in Specs is
        always the one in force. Its own name is left alone; the flag is what marks it. */
-    const outgoing = revising ? specsOf(job).filter(sp => !sp.superseded && !isLink(sp)) : [];
+    const outgoing = (revising && !again) ? specsOf(job).filter(sp => !sp.superseded && !isLink(sp)) : [];
     for (const sp of outgoing) {
       sp.superseded = true; sp.supersededAt = Date.now(); sp.supersededBy = specId;
       if (meName()) sp.supersededByWho = meName();
     }
     // the flag is all that is needed: specWantDir now sends a superseded book to Specs/Superseded,
     // and the organise that runs on every save moves the file there with the usual rollback
-    job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
+    if (again) { again.pages = pageCount; again.reread = Date.now(); if (meName()) again.rereadBy = meName(); }
+    else job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
       dir, file: onDisk, added: Date.now(), by: meName() || '',
       replaces: outgoing.map(sp => sp.id) });
 
@@ -19436,8 +19471,8 @@ async function confirmImport() {
     if (retired) bits.push(`${retired} marked not in this book`);
     if (dropped) bits.push(`${dropped} removed`);
     noteFolderChanged();
-    toast(bits.length ? bits.join(' · ') : `${file.name} added`);
-    nextImport();                        // review the next queued file, or close
+    toast(bits.length ? bits.join(' · ') : (again ? `${file.name} read again` : `${file.name} added`));
+    nextImport();                        // review the next queued file, or close (and clears reread)
   } catch (e) {
     console.error(e);
     importModal(`<div class="modal-head"><h3>Could not save</h3></div>
@@ -21397,11 +21432,62 @@ function askListRows(vendor, state, secKey) {
   out.sort((a, b) => String((a.sec || {}).number || '') < String((b.sec || {}).number || '') ? -1 : 1);
   return out;
 }
+/* The pages of the spec book this section is on, put on the end of what we send. A read of a spec
+   is a read — it can miss things, and nobody at the other end should have to take our word for
+   what the book says when the book itself can travel with the ask. Where the pages cannot be had,
+   the page numbers go on instead, which is the next best thing. */
+async function specPagesOf(secKey) {
+  const s = findSection(secKey);
+  if (!s || s.startPage == null) return { pages: null, why: 'no page numbers were recorded' };
+  const sp = s.specId ? specById(s.specId) : null;
+  const from = s.startPage, to = s.endPage == null ? s.startPage : s.endPage;
+  const where = { from: from, to: to, name: (sp && sp.name) || 'the spec book' };
+  if (!sp) return Object.assign({ pages: null, why: 'the file it was read from is no longer on the job' }, where);
+  if (sp.url) return Object.assign({ pages: null, why: 'it is a link, not a file we hold' }, where);
+  if (!jobFolder) return Object.assign({ pages: null, why: 'the ShareFile folder is not loaded on this computer' }, where);
+  try {
+    const blob = await readDocBlob(sp);
+    if (!blob) return Object.assign({ pages: null, why: 'the file could not be read' }, where);
+    return Object.assign({ pages: new Uint8Array(await blob.arrayBuffer()) }, where);
+  } catch (e) { return Object.assign({ pages: null, why: e.message || String(e) }, where); }
+}
+/* Those pages, drawn on to the end of the document a page at a time. */
+async function addSpecPages(doc, got, label) {
+  if (!got || !got.pages) return 0;
+  const lib = await loadPdfJs();
+  const src = await lib.getDocument({ data: got.pages }).promise;
+  const first = Math.max(1, got.from), last = Math.min(src.numPages, got.to);
+  let n = 0;
+  for (let i = first; i <= last && i - first < 60; i++) {
+    const page = await src.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    /* Enough to read, not so much that the file is too big to send. */
+    const scale = Math.min(2.2, 1500 / base.width);
+    const vp = page.getViewport({ scale: scale });
+    const cv = document.createElement('canvas');
+    cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+    await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    const img = cv.toDataURL('image/jpeg', 0.82);
+    const land = vp.width > vp.height;
+    doc.addPage(land ? [792, 612] : [612, 792], land ? 'landscape' : 'portrait');
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+    const pad = 26, head = 20;
+    const room = Math.min((pw - pad * 2) / vp.width, (ph - pad * 2 - head) / vp.height);
+    const w = vp.width * room, h = vp.height * room;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+    doc.text(label + '  \u00b7  ' + got.name + '  \u00b7  page ' + i, pad, 20);
+    doc.addImage(img, 'JPEG', (pw - w) / 2, head + 6, w, h);
+    page.cleanup();
+    n++;
+  }
+  try { src.destroy(); } catch (e) {}
+  return n;
+}
 /* As a PDF, because this is a thing you send somebody rather than a thing you work in. Their
    items under each spec section, what that section asks to be submitted on said once underneath
    it, the book's own wording under the line it belongs to, and room on the right for them to write
    back on paper. */
-async function buildAskListPdf(vendor, groups) {
+async function buildAskListPdf(vendor, groups, said) {
   const jspdf = await ensureJsPDF();
   const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 34;
@@ -21447,9 +21533,9 @@ async function buildAskListPdf(vendor, groups) {
     headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold',
       fontSize: 7.4, valign: 'middle' } };
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
-  doc.text('Under each section is what that section of the spec asks to be submitted on. The book\u2019s '
-    + 'own wording is under the line it belongs to. The three columns on the right are yours to '
-    + 'fill in.', M, 74, { maxWidth: avail });
+  doc.text('Under each section is what that section of the spec asks to be submitted on. The spec\u2019s '
+    + 'own wording is under the line it belongs to, and the three columns on the right are yours to '
+    + 'fill in. ' + (said || ''), M, 74, { maxWidth: avail });
   let y = 90;
   for (const g of groups) {
     const sec = g.sec || {};
@@ -21490,13 +21576,28 @@ async function buildAskListPdf(vendor, groups) {
       columnStyles: cols }));
     y = doc.lastAutoTable.finalY + 16;
   }
+  /* The feet are put on last of all, once the spec pages have gone on the end — otherwise every
+     page of it says it is page 1 of 1. */
+  doc.__askListed = y;
+  return doc;
+}
+function askListFeet(doc, vendor, listedTo) {
   const pages = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+    const M = 34;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 155, 165);
     doc.text('Arctic Sheet Metal  \u00b7  ' + ((job && job.name) || '') + '  \u00b7  for ' + vendor,
-      M, pageH - 14);
-    doc.text('Page ' + i + ' of ' + pages, pageW - M, pageH - 14, { align: 'right' });
+      M, ph - 14);
+    doc.text('Page ' + i + ' of ' + pages, pw - M, ph - 14, { align: 'right' });
+    /* Said plainly, on every page of what we wrote: this was read off the book by a machine. The
+       pages of the book itself, on the end, need no such warning. */
+    if (i <= listedTo) {
+      doc.setFontSize(6.4); doc.setTextColor(170, 174, 182);
+      doc.text('What the spec asks, above, was read out of the spec book automatically and may be '
+        + 'missing or mistaking something. The spec itself governs.', M, ph - 25);
+    }
   }
   return doc;
 }
@@ -21508,7 +21609,26 @@ async function exportAskList(d) {
     const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {}, d.secKey);
     const items = groups.reduce((n, g) => n + g.lines.length, 0);
     if (!items) { toStarter('starter-say', { text: 'Nothing out to ' + vendor + ' to make a list from', bad: true }); return; }
-    const doc = await buildAskListPdf(vendor, groups);
+    /* The pages of the book this section is on, fetched before the document is drawn so the line
+       at the top can say whether they are on the end of it or only named. */
+    const books = [];
+    for (const g of groups) {
+      const got = await specPagesOf((g.sec || {}).key || '');
+      books.push({ g: g, got: got });
+    }
+    const have = books.filter(b => b.got && b.got.pages);
+    const named = books.filter(b => b.got && !b.got.pages && b.got.from != null);
+    const said = have.length
+      ? 'The pages of the spec this covers are on the end of this document.'
+      : named.length
+        ? 'The spec pages are ' + named.map(b => (b.got.name || 'the spec') + ' p. ' + b.got.from
+            + (b.got.to && b.got.to !== b.got.from ? '\u2013' + b.got.to : '')).join('; ') + '.'
+        : '';
+    const doc = await buildAskListPdf(vendor, groups, said);
+    const listedTo = doc.internal.getNumberOfPages();
+    for (const b of have)
+      await addSpecPages(doc, b.got, String((b.g.sec || {}).number || '').trim());
+    askListFeet(doc, vendor, listedTo);
     const only = groups.length === 1 ? ' ' + String((groups[0].sec || {}).number || '').trim() : '';
     doc.save(sanitizeAnyName(jobFileBase() + only + ' \u2014 for ' + vendor, 'vendor list') + '.pdf');
     toStarter('starter-say', { text: vendor + ': ' + items + ' item' + (items === 1 ? '' : 's')
