@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.32';
+const APP_VERSION = 'v8.33';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2048,7 +2048,27 @@ function cleanTitle(t) {
 }
 
 /* --- structural line tests --- */
-const PART_RE = /^PART\s+\d/i;
+/* A part heading is the whole of its line — "PART 2", "PART 2 - PRODUCTS". A sentence that wraps
+   onto a line beginning 'Part 3 "Piping Applications" Article.' is a cross-reference to another
+   part, and specs are full of them. Reading one as a heading made the parser believe Part 3 had
+   begun, and every product article after it was thrown away: on one real section that was six of
+   the eight, with all of their acceptable manufacturers. */
+function partHeading(line) {
+  const m = /^PART\s+(\d)\b[\s.:\u2013\u2014-]*(.*)$/i.exec(String(line == null ? '' : line).trim());
+  if (!m) return 0;
+  const tail = m[2].trim();
+  if (!tail) return Number(m[1]);
+  /* A heading shouts. Whatever else it carries — "PART 2 - PRODUCTS (REFER TO EQUIPMENT SCHEDULE
+     SHEETS AND DRAWINGS)" is a real one — there is no lower case in it. A book that sets its
+     headings in mixed case still reads like a heading: a few words, nothing quoted, no full stop.
+     A sentence that merely wraps onto a line beginning "Part 3" has both. */
+  if (!/[a-z]/.test(tail)) return Number(m[1]);
+  if (/["'\u201C\u201D\u2018\u2019,;]/.test(tail)) return 0;
+  if (/\.\s*$/.test(tail)) return 0;
+  if (tail.split(/\s+/).length > 5) return 0;
+  return Number(m[1]);
+}
+const PART_RE = { test: l => partHeading(l) > 0 };
 const ART_RE  = /^\d{1,2}\.\d{1,2}\b/;
 const ITEM_RE = /^[A-Z]\.\s+/;
 const SUB_RE  = /^\d{1,2}\.\s+/;
@@ -2594,7 +2614,11 @@ function parenBrands(text) {
 }
 /* "Other Manufacturers: Submit substitution request" is not a brand, it is the sentence that
    always follows one. Kept out of the list and remembered as the note it is. */
-const isSubstitution = b => /^(other manufacturers?|or equal|approved equal|substitutions?)\b/i.test(String(b || ''));
+/* Permission to put somebody else forward, in the several ways a spec words it: "Or approved
+   equal.", "Approved equal", "Or equal", "Other manufacturers", "Comparable product". None of
+   them is a firm to ring, and one read as a brand ends up in a vendor list. */
+const isSubstitution = b => /^(?:or\s+)?(?:other\s+manufacturers?|approved\s+equals?|equals?|comparable(?:\s+products?)?|substitutions?)\b/i
+  .test(String(b == null ? '' : b).trim());
 /* An article called MANUFACTURERS is sometimes just the list: "A. Carnes. B. Titus. C. Trane."
    and those apply to everything the section covers. But the same article can also hold ordinary
    sentences — "Use only one manufacturer." — and reading that as a brand would put it in every
@@ -2667,8 +2691,8 @@ function extractProducts(lines) {
   for (const raw of lines) {
     const line = String(raw == null ? '' : raw).replace(ZWSP_RE, '').trim();
     if (!line) continue;
-    const pm = line.match(/^PART\s+(\d)/i);
-    if (pm) { part = parseInt(pm[1], 10); prod = null; item = null; sub = null; continue; }
+    const pm = partHeading(line);
+    if (pm) { part = pm; prod = null; item = null; sub = null; continue; }
     if (END_RE.test(line)) break;
     const am = PROD_ART_RE.exec(line);
     if (am && part !== 1 && part !== 3) {
@@ -2693,7 +2717,7 @@ function extractProducts(lines) {
        are the acceptable manufacturers for every product the section describes. */
     if (/^manufacturers?\b/i.test(String(p.name || '').trim())) {
       const flat = p.notes.filter(n => !(n.sub || []).length);
-      const names = flat.filter(n => !isSubstitution(n.text) && looksLikeBrand(n.text));
+      const names = flat.filter(n => !isSubstitution(cleanMaker(n.text)) && looksLikeBrand(n.text));
       // two names is a list; the article having said MANUFACTURERS is the guard that matters
       if (names.length >= 2 && names.length >= flat.length - 1) {
         p.sectionMakers = names.map(n => cleanMaker(n.text));
@@ -2702,15 +2726,38 @@ function extractProducts(lines) {
       }
     }
     const keep = [];
+    const addMaker = (name, forWhat) => {
+      if (!name) return;
+      /* "Or approved equal" is permission, not a firm. It belongs on the article as the note that
+         somebody else may be put forward, not in the list of who to ring. */
+      if (isSubstitution(name)) { p.anyOther = true; return; }
+      if (p.makers.some(x => normPhrase(x.name) === normPhrase(name))) return;
+      p.makers.push({ name: name, forWhat: forWhat || '' });
+    };
     for (const n of p.notes) {
-      if (!isMakerHead(n)) { keep.push(n); continue; }
-      for (const x of n.sub) {
-        const m = cleanMaker(x.text);
-        if (!m) continue;
-        // "1. Floor Drains:" with names under it is a sub-category of maker, not a maker
-        if (x.sub && x.sub.length) for (const y of x.sub) { const yy = cleanMaker(y.text); if (yy) p.makers.push({ name: yy, forWhat: m.replace(/:$/, '') }); }
-        else p.makers.push({ name: m, forWhat: '' });
+      if (isMakerHead(n)) {
+        for (const x of n.sub) {
+          const m = cleanMaker(x.text);
+          if (!m) continue;
+          // "1. Floor Drains:" with names under it is a sub-category of maker, not a maker
+          if (x.sub && x.sub.length) for (const y of x.sub) addMaker(cleanMaker(y.text), m.replace(/:$/, ''));
+          else addMaker(m, '');
+        }
+        continue;
       }
+      /* The shape a section takes when it describes several products in one article: the lettered
+         paragraph names the product — "D. Two-Piece, Full-Port, Bronze Ball Valves" — and who may
+         supply it sits under that as "1. Manufacturers:" with the firms lettered beneath again.
+         Reading only the top level missed every one of them, which on a real gas-piping section
+         was five articles' worth of acceptable manufacturers. */
+      const subs = n.sub || [];
+      const heads = subs.filter(isMakerHead);
+      if (heads.length) {
+        const forWhat = cleanTitle(String(n.text || '').replace(/:.*$/, '')).slice(0, 52);
+        for (const h of heads) for (const y of h.sub) addMaker(cleanMaker(y.text), forWhat);
+        n.sub = subs.filter(x => heads.indexOf(x) < 0);
+      }
+      keep.push(n);
     }
     p.notes = keep;
     // what it must meet, and what it covers — the two things worth reading at a glance

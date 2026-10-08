@@ -929,6 +929,73 @@ const testCode = `
       })());
     delete schedules[0].basis; }
 
+  /* A part heading is the whole of its line. A sentence that wraps onto a line beginning "Part 3"
+     is a cross-reference, and specs are full of them — reading one as a heading made the parser
+     think Part 3 had begun and threw away every product article after it. */
+  { ck('spec: a plain part heading is one', partHeading('PART 2 - PRODUCTS') === 2 &&
+      partHeading('PART 1 - GENERAL') === 1 && partHeading('PART 3 - EXECUTION') === 3 &&
+      partHeading('PART 2') === 2);
+    ck('spec: and so is one carrying a note after it, however long, so long as it shouts',
+      partHeading('PART 2 - PRODUCTS (REFER TO EQUIPMENT SCHEDULE SHEETS AND DRAWINGS)') === 2);
+    ck('spec: a book that sets its headings in mixed case still has headings',
+      partHeading('Part 2 - Products') === 2 && partHeading('Part 3 – Execution') === 3);
+    ck('spec: but a sentence that merely begins with the word is not one',
+      partHeading('Part 3 "Piping Applications" Article.') === 0 &&
+      partHeading('as indicated in Part 3 "Piping Applications" Article.') === 0 &&
+      partHeading('Part 3 of the Contract, including General and Supplementary Conditions.') === 0);
+    ck('spec: nor is anything that is not a part at all',
+      partHeading('') === 0 && partHeading('PARTS AND LABOR') === 0 && partHeading('2.01 VALVES') === 0); }
+
+  /* Who may supply a product sits one level further in than the simple shape: the article names
+     several products in lettered paragraphs, and each carries its own Manufacturers list. */
+  { var body = [
+      'PART 1 - GENERAL',
+      '1.03 ACTION SUBMITTALS',
+      'A. Product Data: For each type of valve.',
+      'PART 2 - PRODUCTS (REFER TO EQUIPMENT SCHEDULE SHEETS AND DRAWINGS)',
+      '2.01 COPPER TUBE AND FITTINGS',
+      'A. Drawn-Temper Copper Tubing: ASTM B 88, Type L.',
+      'B. Malleable-Iron Threaded Fittings: ASME B16.3, Classes 150 and 300 as indicated in',
+      'Part 3 "Piping Applications" Article.',
+      '2.04 MANUAL GAS SHUTOFF VALVES',
+      'D. Two-Piece, Full-Port, Bronze Ball Valves with Bronze Trim: MSS SP-110.',
+      '1. Manufacturers: Subject to compliance with requirements, provide product indicated',
+      'on Drawings or comparable by one of the following:',
+      'a. BrassCraft Manufacturing Company; a Masco company.',
+      'b. Conbraco Industries, Inc.; Apollo Div.',
+      'c. Lyall, R. W. & Company, Inc.',
+      'd. Or approved equal.',
+      '2. Body: Bronze, complying with ASTM B 584.',
+      'E. Bronze Plug Valves: MSS SP-78.',
+      '1. Manufacturers: Subject to compliance with requirements:',
+      'a. Lee Brass Company.',
+      'b. McDonald, A. Y. Mfg. Co.',
+      'PART 3 - EXECUTION',
+      '3.01 INSTALLATION',
+      'A. Install piping as indicated.',
+      'END OF SECTION' ];
+    var prods = extractProducts(body);
+    var byArt = {};
+    prods.forEach(function (p) { byArt[p.article] = p; });
+    ck('spec: a cross-reference to Part 3 no longer ends Part 2 early',
+      prods.length === 2 && !!byArt['2.01'] && !!byArt['2.04']);
+    ck('spec: Part 1 and Part 3 are not read as products',
+      prods.every(function (p) { return String(p.article).charAt(0) === '2'; }));
+    var v = byArt['2.04'];
+    ck('spec: the makers under each lettered product are all found',
+      v.makers.length === 5 &&
+      v.makers.map(function (m) { return m.name; }).join(' | ').indexOf('BrassCraft Manufacturing Company') >= 0 &&
+      v.makers.map(function (m) { return m.name; }).join(' | ').indexOf('Lee Brass Company') >= 0);
+    ck('spec: and each says which of the products in the article it is for',
+      v.makers.filter(function (m) { return m.forWhat.indexOf('Bronze Ball Valves') >= 0; }).length === 3 &&
+      v.makers.filter(function (m) { return m.forWhat.indexOf('Bronze Plug Valves') >= 0; }).length === 2);
+    ck('spec: "or approved equal" is permission, not a firm to ring',
+      v.anyOther === true &&
+      v.makers.every(function (m) { return m.name.toLowerCase().indexOf('approved equal') < 0; }));
+    ck('spec: the wording under a product is kept, the maker list is not left in it',
+      JSON.stringify(v.notes).indexOf('BrassCraft') < 0 &&
+      JSON.stringify(v.notes).indexOf('Bronze, complying with ASTM B 584') > 0); }
+
   // the submittal starter — the sheet the job gets priced on
   { var reqOf = function (art, name, kind, items) {
       return { article: art, name: name, kind: kind, items: items.map(function (x) {
