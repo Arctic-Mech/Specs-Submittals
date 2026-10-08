@@ -1028,15 +1028,17 @@ const testCode = `
 
     var must = starterMust(secs[0].requirements);
     ck('starter: what the section demands, named once each and worth-reading-first first',
-      must.short.indexOf('Product Data') === 0 &&
-      must.short.split('Product Data').length === 2 &&
+      must.all.indexOf('Product Data') === 0 &&
+      must.all.split('Product Data').length === 2 &&
       must.count === 6);
     ck('starter: the action submittals come before the informational ones',
-      must.short.indexOf('Product Data') < must.short.indexOf('Seismic Qualification'));
-    ck('starter: all of them are named, not the first few',
-      must.short.indexOf('Seismic Qualification Certificates') > 0 &&
-      must.short.indexOf('Field quality-control reports') > 0 &&
-      must.short.indexOf('more') < 0);
+      must.all.indexOf('Product Data') < must.all.indexOf('Seismic Qualification'));
+    ck('starter: the face of a line names the first few and says how many more there are',
+      must.short.split('\u00B7').length === 4 && must.short.indexOf('+3 more') > 0);
+    ck('starter: and all of them are kept, for the row that opens under it',
+      must.all.indexOf('Seismic Qualification Certificates') > 0 &&
+      must.all.indexOf('Field quality-control reports') > 0 &&
+      must.all.indexOf('more') < 0);
 
     /* One height for every line, chosen for the longest of them, and the text cut to suit it \u2014
        rows that each size themselves make a page that reads like a ransom note. */
