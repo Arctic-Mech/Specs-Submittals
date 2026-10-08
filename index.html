@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.31';
+const APP_VERSION = 'v8.32';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -19996,9 +19996,36 @@ const STARTER_SLOT_COLS = [
   { h: 'Lead (wks)', w: 8, k: 'lead' }, { h: 'Notes', w: 17, k: 'note' }
 ];
 const STARTER_FIXED = [
-  { h: 'Item', w: 12 }, { h: 'What it is', w: 30 }, { h: 'Qty', w: 5 },
-  { h: 'Spec section', w: 11.5 }, { h: 'Must meet', w: 33 }
+  { h: 'Item', w: 12 }, { h: 'What it is', w: 38 }, { h: 'Qty', w: 6.5 },
+  { h: 'Spec section', w: 12 }, { h: 'Must meet', w: 54 }
 ];
+/* Every line the same height, and that height chosen so the longest one on the sheet still reads.
+   Rows that each size themselves to their own contents make a page that looks like a ransom note;
+   a height picked for the worst line and given to all of them reads as one table. Five lines is as
+   far as it goes — past that a section is demanding more than a cell can sensibly hold, and the
+   rest of it is on the cell anyway. */
+const STARTER_MAX_LINES = 5;
+/* Excel's column width is roughly characters at 11pt, so a smaller font fits proportionally more. */
+const starterPerLine = (width, pt) => Math.max(8, Math.floor(width * (11 / pt)));
+function starterWrap(text, per) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  if (!words.length) return 0;
+  let lines = 1, at = 0;
+  for (const w of words) {
+    if (!at) { at = w.length; continue; }
+    if (at + 1 + w.length <= per) { at += 1 + w.length; continue; }
+    lines++; at = w.length;
+  }
+  return lines;
+}
+/* Cut to what will fit, at a word, with the mark that says there is more of it. */
+function starterClip(text, per, lines) {
+  const t = String(text || '');
+  const room = per * lines - 2;
+  if (starterWrap(t, per) <= lines) return t;
+  const cut = t.slice(0, room), sp = cut.lastIndexOf(' ');
+  return (sp > room * 0.6 ? cut.slice(0, sp) : cut).replace(/[ ,;:.\u00B7\-]+$/, '') + '\u2026';
+}
 const STARTER_TAIL = [
   { h: 'Going with', w: 11 }, { h: 'Vendor chosen', w: 17 }, { h: 'Price chosen', w: 13 }
 ];
@@ -20026,10 +20053,10 @@ function starterMust(reqs) {
     }
     full.push('');
   }
-  const SHOW = 4;
+  /* Every one of them. What will not fit in the height the sheet settled on is trimmed there, once,
+     so the trimming suits the sheet rather than being guessed at here. */
   return {
-    short: labels.slice(0, SHOW).join(' · ') +
-      (labels.length > SHOW ? '  · +' + (labels.length - SHOW) + ' more' : ''),
+    short: labels.join(' · '),
     full: full.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
     count: labels.length
   };
@@ -20086,7 +20113,7 @@ async function buildStarterXlsx(lines, opts) {
   const wb = new XJ.Workbook();
   wb.creator = 'Arctic Mechanical'; wb.created = new Date();
   const ws = wb.addWorksheet('Quote sheet', {
-    views: [{ state: 'frozen', xSplit: 2, ySplit: STARTER_HEAD }],
+    views: [{ state: 'frozen', ySplit: STARTER_HEAD }],
     pageSetup: { orientation: 'landscape', scale: 78,
       printTitlesRow: STARTER_HEAD + ':' + STARTER_HEAD, printTitlesColumn: 'A:E',
       margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
@@ -20141,6 +20168,24 @@ async function buildStarterXlsx(lines, opts) {
   });
   hr.height = 22;
   const top = STARTER_HEAD + 1;
+  /* Measure the whole sheet before drawing any of it, so one height can be chosen that suits the
+     longest line on it and then given to every line. */
+  const perB = starterPerLine(STARTER_FIXED[1].w, 9.5);
+  const perE = starterPerLine(STARTER_FIXED[4].w, 8.5);
+  const sayOf = ln => [ln.name, ln.desc].filter(Boolean).join(' — ');
+  /* Sized for what nearly every line needs, not for the worst one on the sheet. One section that
+     asks for a dozen things would otherwise put five lines of height on all fifty-odd rows and
+     leave the page mostly empty; that line is trimmed instead, and the whole of it is still on the
+     cell. */
+  const need = [];
+  for (const ln of lines) {
+    if (ln.band) continue;
+    need.push(Math.max(1, starterWrap(sayOf(ln), perB), starterWrap(ln.must.short, perE)));
+  }
+  need.sort((a, b) => a - b);
+  const most = need.length ? need[Math.min(need.length - 1, Math.floor(need.length * 0.9))] : 1;
+  const tall = Math.min(STARTER_MAX_LINES, Math.max(2, most));
+  const rowTall = tall * 11.6 + 5;
   let r = top;
   const itemRows = [];
   for (const ln of lines) {
@@ -20157,11 +20202,11 @@ async function buildStarterXlsx(lines, opts) {
     }
     itemRows.push(r);
     row.getCell(1).value = ln.mark || '';
-    row.getCell(2).value = [ln.name, ln.desc].filter(Boolean).join(' — ');
+    row.getCell(2).value = starterClip(sayOf(ln), perB, tall);
     row.getCell(3).value = ln.qty === '' ? '' : ln.qty;
     row.getCell(4).value = ln.sec.number || ln.sec.key;
     const mc = row.getCell(5);
-    mc.value = ln.must.short || '';
+    mc.value = starterClip(ln.must.short, perE, tall);
     if (ln.must.full) mc.note = ln.must.full;
     for (let i = 0; i < N; i++) {
       const a = slotAt(i);
@@ -20189,14 +20234,12 @@ async function buildStarterXlsx(lines, opts) {
       cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
       cell.font = Object.assign({ size: 10, color: { argb: SCH_INK.title } }, cell.font || {});
       if (c === 2 || c === 5) cell.alignment = { vertical: 'middle', wrapText: true };
-      else if (c === 1 || c === 4) cell.alignment = { horizontal: 'left' };
-      else cell.alignment = { horizontal: 'center' };
+      else if (c === 1 || c === 4) cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      else cell.alignment = { vertical: 'middle', horizontal: 'center' };
     }
     row.getCell(5).font = { size: 8.5, color: { argb: SCH_INK.calcText } };
     row.getCell(2).font = { size: 9.5, color: { argb: SCH_INK.title } };
-    /* Two lines, so a long description and a long list of requirements both sit inside their own
-       cell instead of running over the line under them. The rest is on the cell. */
-    row.height = 27;
+    row.height = rowTall;
     r++;
   }
   const last = r - 1;

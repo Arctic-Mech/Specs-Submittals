@@ -966,8 +966,31 @@ const testCode = `
       must.count === 6);
     ck('starter: the action submittals come before the informational ones',
       must.short.indexOf('Product Data') < must.short.indexOf('Seismic Qualification'));
-    ck('starter: only four are named in the cell, and it says how many more there are',
-      must.short.indexOf('+2 more') > 0);
+    ck('starter: all of them are named, not the first few',
+      must.short.indexOf('Seismic Qualification Certificates') > 0 &&
+      must.short.indexOf('Field quality-control reports') > 0 &&
+      must.short.indexOf('more') < 0);
+
+    /* One height for every line, chosen for the longest of them, and the text cut to suit it \u2014
+       rows that each size themselves make a page that reads like a ransom note. */
+    ck('rows: how many lines a run of text comes to at a given width',
+      starterWrap('', 20) === 0 && starterWrap('short', 20) === 1 &&
+      starterWrap('one two three four five six seven', 12) === 4 &&
+      starterWrap('one two three four five six seven', 40) === 1);
+    ck('rows: a narrower column fits fewer words, a smaller font fits more',
+      starterPerLine(40, 11) === 40 && starterPerLine(40, 8.5) > 40 &&
+      starterPerLine(2, 11) === 8);
+    ck('rows: text that fits is left exactly as it was',
+      starterClip('Product Data', 40, 2) === 'Product Data');
+    ck('rows: and text that does not is cut at a word, with the mark that says there is more',
+      (function () {
+        var t = 'Product Data and Shop Drawings and Delegated Design Submittal and Seismic '
+              + 'Qualification Certificates and Field quality-control reports and more besides';
+        var got = starterClip(t, 30, 2);
+        return got.length < t.length && got.slice(-1) === '\u2026' &&
+          got.indexOf(' ') > 0 && t.indexOf(got.slice(0, -1).trim()) === 0 &&
+          starterWrap(got, 30) <= 2;
+      })());
     ck('starter: the whole wording is kept for the cell note, article by article',
       must.full.indexOf('1.03  ACTION SUBMITTALS') >= 0 &&
       must.full.indexOf('rated capacities and operating weights') > 0 &&
