@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.43';
+const APP_VERSION = 'v8.44';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20271,6 +20271,16 @@ function starterWrap(text, per) {
   }
   return lines;
 }
+/* How many lines a block of text comes to, counting the breaks in it. starterWrap treats a line
+   break as a space, which is right for a cell holding one phrase and wrong for a passage out of
+   the spec book — a list of eight numbered clauses is eight lines before any of them wraps, and
+   measured the other way the row comes out a third of the height it needs. */
+function starterTall(text, per) {
+  const parts = String(text == null ? '' : text).split(/\r?\n/);
+  let n = 0;
+  for (const p of parts) n += Math.max(1, starterWrap(p, per));
+  return n;
+}
 /* Cut to what will fit, at a word, with the mark that says there is more of it. */
 function starterClip(text, per, lines) {
   const t = String(text || '');
@@ -20642,7 +20652,7 @@ async function buildStarterXlsx(lines, opts) {
       c.value = say[1];
       c.font = { size: 9, color: { argb: SCH_INK.calcText } };
       c.alignment = { vertical: 'top', wrapText: true };
-      d.height = Math.min(230, Math.max(13, starterWrap(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
+      d.height = Math.min(400, Math.max(13, starterTall(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
       for (let k = 1; k <= nCols; k++) {
         d.getCell(k).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
         d.getCell(k).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
@@ -20987,13 +20997,34 @@ const STARTER_SOURCES = [
     say: 'Only the equipment you have entered and the sections you added yourself. The spec wording still comes along wherever it has been read.' }
 ];
 let starterMode = 'both', starterSlots = 4;
-function openStarterModal() {
+/* Has anybody started one on this job — a price, a vendor, a line put in by hand? */
+function starterStarted(state) {
+  if (!state) return false;
+  for (const k in (state.add || {})) if ((state.add[k] || []).length) return true;
+  for (const k in (state.rows || {})) {
+    const r = state.rows[k] || {};
+    if (r.item || r.name || (r.qty != null && r.qty !== '')) return true;
+    for (const sl of (r.s || [])) if (sl && (sl.v || sl.p || sl.lead || sl.n || sl.st || sl.f)) return true;
+  }
+  return false;
+}
+async function openStarterModal() {
   if (!job) return;
   const secs = visibleSections();
   const all = sectionsOf(job).length;
   const parsed = starterHasParse();
   const prods = secs.reduce((n, s) => n + sectionProducts(s).length, 0);
   if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
+  /* One already going is not a question. It was answered when it was started, and the answer was
+     put away with it — so it opens, rather than asking again every time somebody goes to it. */
+  let going = null;
+  try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) going = d.data() || null; } catch (e) {}
+  if (starterStarted(going)) {
+    if (going.mode) starterMode = going.mode;
+    if (going.slots) starterSlots = going.slots;
+    mountStarter(await starterLines(secs, starterMode), going);
+    return;
+  }
   if (!parsed) starterMode = 'hand';
   $('modalHost').innerHTML = `
     <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">
@@ -21213,11 +21244,14 @@ function wireStarterMessages() {
     if (d.type === 'starter-pick') { await goWithVendor(d); return; }
     if (d.type === 'starter-see') { await seeVendorQuote(d); return; }
     if (d.type === 'starter-export') { await starterToExcel(d); return; }
+    if (d.type === 'starter-ask-list') { await exportAskList(d); return; }
   });
 }
 async function keepStarterState(d) {
   if (!job) return;
-  const state = Object.assign({}, d.state || {}, { at: d.at || Date.now() });
+  /* What it was started from goes away with it, so opening it again never asks. */
+  const state = Object.assign({}, d.state || {},
+    { at: d.at || Date.now(), mode: starterMode, slots: starterSlots });
   _stHost.mine = state.at;
   _stHost.state = state;
   try { await FB.setDoc(starterRef(job.id), clean(state)); }
@@ -21297,6 +21331,216 @@ async function starterToExcel(d) {
   toStarter('starter-say', { text: 'Building the Excel file…' });
   try { await exportStarterXlsx(_stHost ? _stHost.state : null); toStarter('starter-say', { text: 'Excel file downloaded' }); }
   catch (e) { toStarter('starter-say', { text: 'Could not build it: ' + (e.message || e), bad: true }); }
+}
+/* ── what one firm has to come back on ──
+   Ferguson have three things in 22 40 00 and two in 23 21 13, and what goes out to them is one
+   list covering both, not five separate asks. Their items gathered under the section each falls
+   in, with what that section demands of it beside them and the book's own wording folded under —
+   so the question and the answer to "what does the spec say about this one" travel together.
+   Columns for them to fill in, so the sheet comes back as the quote. */
+const ASK_COLS = [
+  { h: 'Item', w: 12 }, { h: 'What it is', w: 38 }, { h: 'Qty', w: 6.5 },
+  { h: 'Must meet', w: 34 }, { h: 'Who the spec will take', w: 34 },
+  { h: 'Make & model you are proposing', w: 30 }, { h: 'Price', w: 13 },
+  { h: 'Lead (wks)', w: 11 }, { h: 'Notes / anything you cannot meet', w: 30 }
+];
+const ASK_HEAD = 6;
+function askListRows(vendor, state) {
+  const want = String(vendor || '').trim().toLowerCase();
+  const rows = (state && state.rows) || {};
+  const out = [], at = Object.create(null), order = [];
+  const take = (ln, key) => {
+    const r = rows[key];
+    if (!r || !r.s) return;
+    let mine = null;
+    for (const sl of r.s) {
+      if (!sl || String(sl.v || '').trim().toLowerCase() !== want) continue;
+      if (sl.st !== STARTER_ASK && sl.st !== STARTER_GOT) continue;
+      mine = sl; break;
+    }
+    if (!mine) return;
+    const sec = ln.sec || {};
+    const sk = sec.key || '';
+    if (!at[sk]) { at[sk] = { sec: sec, lines: [] }; order.push(sk); }
+    at[sk].lines.push({ ln: ln, rec: r, slot: mine,
+      item: (r.item != null && r.item !== '') ? r.item : (ln.tag || ln.mark || ''),
+      name: (r.name != null && r.name !== '') ? r.name
+        : [ln.name, ln.desc].filter(Boolean).join(' — '),
+      qty: (r.qty != null && r.qty !== '') ? r.qty : (ln.qty || '') });
+  };
+  for (const ln of ((_stHost && _stHost.pay) || [])) {
+    if (ln.band || ln.sub) continue;
+    take(ln, ln.key);
+  }
+  /* And the lines somebody put in by hand, which belong to the section they were put under. */
+  for (const sk in ((state && state.add) || {})) {
+    const sec = (((_stHost && _stHost.pay) || []).find(x => x.band && (x.sec || {}).key === sk) || {}).sec
+      || { key: sk };
+    for (const a of state.add[sk]) take({ sec: sec, tag: a.item || '', name: a.name || '',
+      qty: a.qty, byHand: true }, a.key);
+  }
+  for (const k of order) out.push(at[k]);
+  out.sort((a, b) => String((a.sec || {}).number || '') < String((b.sec || {}).number || '') ? -1 : 1);
+  return out;
+}
+async function buildAskListXlsx(vendor, groups) {
+  const XJ = await ensureExcelJS();
+  const nCols = ASK_COLS.length;
+  const wb = new XJ.Workbook();
+  wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+  const ws = wb.addWorksheet('What we need', {
+    properties: { outlineLevelRow: 1, outlineProperties: { summaryBelow: false, summaryRight: false } },
+    views: [{ state: 'frozen', ySplit: ASK_HEAD, xSplit: 2, showOutlineSymbols: true }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: ASK_HEAD + ':' + ASK_HEAD,
+      margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
+  });
+  ws.columns = ASK_COLS.map(c => ({ width: c.w }));
+  const span = (r, text, style) => {
+    ws.mergeCells(r, 1, r, nCols);
+    const c = ws.getCell(r, 1); c.value = text; Object.assign(c, style || {}); return c;
+  };
+  const items = groups.reduce((n, g) => n + g.lines.length, 0);
+  span(1, 'Arctic Mechanical — what we need from ' + vendor,
+    { font: { bold: true, size: 15, color: { argb: SCH_INK.title } }, alignment: { vertical: 'middle' } });
+  ws.getRow(1).height = 26;
+  span(2, [(job && job.name) || 'Job', job && job.number ? 'Job ' + job.number : '',
+    items + ' item' + (items === 1 ? '' : 's') + ' across ' + groups.length + ' spec section'
+      + (groups.length === 1 ? '' : 's'),
+    'Sent ' + shortDate(today())].filter(Boolean).join('    ·    '),
+    { font: { size: 10, color: { argb: SCH_INK.dim } } });
+  span(3, 'Under each section is what that section of the spec demands. Fill in the four columns on '
+    + 'the right and send it back. The + at the left of a line opens the book’s own wording for '
+    + 'it; the 1 and 2 at the top left open or shut them all.',
+    { font: { size: 10, italic: true, color: { argb: SCH_INK.calcText } },
+      alignment: { wrapText: true, vertical: 'middle' } });
+  ws.getRow(3).height = 26;
+  ws.getRow(4).height = 6;
+  const hr = ws.getRow(ASK_HEAD);
+  ASK_COLS.forEach((c, i) => {
+    const cell = hr.getCell(i + 1);
+    cell.value = c.h;
+    cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i >= 5 ? 'FF14532D' : SCH_INK.head } };
+    cell.alignment = { vertical: 'middle', horizontal: (i === 1 || i === 3 || i === 4 || i === 8) ? 'left' : 'center', wrapText: true };
+    cell.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
+  });
+  hr.height = 24;
+  const perB = starterPerLine(ASK_COLS[1].w, 9.5);
+  const perM = starterPerLine(ASK_COLS[3].w, 8.5);
+  const perK = starterPerLine(ASK_COLS[4].w, 8.5);
+  const wide = ASK_COLS.slice(2).reduce((a, x) => a + x.w, 0);
+  let r = ASK_HEAD + 1;
+  for (const g of groups) {
+    const sec = g.sec || {};
+    ws.mergeCells(r, 1, r, nCols);
+    const b = ws.getRow(r).getCell(1);
+    b.value = '  ' + String(sec.number || sec.key || '') + '   ' + String(sec.title || '').toUpperCase();
+    b.font = { bold: true, size: 11.5, color: { argb: SCH_INK.secText } };
+    b.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
+    b.alignment = { vertical: 'middle' };
+    ws.getRow(r).height = 20;
+    r++;
+    /* What this section demands, said once under the band rather than on every line of it. */
+    const must = ((g.lines[0] || {}).ln || {}).must || {};
+    if (must.full) {
+      ws.mergeCells(r, 1, r, nCols);
+      const m = ws.getRow(r).getCell(1);
+      m.value = 'What this section asks to be submitted on:\n' + must.full;
+      m.font = { size: 9, color: { argb: SCH_INK.calcText } };
+      m.alignment = { vertical: 'top', wrapText: true };
+      m.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
+      ws.getRow(r).height = Math.min(460,
+        Math.max(16, starterTall(must.full, starterPerLine(ASK_COLS.reduce((a, x) => a + x.w, 0), 9)) * 11.4 + 18));
+      r++;
+    }
+    for (const x of g.lines) {
+      const ln = x.ln, row = ws.getRow(r);
+      const who = ln.makers || { short: '', all: '', count: 0 };
+      const tall = Math.min(STARTER_MAX_LINES, Math.max(2,
+        starterWrap(x.name, perB), starterWrap((ln.must || {}).short || '', perM),
+        starterWrap(who.short || '', perK)));
+      row.getCell(1).value = x.item || '';
+      row.getCell(2).value = starterClip(x.name, perB, tall);
+      row.getCell(3).value = x.qty === '' ? '' : x.qty;
+      row.getCell(4).value = starterClip((ln.must || {}).short || '', perM, tall);
+      row.getCell(5).value = starterClip(who.short || '', perK, tall);
+      for (let c = 6; c <= 9; c++) {
+        const cell = row.getCell(c);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3FAF5' } };
+        cell.border = { left: { style: 'thin', color: { argb: 'FFBBE0C6' } },
+          right: { style: 'thin', color: { argb: 'FFBBE0C6' } },
+          bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      }
+      row.getCell(7).numFmt = '#,##0';
+      /* Whatever they have already told us, so the sheet going back out is not blank again. */
+      if (x.slot && x.slot.p != null && x.slot.p !== '') row.getCell(7).value = x.slot.p;
+      if (x.slot && x.slot.lead != null && x.slot.lead !== '') row.getCell(8).value = x.slot.lead;
+      if (x.slot && x.slot.n) row.getCell(9).value = x.slot.n;
+      for (let c = 1; c <= nCols; c++) {
+        const cell = row.getCell(c);
+        if (c <= 5) cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+        cell.font = Object.assign({ size: c === 2 ? 9.5 : (c >= 4 && c <= 5 ? 8.5 : 10),
+          color: { argb: SCH_INK.title } }, cell.font || {});
+        cell.alignment = (c === 2 || c === 4 || c === 5 || c === 9)
+          ? { vertical: 'middle', wrapText: true }
+          : { vertical: 'middle', horizontal: c === 1 ? 'left' : 'center' };
+      }
+      row.height = tall * 11.6 + 5;
+      r++;
+      const says = [];
+      if (ln.covers) says.push(['Covers', ln.covers]);
+      if (who.all && who.count > 1) says.push(['Will take', who.all]);
+      if (ln.wording) says.push(['The book says', ln.wording]);
+      for (const say of says) {
+        const d = ws.getRow(r);
+        d.getCell(1).value = say[0];
+        d.getCell(1).font = { size: 8.5, bold: true, color: { argb: SCH_INK.dim } };
+        d.getCell(1).alignment = { vertical: 'top', horizontal: 'right' };
+        ws.mergeCells(r, 2, r, nCols);
+        const c = d.getCell(2);
+        c.value = say[1];
+        c.font = { size: 9, color: { argb: SCH_INK.calcText } };
+        c.alignment = { vertical: 'top', wrapText: true };
+        d.height = Math.min(400, Math.max(13, starterTall(say[1], starterPerLine(wide, 9)) * 11.4 + 3));
+        for (let k = 1; k <= nCols; k++) {
+          d.getCell(k).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
+          d.getCell(k).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+        }
+        d.outlineLevel = 1;
+        d.hidden = true;
+        r++;
+      }
+    }
+  }
+  return wb;
+}
+async function exportAskList(d) {
+  const vendor = String(d.vendor || '').trim();
+  if (!vendor) { toStarter('starter-say', { text: 'No firm to build a list for', bad: true }); return; }
+  if (_stHost && d.state) _stHost.state = Object.assign({}, _stHost.state, d.state);
+  try {
+    const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {});
+    const items = groups.reduce((n, g) => n + g.lines.length, 0);
+    if (!items) { toStarter('starter-say', { text: 'Nothing out to ' + vendor + ' to make a list from', bad: true }); return; }
+    const wb = await buildAskListXlsx(vendor, groups);
+    const bytes = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([bytes],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sanitizeAnyName(jobFileBase() + ' — for ' + vendor, 'vendor list') + '.xlsx';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    toStarter('starter-say', { text: vendor + ': ' + items + ' item' + (items === 1 ? '' : 's')
+      + ' across ' + groups.length + ' section' + (groups.length === 1 ? '' : 's') + ' downloaded' });
+  } catch (e) {
+    console.error(e);
+    toStarter('starter-say', { text: 'Could not build it: ' + (e.message || e), bad: true });
+  }
 }
 function openExportMenu() {
   if (!job) return;

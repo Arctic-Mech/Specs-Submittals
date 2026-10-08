@@ -1020,6 +1020,48 @@ const testCode = `
     ck('starter: and the section says it is ready to send',
       sec2.status === 'ready_gc' && (sec2.submittals || []).length === 1 &&
       sec2.submittals[0].status === 'ready_gc' && sec2.submittals[0].vendor === 'Ferguson');
+    /* One already going is not a question — it opens rather than asking what to build it from. */
+    ck('starter: an untouched sheet is not a started one', !starterStarted(null) &&
+      !starterStarted({ rows: {}, add: {} }) &&
+      !starterStarted({ rows: { a: { s: [{}, {}] } }, add: {} }));
+    ck('starter: a vendor in a slot, or a line put in by hand, means it is started',
+      starterStarted({ rows: { a: { s: [{ v: 'Ferguson' }] } } }) &&
+      starterStarted({ rows: {}, add: { '224000': [{ key: 'x' }] } }) &&
+      starterStarted({ rows: { a: { qty: 4 } } }));
+
+    /* One firm has things in two sections, and what goes out to them is one list covering both. */
+    _stHost = Object.assign({}, _stHost, { pay: [
+      { band: true, sec: { key: '224000', number: '22 40 00', title: 'Plumbing Fixtures' } },
+      { key: 'k1', sec: { key: '224000', number: '22 40 00' }, tag: 'HB-1', name: 'Wall hydrant', qty: 2 },
+      { key: 'k2', sec: { key: '224000', number: '22 40 00' }, tag: 'FCO', name: 'Floor cleanout', qty: 1 },
+      { band: true, sec: { key: '232113', number: '23 21 13', title: 'Hydronic Piping' } },
+      { key: 'k3', sec: { key: '232113', number: '23 21 13' }, tag: 'P-1', name: 'Pump', qty: 1 },
+      { key: 'k4', sec: { key: '232113', number: '23 21 13' }, tag: 'P-2', name: 'Other pump', qty: 1 }
+    ] });
+    var askState = { rows: {
+      k1: { s: [{ v: 'Ferguson', st: 'Request from vendor' }] },
+      k2: { s: [{ v: 'Mesher', st: 'Request from vendor' }] },
+      k3: { s: [{ v: 'Ferguson', st: 'Received from vendor', p: 900 }] },
+      k4: { s: [{ v: 'Ferguson', st: 'Going with this one' }] }
+    }, add: {} };
+    var fergus = askListRows('Ferguson', askState);
+    ck('starter: a firm list gathers their items under each spec section',
+      fergus.length === 2 &&
+      String(fergus[0].sec.number) === '22 40 00' && fergus[0].lines.length === 1 &&
+      String(fergus[1].sec.number) === '23 21 13' && fergus[1].lines.length === 1);
+    ck('starter: and leaves out what is already settled, and other firms',
+      fergus.reduce(function (n, g) { return n + g.lines.length; }, 0) === 2 &&
+      askListRows('Mesher', askState).length === 1 &&
+      askListRows('Nobody', askState).length === 0);
+    ck('starter: a line typed over on the sheet goes out under what it was typed as',
+      (function () {
+        var over = { rows: Object.assign({}, askState.rows,
+          { k1: { item: 'HB-9', name: 'Freezeless hydrant', qty: 7,
+                  s: [{ v: 'Ferguson', st: 'Request from vendor' }] } }), add: {} };
+        var g = askListRows('Ferguson', over)[0].lines[0];
+        return g.item === 'HB-9' && g.name === 'Freezeless hydrant' && g.qty === 7;
+      })());
+
     ck('starter: going with somebody already with the GC does not drag it back',
       (function () {
         var s3 = Object.assign({}, sec2, { status: 'approved' });
