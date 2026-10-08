@@ -1101,6 +1101,30 @@ const testCode = `
     delete secs[0].products[0].anyOther;
     ck('starter: the spec wording still comes along on a line chosen by hand',
       handL[1].must.short.indexOf('Product Data') === 0);
+    /* A tag is the spec naming a thing you will submit on — HB-1, AD-1, FCO. Where an article
+       names them each is a line; where it names none the article is the line. */
+    { var drain = { key:'224000', number:'22 40 00', title:'Plumbing Fixtures', products: [
+        { id:'q1', article:'2.04', group:'Joining Materials', name:'Solder Filler Metals', fromSpec:true, marks:[], makers:[] },
+        { id:'q2', article:'2.04', group:'Joining Materials', name:'Brazing Filler Metals', fromSpec:true, marks:[], makers:[] },
+        { id:'q3', article:'2.05', group:'Drainage Products', name:'Area Drain', tag:'AD-1', fromSpec:true, marks:[], makers:[] },
+        { id:'q4', article:'2.05', group:'Drainage Products', name:'Floor Cleanout', tag:'FCO', fromSpec:true, marks:[], makers:[] },
+        { id:'q5', article:'2.05', group:'Drainage Products', name:'Trap Priming Valves', fromSpec:true, marks:[], makers:[] } ],
+        requirements: [] };
+      var got = starterByArticle(drain.products);
+      ck('tags: an article naming none of them stays one line',
+        got[0].name === 'Joining Materials' && !got[0].sub &&
+        got[0].covers.indexOf('Solder Filler Metals') >= 0);
+      ck('tags: an article that names them gets a heading and a line for each thing',
+        got[1].sub === true && got[1].article === '2.05' && got[1].name === 'Drainage Products' &&
+        got.length === 5);
+      ck('tags: and the tag is what the line is called',
+        got[2].tag === 'AD-1' && got[2].name === 'Area Drain' &&
+        got[3].tag === 'FCO' && got[3].name === 'Floor Cleanout');
+      ck('tags: something in that article without one is still a line, not dropped',
+        got[4].name === 'Trap Priming Valves' && !got[4].tag);
+      ck('tags: each says which article it belongs to',
+        got[2].underArticle === 'Drainage Products'); }
+
     ck('starter: a line with nobody named against it says nothing rather than guessing',
       starterMakers(null).short === '' && starterMakers({ makers: [] }).count === 0);
 

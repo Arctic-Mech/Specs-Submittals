@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.36';
+const APP_VERSION = 'v8.37';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20058,24 +20058,35 @@ const STARTER_STATES = [STARTER_ASK, STARTER_GOT, STARTER_WIN];
    a sheet somebody has to price — one section would run to forty lines. Rolled back up, the article
    is the line and the kinds it covers are named on the cell. */
 function starterByArticle(items) {
-  const out = [], at = Object.create(null);
+  /* Articles in the order they were read, each with the things the read found under it. */
+  const order = [], at = Object.create(null);
   for (const p of items) {
     const key = p.article ? 'a:' + p.article : 'p:' + p.id;
-    let g = at[key];
-    if (!g) {
-      g = at[key] = Object.assign({}, p, { name: p.group || p.name || '', parts: [], makers: [] });
-      out.push(g);
-    }
-    if (p.group && p.name && p.name !== p.group) g.parts.push(p.name);
-    for (const m of (p.makers || [])) {
-      if (!g.makers.some(x => String(x.name).toLowerCase() === String(m.name).toLowerCase())) g.makers.push(m);
-    }
-    if (p.anyOther) g.anyOther = true;
+    if (!at[key]) { at[key] = { article: p.article || '', name: p.group || p.name || '', kids: [] }; order.push(at[key]); }
+    at[key].kids.push(p);
   }
-  for (const g of out) {
-    if (g.parts.length) {
-      g.covers = g.parts.join(';  ');
+  const out = [];
+  for (const a of order) {
+    /* A tag is the spec naming a thing you will submit on and buy — HB-1, AD-1, FCO. Where an
+       article names them, each is a line of its own under a heading for the article, because that
+       is the list somebody works from. Where it names none, the article is the line: splitting
+       "2.04 JOINING MATERIALS" into its five kinds of solder helps nobody. */
+    const tagged = a.kids.filter(k => marksLabel(k) || k.tag);
+    if (tagged.length) {
+      if (a.name && a.kids.length > 1) out.push({ sub: true, article: a.article, name: a.name });
+      for (const k of a.kids) out.push(Object.assign({}, k, { underArticle: a.name }));
+      continue;
     }
+    const g = Object.assign({}, a.kids[0], { name: a.name || (a.kids[0] || {}).name || '', makers: [] });
+    const parts = [];
+    for (const k of a.kids) {
+      if (a.name && k.name && k.name !== a.name) parts.push(k.name);
+      for (const m of (k.makers || []))
+        if (!g.makers.some(x => String(x.name).toLowerCase() === String(m.name).toLowerCase())) g.makers.push(m);
+      if (k.anyOther) g.anyOther = true;
+    }
+    if (parts.length) g.covers = parts.join(';  ');
+    out.push(g);
   }
   return out;
 }
@@ -20206,7 +20217,9 @@ async function starterLines(secs, mode) {
     const items = mode === 'auto' ? fromSpec : mode === 'hand' ? byHand : prods;
     out.push({ band: true, sec: s });
     if (items.length) {
-      for (const p of starterByArticle(items)) out.push({ sec: s, must: must, makers: starterMakers(p),
+      for (const p of starterByArticle(items)) {
+      if (p.sub) { out.push({ sec: s, sub: true, article: p.article, name: p.name }); continue; }
+      out.push({ sec: s, must: must, makers: starterMakers(p),
         mark: marksLabel(p) || p.tag || p.article || '',
         name: p.name || '',
         /* What the article covers, not the book's own wording — that is a paragraph, and a
@@ -20215,7 +20228,7 @@ async function starterLines(secs, mode) {
         desc: [p.fromSpec ? '' : p.desc,
           p.make && ('Basis of design: ' + p.make)].filter(Boolean).join(' — '),
         covers: p.covers || '', wording: String(p.spec || '').trim(),
-        lead: p.leadWeeks || '', qty: Math.max(1, (marksInOrder(p) || []).length) });
+        lead: p.leadWeeks || '', qty: Math.max(1, (marksInOrder(p) || []).length) }); }
     } else {
       out.push({ sec: s, must: must, bare: true, mark: '', makers: starterMakers(null),
         name: s.title || '(untitled section)',
@@ -20311,8 +20324,8 @@ async function buildStarterXlsx(lines, opts) {
      cell. */
   const need = [];
   for (const ln of lines) {
-    if (ln.band) continue;
-    need.push(Math.max(1, starterWrap(sayOf(ln), perB), starterWrap(ln.must.short, perE),
+    if (ln.band || ln.sub) continue;
+    need.push(Math.max(1, starterWrap(sayOf(ln), perB), starterWrap((ln.must || {}).short || '', perE),
       starterWrap((ln.makers || {}).short || '', perK)));
   }
   need.sort((a, b) => a - b);
@@ -20331,6 +20344,19 @@ async function buildStarterXlsx(lines, opts) {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
       c.alignment = { vertical: 'middle' };
       row.height = 19;
+      r++; continue;
+    }
+    /* The article the tagged things under it belong to — what to submit on, said once. */
+    if (ln.sub) {
+      ws.mergeCells(r, 1, r, nFix);
+      const c = row.getCell(1);
+      c.value = '      ' + (ln.article ? ln.article + '   ' : '') + ln.name;
+      c.font = { bold: true, size: 9.5, color: { argb: SCH_INK.calcText } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF1F6' } };
+      c.alignment = { vertical: 'middle' };
+      for (let k = 1; k <= nCols; k++)
+        row.getCell(k).border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      row.height = 16;
       r++; continue;
     }
     itemRows.push(r);
@@ -20394,6 +20420,7 @@ async function buildStarterXlsx(lines, opts) {
        1 and 2 at the top left of the sheet shut them all or open them all; the + beside a line
        opens just that one. Nothing is behind a hover, and nothing has to be guessed at. */
     const says = [];
+    if (ln.underArticle) says.push(['Part of', ln.underArticle]);
     if (ln.covers) says.push(['Covers', ln.covers]);
     if (who.all && who.count > 1) says.push(['Will take', who.all]);
     if (ln.must.all) says.push(['Must meet', ln.must.all]);
