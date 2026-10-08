@@ -1067,24 +1067,40 @@ const testCode = `
 
     var lines = await starterLines(secs, 'both');
     var shape = function (ls) { return ls.map(function (l) {
-      return l.band ? '[' + l.sec.number + ']' : (l.mark || '(section)'); }).join(' '); };
+      return l.band ? '[' + l.sec.number + ']' : l.blank ? '·' : (l.mark || '(section)'); }).join(' '); };
     ck('starter: both — equipment under its section, and a line for a section with none entered',
-      shape(lines) === '[23 73 00] AHU-1 AHU-2 AHU-3 [23 05 93] (section) [22 05 16] EXP-1');
+      shape(lines) === '[23 73 00] AHU-1 AHU-2 AHU-3 · · [23 05 93] (section) · · [22 05 16] EXP-1 · ·');
+    ck('starter: and blank lines are left under each section, ready to type in',
+      lines.filter(function (l) { return l.blank; }).length === 6 &&
+      lines.filter(function (l) { return l.blank; }).every(function (l) { return !!l.sec && l.must.short === ''; }));
     ck('starter: the quantity is how many marks the line covers',
       lines[2].qty === 2 && lines[1].qty === 1);
     ck('starter: what it is carries the basis of design',
       lines[1].desc.indexOf('Basis of design: Trane') > 0);
 
+    /* What the spec book gave us is the product articles the parse read out of Part 2 — not an
+       empty line per section, which is what it used to come to. */
+    secs[0].products[0].fromSpec = true;
+    secs[0].products[0].makers = [{ name: 'Trane', forWhat: 'Rooftop units' },
+                                  { name: 'Daikin', forWhat: 'Rooftop units' }];
+    secs[0].products[0].anyOther = true;
     var autoL = await starterLines(secs, 'auto');
-    ck('starter: the spec book on its own gives a line per section it was read into, and no equipment',
-      shape(autoL) === '[23 73 00] (section) [23 05 93] (section)');
+    ck('starter: the spec book on its own gives the product articles it read, not a blank per section',
+      shape(autoL) === '[23 73 00] AHU-1 · · [23 05 93] (section) · ·');
+    ck('starter: and each carries who the spec will take for it',
+      autoL[1].makers.short === 'Trane · Daikin  (or equal)' &&
+      autoL[1].makers.count === 2 &&
+      autoL[1].makers.full.indexOf('Rooftop units:') === 0 &&
+      autoL[1].makers.full.indexOf('approved equal') > 0);
     var handL = await starterLines(secs, 'hand');
-    ck('starter: by hand gives the equipment entered and the sections added by hand',
-      shape(handL) === '[23 73 00] AHU-1 AHU-2 AHU-3 [22 05 16] EXP-1');
+    ck('starter: by hand leaves out what the spec book gave, and keeps what you typed',
+      shape(handL) === '[23 73 00] AHU-2 AHU-3 · · [22 05 16] EXP-1 · ·');
+    delete secs[0].products[0].fromSpec; delete secs[0].products[0].makers;
+    delete secs[0].products[0].anyOther;
     ck('starter: the spec wording still comes along on a line chosen by hand',
       handL[1].must.short.indexOf('Product Data') === 0);
-    ck('starter: and a section added by hand with nothing read into it says so',
-      handL[handL.length - 1].must.short === '');
+    ck('starter: a line with nobody named against it says nothing rather than guessing',
+      starterMakers(null).short === '' && starterMakers({ makers: [] }).count === 0);
 
     ck('starter: it knows whether a spec book has ever been read on this job', starterHasParse() === true);
     ck('starter: and knows when one has not',

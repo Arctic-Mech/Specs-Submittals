@@ -1702,7 +1702,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.33';
+const APP_VERSION = 'v8.34';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20043,15 +20043,74 @@ const STARTER_SLOT_COLS = [
   { h: 'Lead (wks)', w: 8, k: 'lead' }, { h: 'Notes', w: 17, k: 'note' }
 ];
 const STARTER_FIXED = [
-  { h: 'Item', w: 12 }, { h: 'What it is', w: 38 }, { h: 'Qty', w: 6.5 },
-  { h: 'Spec section', w: 12 }, { h: 'Must meet', w: 54 }
+  { h: 'Item', w: 12 }, { h: 'What it is', w: 34 }, { h: 'Qty', w: 6.5 },
+  { h: 'Spec section', w: 12 }, { h: 'Who the spec will take', w: 40 }, { h: 'Must meet', w: 40 }
 ];
+/* An article is the line, not each lettered paragraph under it. The read splits "2.04 MANUAL GAS
+   SHUTOFF VALVES" into its six kinds of valve, which is right for the register and far too much for
+   a sheet somebody has to price — one section would run to forty lines. Rolled back up, the article
+   is the line and the kinds it covers are named on the cell. */
+function starterByArticle(items) {
+  const out = [], at = Object.create(null);
+  for (const p of items) {
+    const key = p.article ? 'a:' + p.article : 'p:' + p.id;
+    let g = at[key];
+    if (!g) {
+      g = at[key] = Object.assign({}, p, { name: p.group || p.name || '', parts: [], makers: [] });
+      out.push(g);
+    }
+    if (p.group && p.name && p.name !== p.group) g.parts.push(p.name);
+    for (const m of (p.makers || [])) {
+      if (!g.makers.some(x => String(x.name).toLowerCase() === String(m.name).toLowerCase())) g.makers.push(m);
+    }
+    if (p.anyOther) g.anyOther = true;
+  }
+  for (const g of out) {
+    if (g.parts.length) {
+      g.covers = 'covers ' + g.parts.slice(0, 3).join(', ') +
+        (g.parts.length > 3 ? ' and ' + (g.parts.length - 3) + ' more' : '');
+      g.full = 'What this article covers:\n' + g.parts.map(x => '\u00B7 ' + x).join('\n');
+    }
+  }
+  return out;
+}
+/* Who the spec says may supply it, which is who to ring for a quote. Grouped by the product in the
+   article each one is named against, because an article covering four kinds of valve names a
+   different set for each. */
+function starterMakers(p) {
+  const list = (p && p.makers) || [];
+  if (!list.length) return { short: '', full: '', count: 0 };
+  const seen = Object.create(null), names = [], by = Object.create(null), order = [];
+  for (const m of list) {
+    const nm = String(m.name || '').trim();
+    if (!nm) continue;
+    const k = nm.toLowerCase();
+    if (!seen[k]) { seen[k] = 1; names.push(nm); }
+    const w = String(m.forWhat || '').trim();
+    if (!by[w]) { by[w] = []; order.push(w); }
+    if (by[w].indexOf(nm) < 0) by[w].push(nm);
+  }
+  const full = order.map(w => (w ? w + ':' : 'Any of:') + '\n' +
+    by[w].map(n => '   \u00B7 ' + n).join('\n')).join('\n\n') +
+    (p.anyOther ? '\n\nor an approved equal.' : '');
+  /* Thirteen firms will not read across a cell, and a row grown tall enough to hold them makes
+     every other row on the sheet as tall. The first few here, all of them on the cell, grouped by
+     which product in the article each is named against. */
+  const SHOW = 4;
+  const face = names.slice(0, SHOW).join(' · ') +
+    (names.length > SHOW ? '  · +' + (names.length - SHOW) + ' more' : '');
+  return { short: face + (p.anyOther ? '  (or equal)' : ''), full: full, count: names.length };
+}
 /* Every line the same height, and that height chosen so the longest one on the sheet still reads.
    Rows that each size themselves to their own contents make a page that looks like a ransom note;
    a height picked for the worst line and given to all of them reads as one table. Five lines is as
    far as it goes — past that a section is demanding more than a cell can sensibly hold, and the
    rest of it is on the cell anyway. */
 const STARTER_MAX_LINES = 5;
+/* Blank lines left under every section, already carrying the borders, the quote slots, the boxes
+   and the working out. Something the spec never mentioned still has somewhere to go, and what you
+   do not use you delete. */
+const STARTER_BLANKS = 2;
 /* Excel's column width is roughly characters at 11pt, so a smaller font fits proportionally more. */
 const starterPerLine = (width, pt) => Math.max(8, Math.floor(width * (11 / pt)));
 function starterWrap(text, per) {
@@ -20123,27 +20182,39 @@ async function starterLines(secs, mode) {
   const out = [];
   secs.forEach((s, i) => {
     const prods = sectionProducts(s);
+    /* What the spec book gave us is not the same as what has no equipment on it: the parse reads
+       Part 2 and files every product article it finds, and those are the lines worth pricing. */
+    const fromSpec = prods.filter(x => x.fromSpec);
+    const byHand = prods.filter(x => !x.fromSpec);
     const keep = mode === 'auto' ? !s.manual
-      : mode === 'hand' ? !!(s.manual || prods.length)
+      : mode === 'hand' ? !!(s.manual || byHand.length)
       : true;
     if (!keep) return;
     /* The wording is reference, so it comes along whichever way the lines were chosen — there is
        no sense in hiding what the spec demands of a line that is on the sheet. */
     const must = starterMust(data[i].requirements || []);
-    const items = mode === 'auto' ? [] : prods;
+    const items = mode === 'auto' ? fromSpec : mode === 'hand' ? byHand : prods;
     out.push({ band: true, sec: s });
     if (items.length) {
-      for (const p of items) out.push({ sec: s, must: must,
-        mark: marksLabel(p) || p.tag || '',
+      for (const p of starterByArticle(items)) out.push({ sec: s, must: must, makers: starterMakers(p),
+        mark: marksLabel(p) || p.tag || p.article || '',
         name: p.name || '',
-        desc: [p.desc, p.make && ('Basis of design: ' + p.make)].filter(Boolean).join(' — '),
+        /* What the article covers, not the book's own wording — that is a paragraph, and a
+           paragraph in a cell makes every row on the sheet as tall as the worst of them. It is on
+           the cell instead. */
+        desc: [p.fromSpec ? p.covers : p.desc,
+          p.make && ('Basis of design: ' + p.make)].filter(Boolean).join(' — '),
+        full: [p.full, String(p.spec || '').trim()].filter(Boolean).join('\n\n'),
         lead: p.leadWeeks || '', qty: Math.max(1, (marksInOrder(p) || []).length) });
     } else {
-      out.push({ sec: s, must: must, bare: true, mark: '',
+      out.push({ sec: s, must: must, bare: true, mark: '', makers: starterMakers(null),
         name: s.title || '(untitled section)',
         desc: [s.description, s.manufacturer && ('Basis of design: ' + s.manufacturer)].filter(Boolean).join(' — '),
         lead: s.leadWeeks || '', qty: '' });
     }
+    for (let i = 0; i < STARTER_BLANKS; i++)
+      out.push({ sec: s, blank: true, mark: '', name: '', desc: '', qty: '', lead: '',
+        must: { short: '', full: '', count: 0 }, makers: { short: '', full: '', count: 0 } });
   });
   return out;
 }
@@ -20162,7 +20233,7 @@ async function buildStarterXlsx(lines, opts) {
   const ws = wb.addWorksheet('Quote sheet', {
     views: [{ state: 'frozen', ySplit: STARTER_HEAD }],
     pageSetup: { orientation: 'landscape', scale: 78,
-      printTitlesRow: STARTER_HEAD + ':' + STARTER_HEAD, printTitlesColumn: 'A:E',
+      printTitlesRow: STARTER_HEAD + ':' + STARTER_HEAD, printTitlesColumn: 'A:F',
       margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
   });
   ws.columns = STARTER_FIXED.map(c => ({ width: c.w }))
@@ -20210,7 +20281,7 @@ async function buildStarterXlsx(lines, opts) {
     c.value = h;
     c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
-    c.alignment = { vertical: 'middle', horizontal: (i === 1 || i === 4) ? 'left' : 'center', wrapText: true };
+    c.alignment = { vertical: 'middle', horizontal: (i === 1 || i === 4 || i === 5) ? 'left' : 'center', wrapText: true };
     c.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
   });
   hr.height = 22;
@@ -20218,7 +20289,8 @@ async function buildStarterXlsx(lines, opts) {
   /* Measure the whole sheet before drawing any of it, so one height can be chosen that suits the
      longest line on it and then given to every line. */
   const perB = starterPerLine(STARTER_FIXED[1].w, 9.5);
-  const perE = starterPerLine(STARTER_FIXED[4].w, 8.5);
+  const perK = starterPerLine(STARTER_FIXED[4].w, 8.5);
+  const perE = starterPerLine(STARTER_FIXED[5].w, 8.5);
   const sayOf = ln => [ln.name, ln.desc].filter(Boolean).join(' — ');
   /* Sized for what nearly every line needs, not for the worst one on the sheet. One section that
      asks for a dozen things would otherwise put five lines of height on all fifty-odd rows and
@@ -20227,7 +20299,8 @@ async function buildStarterXlsx(lines, opts) {
   const need = [];
   for (const ln of lines) {
     if (ln.band) continue;
-    need.push(Math.max(1, starterWrap(sayOf(ln), perB), starterWrap(ln.must.short, perE)));
+    need.push(Math.max(1, starterWrap(sayOf(ln), perB), starterWrap(ln.must.short, perE),
+      starterWrap((ln.makers || {}).short || '', perK)));
   }
   need.sort((a, b) => a - b);
   const most = need.length ? need[Math.min(need.length - 1, Math.floor(need.length * 0.9))] : 1;
@@ -20248,11 +20321,22 @@ async function buildStarterXlsx(lines, opts) {
       r++; continue;
     }
     itemRows.push(r);
+    if (ln.blank) {
+      /* Nothing typed on it yet, but everything a line needs is already here: its section, the
+         borders, the boxes and the working out. */
+      row.getCell(4).value = ln.sec.number || ln.sec.key;
+      row.getCell(4).font = { size: 9, color: { argb: SCH_INK.dim } };
+    }
     row.getCell(1).value = ln.mark || '';
-    row.getCell(2).value = starterClip(sayOf(ln), perB, tall);
+    const nc = row.getCell(2);
+    nc.value = starterClip(sayOf(ln), perB, tall);
+    if (ln.full) nc.note = ln.full;
     row.getCell(3).value = ln.qty === '' ? '' : ln.qty;
-    row.getCell(4).value = ln.sec.number || ln.sec.key;
-    const mc = row.getCell(5);
+    if (!ln.blank) row.getCell(4).value = ln.sec.number || ln.sec.key;
+    const mk = row.getCell(5), who = ln.makers || { short: '', full: '' };
+    mk.value = starterClip(who.short, perK, tall);
+    if (who.full) mk.note = who.full;
+    const mc = row.getCell(6);
     mc.value = starterClip(ln.must.short, perE, tall);
     if (ln.must.full) mc.note = ln.must.full;
     for (let i = 0; i < N; i++) {
@@ -20280,11 +20364,12 @@ async function buildStarterXlsx(lines, opts) {
       const cell = row.getCell(c);
       cell.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
       cell.font = Object.assign({ size: 10, color: { argb: SCH_INK.title } }, cell.font || {});
-      if (c === 2 || c === 5) cell.alignment = { vertical: 'middle', wrapText: true };
+      if (c === 2 || c === 5 || c === 6) cell.alignment = { vertical: 'middle', wrapText: true };
       else if (c === 1 || c === 4) cell.alignment = { vertical: 'middle', horizontal: 'left' };
       else cell.alignment = { vertical: 'middle', horizontal: 'center' };
     }
-    row.getCell(5).font = { size: 8.5, color: { argb: SCH_INK.calcText } };
+    row.getCell(5).font = { size: 8.5, color: { argb: SCH_INK.title } };
+    row.getCell(6).font = { size: 8.5, color: { argb: SCH_INK.calcText } };
     row.getCell(2).font = { size: 9.5, color: { argb: SCH_INK.title } };
     row.height = rowTall;
     r++;
@@ -20317,15 +20402,15 @@ function starterFinish(b, lines, opts) {
   }
   const sum = last + 2;
   const sr = ws.getRow(sum);
-  ws.mergeCells(sum, 1, sum, 4);
+  ws.mergeCells(sum, 1, sum, 5);
   sr.getCell(1).value = 'GOING WITH, SO FAR';
   sr.getCell(1).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
   sr.getCell(1).alignment = { vertical: 'middle' };
   const picked = itemRows.length
     ? '=COUNTIF(' + GOING + top + ':' + GOING + last + ',"<>")&" of ' + itemRows.length + ' picked"' : '""';
-  sr.getCell(5).value = { formula: picked.slice(1) };
-  sr.getCell(5).font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
-  sr.getCell(5).alignment = { horizontal: 'left' };
+  sr.getCell(6).value = { formula: picked.slice(1) };
+  sr.getCell(6).font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+  sr.getCell(6).alignment = { horizontal: 'left' };
   const tot = ws.getCell(sum, tailAt + 2);
   tot.value = { formula: itemRows.length ? 'SUM(' + PCH + top + ':' + PCH + last + ')' : '0' };
   tot.numFmt = '#,##0';
