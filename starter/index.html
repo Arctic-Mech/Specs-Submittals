@@ -411,6 +411,11 @@ function rowsOf() {
    It opens under the line it belongs to — nothing behind a hover, nothing to guess at. */
 function saysOf(ln) {
   var out = [];
+  /* Said on the line itself, because a line read off the section's own list of what it covers is
+     a weaker thing than one read out of Part 2: it is a name and nothing else. */
+  if (ln.fromIncludes) out.push(['Where from', 'This section\u2019s own "Section Includes" list \u2014 '
+    + 'nothing was read out of Part 2 for it, so there are no approved makers on it. '
+    + 'Check the spec pages.']);
   if (ln.dupTag && ln.dupWith) out.push(['Same mark as', ln.dupWith]);
   if (ln.underArticle) out.push(['Part of', ln.underArticle]);
   if (ln.covers) out.push(['Covers', ln.covers]);

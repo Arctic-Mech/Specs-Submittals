@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.47';
+const APP_VERSION = 'v8.48';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -2346,6 +2346,11 @@ function extractIncludes(lines) {
     for (let j = i + 1; j < Math.min(i + 40, lines.length); j++) {
       const line = lines[j].trim();
       if (ART_RE.test(line) || PART_RE.test(line)) break;
+      /* SUMMARY holds more than one list. "Section Includes" is what this section covers; the
+         lettered paragraphs after it point at other sections and at work somebody else furnishes,
+         and those are not things to go and get priced. */
+      if (/^[A-Z]\.\s/.test(line)
+        && /\b(related|products? (furnished|installed)|work (by|furnished)|alternates?)\b/i.test(line)) break;
       if (SUB_RE.test(line)) {
         const t = cleanTitle(line.replace(SUB_RE, ''));
         if (t.length > 2 && t.length < 140) out.push(t);
@@ -20418,10 +20423,22 @@ async function starterLines(secs, mode) {
         covers: p.covers || '', wording: String(p.spec || '').trim(),
         lead: p.leadWeeks || '', qty: Math.max(1, (marksInOrder(p) || []).length) }); }
     } else {
-      out.push({ sec: s, must: must, bare: true, mark: '', makers: starterMakers(null),
-        name: s.title || '(untitled section)',
-        desc: [s.description, s.manufacturer && ('Basis of design: ' + s.manufacturer)].filter(Boolean).join(' — '),
-        lead: s.leadWeeks || '', qty: '' });
+      /* Nothing came out of Part 2 for this one. That is not the same as there being nothing in
+         it: Part 1 nearly always opens with "Section Includes", which is the section's own list of
+         what it covers — sixteen kinds of valve, say — and that is a far better start than one
+         line carrying the section's name. Where even that is missing, the one line stands. */
+      const says = (data[i].includes || []).filter(Boolean);
+      if (says.length) {
+        for (const t of says)
+          out.push({ sec: s, must: must, makers: starterMakers(null), fromIncludes: true,
+            tag: '', mark: '', name: t, desc: '', covers: '', wording: '',
+            lead: s.leadWeeks || '', qty: 1 });
+      } else {
+        out.push({ sec: s, must: must, bare: true, mark: '', makers: starterMakers(null),
+          name: s.title || '(untitled section)',
+          desc: [s.description, s.manufacturer && ('Basis of design: ' + s.manufacturer)].filter(Boolean).join(' — '),
+          lead: s.leadWeeks || '', qty: '' });
+      }
     }
     for (let i = 0; i < STARTER_BLANKS; i++)
       out.push({ sec: s, blank: true, mark: '', name: '', desc: '', qty: '', lead: '',
@@ -21210,6 +21227,7 @@ function starterPayload(lines) {
       makers: l.makers || null, must: l.must || null,
       /* What the book said, which opens under the line rather than being squeezed into it. */
       wording: l.wording || '', underArticle: l.underArticle || '', lead: l.lead || '',
+      fromIncludes: !!l.fromIncludes,
       dupTag: !!l.dupTag, dupWith: l.dupWith || '' });
   }
   return out;

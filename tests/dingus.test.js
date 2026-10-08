@@ -1020,6 +1020,44 @@ const testCode = `
     ck('starter: and the section says it is ready to send',
       sec2.status === 'ready_gc' && (sec2.submittals || []).length === 1 &&
       sec2.submittals[0].status === 'ready_gc' && sec2.submittals[0].vendor === 'Ferguson');
+    /* SUMMARY holds more than one list, and only the first of them is what this section covers. */
+    var summaryLines = [
+      '1.02 SUMMARY',
+      'A. Section Includes:',
+      '1. Bronze ball valves.',
+      '2. Iron, single-flange butterfly valves.',
+      '3. Chainwheels.',
+      'B. Related Sections:',
+      '1. Section 23 05 53 for valve tags and schedules.',
+      '1.03 DEFINITIONS'
+    ];
+    ck('spec: Section Includes is what the section covers',
+      JSON.stringify(extractIncludes(summaryLines))
+        === JSON.stringify(['Bronze ball valves', 'Iron, single-flange butterfly valves', 'Chainwheels']));
+    ck('spec: and what it points at other sections for is not',
+      extractIncludes(summaryLines).every(function (t) { return t.indexOf('23 05 53') < 0; }));
+
+    /* With no Part 2 to go on, the section's own list is a far better start than one bare line. */
+    ck('starter: a section with nothing read out of Part 2 falls back to what it says it includes',
+      await (async function () {
+        var sec = { key: '230523', number: '23 05 23', title: 'General-Duty Valves for HVAC Piping',
+          products: [], requirements: [], includes: ['Bronze ball valves', 'Iron gate valves'] };
+        specDataFor = async function () { return { requirements: [], includes: sec.includes }; };
+        var lines = await starterLines([sec], 'auto');
+        var real = lines.filter(function (l) { return !l.band && !l.sub && !l.blank; });
+        return real.length === 2 && real[0].name === 'Bronze ball valves'
+          && real[1].name === 'Iron gate valves' && real.every(function (l) { return l.fromIncludes; });
+      })());
+    ck('starter: and with neither, the one line carrying the section name still stands',
+      await (async function () {
+        var sec = { key: '999999', number: '99 99 99', title: 'Nothing Doing',
+          products: [], requirements: [], includes: [] };
+        specDataFor = async function () { return { requirements: [], includes: [] }; };
+        var lines = await starterLines([sec], 'auto');
+        var real = lines.filter(function (l) { return !l.band && !l.sub && !l.blank; });
+        return real.length === 1 && real[0].bare === true && real[0].name === 'Nothing Doing';
+      })());
+
     /* Text out of a spec book has to be fit to go in a cell, or the workbook will not open. */
     ck('excel: control characters out of a spec read are taken out of a cell',
       xlSafe('A. Steel' + String.fromCharCode(3) + ' Pipe' + String.fromCharCode(31) + '.')
