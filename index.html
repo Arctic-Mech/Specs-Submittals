@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.42';
+const APP_VERSION = 'v8.43';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20569,10 +20569,14 @@ async function buildStarterXlsx(lines, opts) {
       if (got.v) row.getCell(a).value = got.v;
       if (got.p != null && got.p !== '') row.getCell(a + 1).value = got.p;
       if (got.lead != null && got.lead !== '') row.getCell(a + 2).value = got.lead;
-      if (got.f) {
+      /* The note somebody wrote against the quote, and — where there is one — what the quote they
+         sent in is called, because the file itself lives in ShareFile and not in the workbook. */
+      const said = [got.n || '', got.f ? 'Quote on file: ' + (got.f.name || got.f.file) : '']
+        .filter(Boolean).join('  —  ');
+      if (said) {
         const fc = row.getCell(a + 4);
-        fc.value = 'Quote: ' + (got.f.name || got.f.file || 'on file');
-        fc.font = { size: 8, italic: true, color: { argb: SCH_INK.dim } };
+        fc.value = said;
+        fc.font = { size: 8.5, color: { argb: got.n ? SCH_INK.title : SCH_INK.dim } };
         fc.alignment = { vertical: 'middle', wrapText: true };
       }
     }
