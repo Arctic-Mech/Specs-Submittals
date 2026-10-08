@@ -526,6 +526,64 @@ const testCode = `
       !grouped.alongside && grouped.main === true);
     planSel = []; }
 
+  /* A line that can only be done on one day of the week — a Saturday tie-in. */
+  { var dp = mk('start', [
+      L('ds', 'Mech room', 0, 10, { main:true }),
+      L('da', 'Set pumps', 3, 20, { date:'2026-12-07' }),
+      L('db', 'Tie in to main', 1, 30),
+      L('dc', 'Flush and fill', 2, 40) ]);
+    var r0 = planDates(dp, five);
+    ck('saturday: left alone it falls wherever the run reaches', r0.by['db'].start === '2026-12-04');
+    planItemById(dp, 'db').onDay = 6;
+    var r1 = planDates(dp, five);
+    ck('saturday: set to Saturdays it moves to the next one',
+      r1.by['db'].start === '2026-12-05' && dDow(r1.by['db'].start) === 6);
+    ck('saturday: one day long, it starts and finishes on that Saturday',
+      r1.by['db'].finish === '2026-12-05');
+    ck('saturday: the row says so, so you do not have to open it',
+      r1.by['db'].onDay === 6 && r0.by['da'].onDay == null);
+    planItemById(dp, 'db').days = 2;
+    var r2 = planDates(dp, five);
+    ck('saturday: two days long, it carries on into the next working day',
+      r2.by['db'].start === '2026-12-05' && r2.by['db'].finish === '2026-12-07');
+    planItemById(dp, 'db').days = 1;
+    ck('saturday: a day already right is left where it is',
+      (function () {
+        planItemById(dp, 'db').onDay = 5;             // it already lands on a Friday
+        var r3 = planDates(dp, five);
+        return r3.by['db'].start === '2026-12-04';
+      })());
+    delete planItemById(dp, 'db').onDay;
+    ck('saturday: taking it off puts it back', planDates(dp, five).by['db'].start === '2026-12-04');
+
+    ck('saturday: any day of the week can be asked for, not just Saturday',
+      (function () {
+        var got = [];
+        for (var d = 0; d <= 6; d++) {
+          planItemById(dp, 'db').onDay = d;
+          got.push(dDow(planDates(dp, five).by['db'].start));
+        }
+        delete planItemById(dp, 'db').onDay;
+        return got.join() === '0,1,2,3,4,5,6';
+      })());
+    ck('saturday: and a line is only tied to a day when it says a real one',
+      dayWanted({}) === null && dayWanted({ onDay: '' }) === null &&
+      dayWanted({ onDay: 0 }) === 0 && dayWanted({ onDay: 6 }) === 6 &&
+      dayWanted({ onDay: 9 }) === null); }
+
+  /* The day of the week, in front of every date, because it is the first thing anybody asks. */
+  { ck('days: a date says which day it lands on',
+      withDay('2026-12-05') === 'Sa ' + shortDate('2026-12-05') &&
+      withDay('2026-12-07') === 'M ' + shortDate('2026-12-07') &&
+      withDay('') === '');
+    ck('days: and the plan shows it on both ends of a line',
+      (function () {
+        var p2 = mk('start', [ L('ws', 'Temp', 0, 10, { main:true }),
+          L('w1', 'Run duct', 3, 20, { date:'2026-12-07' }) ]);
+        var h = planOutlineHtml(p2, planDates(p2, five).rows.filter(keepRow), {});
+        return h.indexOf('M ') > 0 && h.indexOf('W ') > 0;
+      })()); }
+
   /* Typing a number in the step box. */
   { schedules = [mk('start', [
       L('ts', 'Temp', 0, 10, { main:true }), L('t1', 'One', 1, 20),

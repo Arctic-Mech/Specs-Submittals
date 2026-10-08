@@ -608,6 +608,7 @@ button.out-tag.is-ov.on { opacity: 1; background: var(--accent-sf); color: var(-
 .out-days.is-lead:hover { border-color: var(--red); }
 .out-days.is-notice { color: var(--text-3); text-align: right; padding: 3px 4px; }
 .out-tag.is-notice { background: var(--red-sf); color: var(--red); font-weight: 600; }
+.out-tag.is-day { background: var(--amber-sf); color: var(--amber); font-weight: 600; }
 .cd-item.is-lead { background: var(--red-sf); color: var(--red); font-weight: 600; font-style: normal; }
 /* Lines done at once are one step with one length, so they are drawn as one block: tied together
    down the left, no rule between them, and the length they share shown the same on both. */
@@ -1702,7 +1703,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.37';
+const APP_VERSION = 'v8.38';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -12800,6 +12801,17 @@ const WORK_SHIFTS = [
   { id: '7',     label: '7 days · every day', days: [0, 1, 2, 3, 4, 5, 6] }
 ];
 const DOW_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/* Short enough to sit in front of a date without crowding it. */
+const DOW_MINI = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
+const DOW_PICK = [[1,'Monday'],[2,'Tuesday'],[3,'Wednesday'],[4,'Thursday'],[5,'Friday'],[6,'Saturday'],[0,'Sunday']];
+/* A line that can only be done on one day of the week \u2014 a tie-in on a Saturday when the building
+   is empty. It is not a date you type; it is a day, and the plan finds the next one. */
+const dayWanted = it => {
+  const v = it && it.onDay;
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return (n >= 0 && n <= 6) ? n : null;
+};
 function workCal(j) {
   const w = ((j || job || {}).workCal) || {};
   const days = (Array.isArray(w.days) && w.days.length) ? w.days.slice() : [1, 2, 3, 4, 5];
@@ -13006,6 +13018,20 @@ function planDates(plan, cal) {
   const stepOver = iso => fwd ? nextWorkDay(iso, cal) : prevWorkDay(iso, cal);
   /* the same two, against the run, for working out what has to come before a date somebody typed */
   const stepBack = iso => fwd ? prevWorkDay(iso, cal) : nextWorkDay(iso, cal);
+  /* On to the day of the week it has to be, the way the run is going. Going forward that is the
+     next one; working back from the end it is the one before, so the plan still holds. */
+  const onToDay = (iso, d) => {
+    let at = iso;
+    for (let i = 0; i < 14; i++) { if (dDow(at) === d) return at; at = dShift(at, fwd ? 1 : -1); }
+    return iso;
+  };
+  /* Its length, counted from a day that may not be a working one at all \u2014 which is the point of
+     it. The day itself is the first of them. */
+  const spanOffDay = (edge, n) => {
+    if (n <= 1) return edge;
+    const next = fwd ? nextWorkDay(edge, cal) : prevWorkDay(edge, cal);
+    return fwd ? addWorkDays(next, n - 2, cal) : subWorkDays(next, n - 2, cal);
+  };
   const spanBack = (edge, n) => !n ? edge
     : (fwd ? subWorkDays(edge, n - 1, cal) : addWorkDays(edge, n - 1, cal));
   const past = (x, y) => fwd ? x < y : x > y;
@@ -13077,13 +13103,18 @@ function planDates(plan, cal) {
         if (!begin || past(e, begin)) begin = e;
       }
       const n = slotLen(g);
+      /* One of them saying it has to be a Saturday makes it a Saturday for the whole slot \u2014 they
+         are being done at the same time, so they are being done on the same day. */
+      let want = null;
+      for (const k of together) { const d = dayWanted(k); if (d != null) { want = d; break; } }
       for (const k of together) {
         let edge = '', far = '', anchored = false, clash = false;
         if (pinnedDate(k)) {
           edge = edgeOf(k.date); anchored = true;
           if (begin && past(edge, begin)) clash = true;
         } else if (begin) { edge = begin; anchored = true; }
-        if (anchored) far = spanFrom(edge, n);
+        if (anchored && want != null) edge = onToDay(edge, want);
+        if (anchored) far = want != null ? spanOffDay(edge, n) : spanFrom(edge, n);
         out[k.id] = { start: fwd ? edge : far, finish: fwd ? far : edge,
           anchored: anchored, clash: clash, total: n };
       }
@@ -13177,7 +13208,7 @@ function planDates(plan, cal) {
       main: !!it.main, head: !!it.main, rolled: !!it.main,
       kids: mine.filter(x => !isLead(x)).length,
       section: tr.sectionOf[it.id] || '',
-      lead: !!d.lead, kind: String(it.kind || ''),
+      lead: !!d.lead, kind: String(it.kind || ''), onDay: dayWanted(it),
       holds: d.holds || '', by: d.by || '', need: d.need || '', weeks: d.weeks || 0,
       step: stepOf[it.id] || '',
       mate: tr.leadOf[it.id] !== it.id ? tr.leadOf[it.id] : '',
@@ -13626,6 +13657,8 @@ async function savePlanLine(id) {
   if (isLead(it)) { it.days = Math.max(1, Math.round(Number(v('liWeeks')) || 0)) * 7; delete it.date; }
   else if ($('liDays')) it.days = Math.max(0, Math.round(Number(v('liDays')) || 0));
   it.note = autoCap(v('liNote'));
+  const dsel = $('liDay');
+  if (dsel) { const dv = String(dsel.value || ''); if (dv === '') delete it.onDay; else it.onDay = Number(dv); }
   const dn = $('liDone'); it.done = !!(dn && dn.checked);
   planEdit = null;
   renderSchedule();
@@ -13712,6 +13745,8 @@ function weekSpan(rows) {
   return out;
 }
 const shortDate = iso => iso ? fmtDate(iso + 'T00:00:00') : '';
+/* What day of the week it lands on, which is the first thing anybody asks of a date on a plan. */
+const withDay = iso => iso ? DOW_MINI[dDow(iso)] + ' ' + fmtDate(iso + 'T00:00:00') : '';
 function runwayLabel(r) {
   if (r.item.done) return 'done';
   if (!r.anchored || r.runway == null) return '';
@@ -13871,6 +13906,15 @@ function lineForm(p, id, rows) {
         <div class="muted" style="font-size:12px;margin-top:4px">It is not a job with a length — it is
           a date to hit. The plan counts back that far from the work it holds up and puts a notice
           there, so you are told while there is still time to act on it.</div></div>
+      ${isLead(it) || it.main ? '' : `<div class="field">
+        <label class="fl">Has it got to be on a particular day?</label>
+        <select class="input" id="liDay" style="max-width:220px">
+          <option value="">Any working day</option>
+          ${DOW_PICK.map(d => `<option value="${d[0]}"${dayWanted(it) === d[0] ? ' selected' : ''}>${d[1]}s only</option>`).join('')}
+        </select>
+        <div class="muted" style="font-size:12px;margin-top:4px">A tie-in that can only be done when
+          the building is empty. The plan puts it on the next one of those days rather than wherever
+          the run happened to reach, and what follows it starts after.</div></div>`}
       <div class="field"><label class="fl">Anything else worth knowing</label>
         <input class="input" id="liNote" value="${escAttr(it.note || '')}"></div>
       <div class="field"><label class="ac-done"><input type="checkbox" id="liDone" ${it.done ? 'checked' : ''}> <span>Done</span></label></div>
@@ -13968,9 +14012,9 @@ function planOutlineHtml(p, rows, res) {
       /* A notice is a day, not a stretch of days: it says when the thing has to be done by for the
          plan to hold, and there is nothing to draw between two dates. */
       const dates = !r.anchored ? ''
-        : r.lead ? shortDate(r.start)
+        : r.lead ? withDay(r.start)
         : ((r.finish && r.finish !== r.start)
-            ? shortDate(r.start) + ' → ' + shortDate(r.finish) : shortDate(r.start));
+            ? withDay(r.start) + ' → ' + withDay(r.finish) : withDay(r.start));
       const grouped = r.mate || r.withMe;
       const tick = `<button class="out-tick is-grp${ticked[r.id] ? ' on' : ''}${grouped ? ' is-grouped' : ''}"
              onclick="tapPair('${r.id}')"
@@ -14030,6 +14074,9 @@ function planOutlineHtml(p, rows, res) {
                 ' week' + (r.weeks === 1 ? '' : 's') + ' of lead time')}">${
                 r.holds ? esc(kindLabel(it.kind)) : 'put it under the line it is for'}</span>`
             : it.kind ? `<span class="out-tag is-kind">${esc(kindLabel(it.kind))}</span>` : ''}
+          ${r.onDay != null ? `<span class="out-tag is-day" title="${escAttr(
+              'Can only be done on a ' + DOW_NAMES[r.onDay] + 'day \u2014 the plan puts it on the next one')}">${
+              esc(DOW_NAMES[r.onDay])}s only</span>` : ''}
           ${r.mate ? `<button class="out-tag is-ov on" onclick="clearMate('${r.id}')"
                title="Runs alongside step ${escAttr(r.mateStep)} — they take one step between them, and it lasts as long as the longer of the two. Click to take it off.">alongside ${esc(r.mateStep)} ✕</button>` : ''}
           ${r.slack != null && r.slack !== 0
@@ -14532,7 +14579,11 @@ async function buildScheduleWorkbook(p, res, cal) {
     if (!r.main && !r.lead) put(4, (r.mate ? r.own : r.days) || 0);
     else if (r.main && r.target) put(4, r.target);
     if (r.lead) put(5, r.weeks || 0);
-    if (r.pinned && it.date) { const c = put(6, dAt(it.date)); c.numFmt = 'mmm d, yyyy'; }
+    /* A line tied to a day of the week goes out on the day it worked out to. The sheet counts in
+       working days and a Saturday is not one, so it travels as a date already set — which is what
+       it is. Change the days around it here and that date stays put, as it would on the job. */
+    const pinIso = r.pinned && it.date ? it.date : (r.onDay != null && r.start ? r.start : '');
+    if (pinIso) { const c = put(6, dAt(pinIso)); c.numFmt = 'mmm d, yyyy'; }
     const f = dates(i);
     [[7, f.start, r.start], [8, f.fin, r.finish]].forEach(([c, formula, iso]) => {
       const cell = row.getCell(c);
