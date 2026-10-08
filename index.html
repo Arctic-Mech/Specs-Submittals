@@ -1544,6 +1544,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div id="jobActions" class="job-actions" hidden>
     <span id="folderSaveStatus" class="save-status" hidden onclick="saveNow()"></span>
     <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="The spec book — open it, upload a new issue, or remove one">📄 <span class="lbl">Spec book</span></button>
+    <button class="btn ghost" onclick="openStarterModal()" id="btnStarter" title="The submittal starter — get the job priced, pick who you are going with">▦ <span class="lbl">Starter</span></button>
     <button class="btn ghost" onclick="openExportMenu()" title="Export the submittal register (PDF or CSV)">⤓ <span class="lbl">Export</span></button>
   </div>
   <button class="me-chip" id="meChip" onclick="askMeName()" title="Who you are on this device — your name goes on what you change"></button>
@@ -1703,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.40';
+const APP_VERSION = 'v8.41';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -1738,6 +1739,10 @@ function loadPdfJs() {
 const STATUSES = [
   { id: 'not_started',      label: 'Not Started',        short: 'Not Started', color: 'grey'   },
   { id: 'waiting_vendor',   label: 'Waiting on Vendor',  short: 'Waiting',     color: 'amber'  },
+  /* The vendor's submittal is in hand and the packet is built — it has not gone to the GC yet.
+     Picking a vendor on the starter puts a section here, which is the one state the register
+     never had: everything before it was waiting on somebody else. */
+  { id: 'ready_gc',         label: 'Ready to Send',      short: 'Ready',       color: 'teal'   },
   { id: 'submitted_gc',     label: 'Submitted to GC',    short: 'Submitted',   color: 'blue'   },
   { id: 'partial_approval', label: 'Partial Approval',   short: 'Partial',     color: 'teal'   },
   { id: 'approved',         label: 'Approved',           short: 'Approved',    color: 'green'  },
@@ -3110,6 +3115,7 @@ const SUBMITTALS_DIR = 'Submittals';
    the original submittal was, so both file under "Submitted to GC". The register still tracks the
    exact status — the folder only answers "where is this in the process". */
 const STATUS_DIR = {
+  ready_gc:         'Submittals/Ready to Send',
   submitted_gc:     'Submittals/Submitted to GC',
   revision_sent:    'Submittals/Submitted to GC',
   partial_approval: 'Submittals/Partial Approval',
@@ -3124,6 +3130,16 @@ const STATUS_DIR = {
    against it and the page it was made against still matters — but it moves out of the way so the
    book in Specs is always the one in force. */
 const SPEC_OLD_DIR = 'Submittals/Specs/Superseded';
+/* What vendors send in while a line is still being priced, kept well away from the submittal
+   process. Two or three firms quote a piece of equipment and we go with one of them; the other
+   proposals must never be somewhere a person looking for the submittal could pick one up by
+   mistake. So they live in a folder of their own, named to sort to the top of Submittals and to
+   read as what it is. Nothing files out of here — going with a vendor copies that one proposal
+   into the submittal flow and leaves the rest where they are. */
+const VENDOR_QUOTE_DIR = 'Submittals/_Vendor Quotes';
+const vendorQuoteDirFor = sec => VENDOR_QUOTE_DIR + '/' +
+  sanitizeAnyName(String((sec && (sec.number || sec.key)) || '').trim() +
+    ((sec && sec.title) ? ' ' + sec.title : ''), 'Section').slice(0, 90);
 /* Drawings live outside the Submittals tree on purpose: syncAllSubmittals deletes, recursively
    and without asking, every directory under All Submittals it does not recognise. */
 const DRAWING_DIR = 'Drawings';
@@ -4797,6 +4813,7 @@ function renderJob() {
   /* Set before the early returns below, or it keeps whatever it last had on every other tab. It
      is shown with no spec in the job too — that is exactly when you want to put one in. */
   { const bs = $('btnSpec'); if (bs) bs.style.display = jobTab === 'submittals' ? '' : 'none'; }
+  { const bt = $('btnStarter'); if (bt) bt.style.display = jobTab === 'submittals' ? '' : 'none'; }
   if (jobTab === 'rfis') { renderRfis(); return; }
   if (jobTab === 'changeorders') { renderCos(); if (jobFolder) reconcileCoFiles().catch(() => {}); return; }
   if (jobTab === 'drawings') { renderDrawings(); return; }
@@ -14536,6 +14553,10 @@ async function buildScheduleWorkbook(p, res, cal) {
   const top = SCH_FIRST, last = top + rows.length - 1, end = last + spare;
   const wb = new XJ.Workbook();
   wb.creator = 'The Dingus'; wb.created = new Date();
+  /* Work the dates out when the file is opened. They are written with the answer they had at the
+     time cached beside them, and a spreadsheet is entitled to show the cached answer and never
+     look again — which would make a sheet that is meant to move look like a photograph. */
+  wb.calcProperties.fullCalcOnLoad = true;
   const ws = wb.addWorksheet('Schedule', {
     views: [{ state: 'frozen', ySplit: top - 1, xSplit: 2 }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
@@ -17852,7 +17873,7 @@ function wireDropZone(el, onFiles) {
 }
 /* The statuses a PDF can be filed under — the outgoing package and the ways it
    comes back. Picking one is required on every upload. */
-const DOC_STATUSES = ['submitted_gc', 'partial_approval', 'approved', 'revise_resubmit', 'revision_requested', 'revision_sent'];
+const DOC_STATUSES = ['ready_gc', 'submitted_gc', 'partial_approval', 'approved', 'revise_resubmit', 'revision_requested', 'revision_sent'];
 let _uploadStatusResolve = null;
 function pickUploadStatus(kind) {
   return new Promise(resolve => {
@@ -19911,6 +19932,7 @@ const XLOG = {
 /* the GC's word for where a submittal stands — the vocabulary on Arctic's own log */
 const XLOG_RETURNED = {
   not_started: 'Not Started', waiting_vendor: 'Pending Submittal',
+  ready_gc: 'Pending Submittal',
   submitted_gc: 'Submitted', revision_sent: 'Submitted',
   partial_approval: 'Approved as Noted', approved: 'Approved',
   revise_resubmit: 'Revise/Resubmit', revision_requested: 'Revise/Resubmit',
@@ -20190,6 +20212,9 @@ function starterByArticle(items) {
       if (k.anyOther) g.anyOther = true;
     }
     if (parts.length) g.covers = parts.join(';  ');
+    /* Every product the article rolled up, so that going with a vendor can put the maker on all
+       of them and not only on the first one the read happened to find. */
+    g.pids = a.kids.map(k => k.id).filter(Boolean);
     out.push(g);
   }
   return out;
@@ -20395,9 +20420,15 @@ async function buildStarterXlsx(lines, opts) {
   const ST = i => C(slotAt(i) + 3);                 // where that slot stands
   const wb = new XJ.Workbook();
   wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+  /* Work it all out when the file is opened. Every formula on the sheet is written with the answer
+     it had at the time cached beside it, and without this a spreadsheet is entitled to show the
+     cached answer and never look again — which would leave the search saying nothing found. */
+  wb.calcProperties.fullCalcOnLoad = true;
   const ws = wb.addWorksheet('Quote sheet', {
     properties: { outlineLevelRow: 1, outlineProperties: { summaryBelow: false, summaryRight: false } },
-    views: [{ state: 'frozen', ySplit: STARTER_HEAD, showOutlineSymbols: true }],
+    /* What a line is stays put while you read across the quotes, and so does the bar at the top —
+       the same two things Excel freezes on any sheet somebody has to read sideways. */
+    views: [{ state: 'frozen', ySplit: STARTER_HEAD, xSplit: STARTER_FIXED.length, showOutlineSymbols: true }],
     pageSetup: { orientation: 'landscape', scale: 78,
       printTitlesRow: STARTER_HEAD + ':' + STARTER_HEAD, printTitlesColumn: 'A:F',
       margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
@@ -20419,13 +20450,10 @@ async function buildStarterXlsx(lines, opts) {
       ? lines.filter(x => x.dupTag).length + ' lines share a mark — shown in red' : '',
     'Started ' + shortDate(today())].filter(Boolean).join('    ·    '),
     { font: { size: 10, color: { argb: lines.some(x => x.dupTag) ? 'FFB91C1C' : SCH_INK.dim } } });
-  span(3, 'Name the vendor in the slot you put their number in — slot 1 does not have to be the same '
-    + 'firm all the way down. The 1 and 2 buttons at the top left shut and open what the spec says '
-    + 'under every line. Pick who you are going with at the end of the line and it lights up and '
-    + 'lands on the Vendors tab.',
-    { font: { size: 10, italic: true, color: { argb: SCH_INK.calcText } },
-      alignment: { wrapText: true, vertical: 'middle' } });
-  ws.getRow(3).height = 26;
+  /* Row 3 is the bar that stays put when the sheet is scrolled: somewhere to search from and the
+     jumps to each division, written once the lines are laid and their rows are known. The sheet
+     used to carry a paragraph telling you how it worked, which took the room and nobody read
+     twice. */
   ws.getRow(4).height = 6;
   /* The slot banner, so four columns read as one quote rather than four loose ones. */
   const banner = ws.getRow(STARTER_HEAD - 1);
@@ -20477,10 +20505,15 @@ async function buildStarterXlsx(lines, opts) {
   const tall = Math.min(STARTER_MAX_LINES, Math.max(2, most));
   const rowTall = tall * 11.6 + 5;
   let r = top;
-  const itemRows = [];
+  const itemRows = [], bandAt = [], sawDiv = Object.create(null);
   for (const ln of lines) {
     const row = ws.getRow(r);
     if (ln.band) {
+      /* Where each division starts, for the jumps in the bar at the top. A job is nearly always
+         two of them and the plumbing is a long way down the sheet from the sheet metal. */
+      const num = String((ln.sec || {}).number || (ln.sec || {}).key || '').trim();
+      const div = (num.match(/^(\d{2})/) || [])[1];
+      if (div && !sawDiv[div]) { sawDiv[div] = 1; bandAt.push({ div: div, row: r }); }
       ws.mergeCells(r, 1, r, nCols);
       const c = row.getCell(1);
       c.value = '  ' + (ln.sec.number || ln.sec.key) + '   ' + String(ln.sec.title || '').toUpperCase();
@@ -20519,12 +20552,24 @@ async function buildStarterXlsx(lines, opts) {
     const who = ln.makers || { short: '' };
     row.getCell(5).value = starterClip(who.short, perK, tall);
     row.getCell(6).value = starterClip(ln.must.short, perE, tall);
+    const quotes = ln.quotes || [];
     for (let i = 0; i < N; i++) {
       const a = slotAt(i);
       row.getCell(a + 1).numFmt = '#,##0';
       for (let k = 0; k < SW; k++) {
         const c = row.getCell(a + k);
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 ? 'FFF7FAFD' : 'FFEFF4FA' } };
+      }
+      /* Whatever was already put against this slot on the website. */
+      const got = quotes[i] || {};
+      if (got.v) row.getCell(a).value = got.v;
+      if (got.p != null && got.p !== '') row.getCell(a + 1).value = got.p;
+      if (got.lead != null && got.lead !== '') row.getCell(a + 2).value = got.lead;
+      if (got.f) {
+        const fc = row.getCell(a + 4);
+        fc.value = 'Quote: ' + (got.f.name || got.f.file || 'on file');
+        fc.font = { size: 8, italic: true, color: { argb: SCH_INK.dim } };
+        fc.alignment = { vertical: 'middle', wrapText: true };
       }
     }
     /* Which slot won, and the two cells that follow it out so the vendors tab has something plain
@@ -20544,7 +20589,9 @@ async function buildStarterXlsx(lines, opts) {
       const sc = row.getCell(slotAt(i) + 3);
       /* Put a name in the slot and it is something to ask for, until you say otherwise. Picking
          from the list writes over this, which is how it stops defaulting. */
-      sc.value = { formula: 'IF(' + C(slotAt(i)) + r + '="","","' + STARTER_ASK + '")' };
+      const had = (ln.quotes || [])[i] || {};
+      sc.value = had.st ? had.st
+        : { formula: 'IF(' + C(slotAt(i)) + r + '="","","' + STARTER_ASK + '")' };
       sc.dataValidation = { type: 'list', allowBlank: true,
         formulae: ['"' + STARTER_STATES.join(',') + '"'] };
       sc.font = { size: 9 };
@@ -20599,10 +20646,80 @@ async function buildStarterXlsx(lines, opts) {
   }
   const last = r - 1;
   return { wb: wb, ws: ws, XJ: XJ, N: N, SW: SW, nFix: nFix, nCols: nCols, slotAt: slotAt,
-    tailAt: tailAt, top: top, last: last, itemRows: itemRows, C: C, ST: ST, VCH: VCH, PCH: PCH };
+    tailAt: tailAt, top: top, last: last, itemRows: itemRows, bandAt: bandAt,
+    C: C, ST: ST, VCH: VCH, PCH: PCH };
+}
+/* The bar that stays put at the top of the exported sheet: somewhere to type what you are looking
+   for, and a jump to the top of each division. No macros in it — a cell you type into, a hidden
+   column that says whether a line matches, and the rest is conditional formatting and a link that
+   follows the first match. Type a mark, a section, a maker or a vendor and the lines that have it
+   light up; everything else stays where it is, so you can still see what is around them. */
+const STARTER_FIND_AT = 6;                  // column F, the cell you type into
+function starterFindBar(b) {
+  const { ws, nCols, nFix, N, slotAt, top, last, bandAt, C } = b;
+  const hid = nCols + 1, H = C(hid);
+  const find = '$' + C(STARTER_FIND_AT) + '$3';
+  const edge = { style: 'thin', color: { argb: SCH_INK.rule } };
+  ws.getRow(3).height = 21;
+  const lab = ws.getCell(3, STARTER_FIND_AT - 1);
+  lab.value = 'Find';
+  lab.font = { bold: true, size: 10, color: { argb: SCH_INK.dim } };
+  lab.alignment = { horizontal: 'right', vertical: 'middle' };
+  const box = ws.getCell(3, STARTER_FIND_AT);
+  box.value = null;
+  box.font = { size: 10.5, color: { argb: SCH_INK.title } };
+  box.alignment = { horizontal: 'left', vertical: 'middle' };
+  box.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+  box.border = { top: edge, left: edge, bottom: edge, right: edge };
+  /* What a line is searched on: its mark, what it is, the section, who the spec will take, what it
+     must meet, and whoever has been put in a quote slot. */
+  const bits = ['$A', '$B', '$D', '$E', '$F'];
+  for (let i = 0; i < N; i++) bits.push('$' + C(slotAt(i)));
+  const rg = '$' + H + '$' + top + ':$' + H + '$' + last;
+  for (let r = top; r <= last; r++) {
+    const look = bits.map(x => x + r).join('&" "&');
+    ws.getCell(r, hid).value = { formula: 'IF(' + find + '="",0,IF(ISNUMBER(SEARCH('
+      + find + ',' + look + ')),1,0))', result: 0 };
+  }
+  const col = ws.getColumn(hid);
+  col.width = 3; col.hidden = true;
+  if (last >= top) {
+    ws.mergeCells(3, STARTER_FIND_AT + 1, 3, STARTER_FIND_AT + 2);
+    const hits = ws.getCell(3, STARTER_FIND_AT + 1);
+    hits.value = { formula: 'IF(' + find + '="","",IF(SUM(' + rg + ')=0,"nothing found",'
+      + 'HYPERLINK("#A"&(MATCH(1,' + rg + ',0)+' + top + '-1),SUM(' + rg
+      + ')&" found — go to the first")))', result: '' };
+    hits.font = { size: 10, bold: true, color: { argb: 'FF1D4ED8' } };
+    hits.alignment = { horizontal: 'left', vertical: 'middle' };
+    /* The lines that match, lit up across the columns that say what they are. */
+    ws.addConditionalFormatting({
+      ref: 'A' + top + ':' + C(nFix) + last,
+      rules: [{ type: 'expression', priority: 1, formulae: ['$' + H + top + '=1'],
+        style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF08A' } },
+          font: { color: { argb: 'FF422006' } } } }]
+    });
+  }
+  /* And the jumps, in the part of the sheet that never scrolls away: a job is nearly always two
+     divisions and the plumbing is a long way down from the sheet metal. Two columns each, on the
+     left of the Find box; a third or fourth division carries on past it. */
+  const spots = [1, 3, STARTER_FIND_AT + 3, STARTER_FIND_AT + 5, STARTER_FIND_AT + 7];
+  const jumps = (bandAt || []).length > 1 ? bandAt : [];      // one division is not worth a jump
+  for (let i = 0; i < jumps.length; i++) {
+    const d = jumps[i], at = spots[i];
+    if (!at || at + 1 > nCols) break;
+    ws.mergeCells(3, at, 3, at + 1);
+    const c = ws.getCell(3, at);
+    c.value = { formula: 'HYPERLINK("#A' + d.row + '","↑ Div ' + d.div + '")',
+      result: '↑ Div ' + d.div };
+    c.font = { size: 10, bold: true, color: { argb: 'FF1D4ED8' }, underline: true };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF4FA' } };
+    c.border = { top: edge, left: edge, bottom: edge, right: edge };
+  }
 }
 function starterFinish(b, lines, opts) {
   const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, C, ST, VCH, PCH } = b;
+  starterFindBar(b);
   /* The one you picked goes green across its four cells, so a glance down the sheet says who the
      job is being bought from without reading a word. */
   /* Each slot coloured by where it stands, so a glance down the sheet says what is waiting on a
@@ -20898,16 +21015,21 @@ function openStarterModal() {
           secs.length < all ? ' of ' + all + ', matching the filter you have set' : ''}${
           prods ? ' · ' + prods + ' piece' + (prods === 1 ? '' : 's') + ' of equipment entered' : ' · no equipment entered yet'}.</div>
       </div>
-      <div class="modal-foot"><button class="btn primary" onclick="closePdf();exportStarterXlsx()">Build it</button></div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closePdf();exportStarterXlsx()"
+          title="The same sheet as an Excel file, carrying whatever has been typed into it already">Excel file</button>
+        <button class="btn primary" onclick="closePdf();openStarterPage()"
+          title="Open the sheet here, where everybody is working off the same one">Open the starter</button>
+      </div>
     </div></div>`;
 }
-async function exportStarterXlsx() {
+async function exportStarterXlsx(state) {
   if (!job) return;
   const secs = visibleSections();
   if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
   try {
     stickyToast('Building the starter…');
-    const lines = await starterLines(secs, starterMode);
+    const lines = starterWithState(await starterLines(secs, starterMode), state);
     const items = lines.filter(l => !l.band).length;
     if (!items) { toast('Nothing matched that choice — try "Both"', true); return; }
     const src = (STARTER_SOURCES.find(o => o.id === starterMode) || {}).label || '';
@@ -20929,6 +21051,244 @@ async function exportStarterXlsx() {
     console.error(e);
     toast('Could not build the starter: ' + (e.message || e), true);
   }
+}
+/* ── the submittal starter, on its own page ──
+   The sheet lives on the website now, so everybody is always looking at the same one. The page
+   itself is starter/index.html — a spreadsheet and nothing else. It holds no folder and no
+   database: it asks for a quote to be filed, or for a vendor to be gone with, and this page does
+   it. That is on purpose. A vendor's proposal must never land near the submittal process, and
+   there is one place that rule is kept. */
+const starterRef = jobId => FB.doc(FB.db, 'jobs', jobId, 'starter', 'sheet');
+function starterUrl() { try { return new URL('starter/index.html', location.href).href; } catch (x) { return 'starter/index.html'; } }
+let _stHost = null;            // { el, win, lines, pay, unsub, mine, pushed }
+let _stMsgWired = false, _stPopWired = false;
+/* What the page is handed: the line trimmed to what it needs, and a name it will be known by for
+   as long as the spec says the same thing — so a price typed against a line is still against that
+   line after the spec book is read again. */
+function starterKeyer() {
+  const norm = t => String(t || '').toUpperCase().replace(/[\s.\u2013-]+/g, '');
+  const seen = Object.create(null);
+  return ln => {
+    const sec = ln.sec || {};
+    let key = (sec.key || '') + '|' + norm(ln.tag || ln.mark) + '|' + norm(ln.name);
+    if (seen[key]) { seen[key]++; key += '#' + seen[key]; } else seen[key] = 1;
+    return key;
+  };
+}
+/* The lines with whatever has been typed into the sheet on the website laid over them: what was
+   edited on a line, the lines somebody put in by hand, and the quotes against each one. So the
+   Excel file is the same sheet rather than an empty one. */
+function starterWithState(lines, state) {
+  const st = state || {}, rows = st.rows || {}, add = st.add || {};
+  const keyOf = starterKeyer();
+  const out = [];
+  let atSec = null, mustOf = null, hasAdds = false;
+  const flush = () => {
+    if (!atSec) return;
+    for (const a of (add[atSec.key || ''] || [])) {
+      const r = rows[a.key] || {};
+      out.push({ sec: atSec, byHand: true, must: mustOf || { short: '', all: '' },
+        makers: starterMakers(null), tag: a.item || '', mark: a.item || '',
+        name: a.name || '', desc: '', covers: '', wording: '', lead: '',
+        qty: a.qty == null ? 1 : a.qty, quotes: r.s || [], chose: r.chose });
+      hasAdds = true;
+    }
+  };
+  for (const ln of lines) {
+    if (ln.band) { flush(); atSec = ln.sec || null; mustOf = null; out.push(ln); continue; }
+    if (ln.sub || ln.blank) { out.push(ln); continue; }
+    if (!mustOf) mustOf = ln.must || null;
+    const r = rows[keyOf(ln)] || {};
+    const over = {};
+    if (r.item != null && r.item !== '') { over.tag = r.item; over.mark = r.item; }
+    if (r.name != null && r.name !== '') { over.name = r.name; over.desc = ''; }
+    if (r.qty != null && r.qty !== '') over.qty = r.qty;
+    out.push(Object.assign({}, ln, over, { quotes: r.s || [], chose: r.chose }));
+  }
+  flush();
+  return out;
+}
+function starterPayload(lines) {
+  const keyOf = starterKeyer();
+  const out = [];
+  for (const l of lines) {
+    if (l.blank) continue;
+    const sec = l.sec || {};
+    const thin = { key: sec.key || '', number: sec.number || '', title: sec.title || '' };
+    if (l.band) { out.push({ band: true, sec: thin }); continue; }
+    if (l.sub) { out.push({ sub: true, sec: thin, article: l.article || '', name: l.name || '' }); continue; }
+    out.push({ sec: thin, key: keyOf(l), tag: l.tag || '', mark: l.mark || '', name: l.name || '',
+      desc: l.desc || '', qty: l.qty || 1, covers: l.covers || '',
+      pid: l.id || '', pids: l.pids || (l.id ? [l.id] : []),
+      makers: l.makers || null, must: l.must || null,
+      /* What the book said, which opens under the line rather than being squeezed into it. */
+      wording: l.wording || '', underArticle: l.underArticle || '', lead: l.lead || '',
+      dupTag: !!l.dupTag, dupWith: l.dupWith || '' });
+  }
+  return out;
+}
+async function openStarterPage() {
+  if (!job) return;
+  const secs = visibleSections();
+  if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
+  stickyToast('Opening the starter…');
+  let lines;
+  try { lines = await starterLines(secs, starterMode); }
+  catch (e) { toast('Could not read the spec: ' + (e.message || e), true); return; }
+  if (!lines.filter(l => !l.band && !l.sub).length) { toast('Nothing matched that choice — try “Both”', true); return; }
+  let state = {};
+  try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) state = d.data() || {}; } catch (e) {}
+  mountStarter(lines, state);
+}
+function closeStarter() {
+  if (_stHost) {
+    if (_stHost.unsub) { try { _stHost.unsub(); } catch (x) {} }
+    if (_stHost.el) { try { _stHost.el.remove(); } catch (x) {} }
+  }
+  _stHost = null;
+}
+function requestCloseStarter() {
+  if (_stHost && _stHost.pushed) { _stHost.pushed = false; try { history.back(); return; } catch (x) {} }
+  closeStarter();
+}
+function wireStarterPop() {
+  if (_stPopWired) return; _stPopWired = true;
+  window.addEventListener('popstate', () => { if (_stHost) { _stHost.pushed = false; closeStarter(); } });
+}
+function mountStarter(lines, state) {
+  closeStarter();
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff';
+  host.innerHTML = '<iframe style="border:0;width:100%;height:100%;display:block" src="'
+    + esc(starterUrl()) + '?dingus=1"></iframe>';
+  document.body.appendChild(host);
+  const iframe = host.querySelector('iframe');
+  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, mine: 0 };
+  wireStarterPop();
+  try { history.pushState({ __dingusStarter: true }, ''); _stHost.pushed = true; } catch (x) {}
+  iframe.addEventListener('load', () => { _stHost && (_stHost.win = iframe.contentWindow); });
+  wireStarterMessages();
+  watchStarter();
+}
+function toStarter(type, more) {
+  if (!_stHost || !_stHost.win) return;
+  const m = Object.assign({ __dingus: true, type: type }, more || {});
+  try { _stHost.win.postMessage(m, location.origin); } catch (x) {}
+}
+function sendStarter() {
+  if (!_stHost) return;
+  toStarter('starter-open', { job: { name: job.name || '', number: job.number || '' },
+    lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder });
+}
+/* Somebody else on the job typing into it. Their save comes back here and goes straight on. */
+function watchStarter() {
+  if (!_stHost || !job) return;
+  try {
+    _stHost.unsub = FB.onSnapshot(starterRef(job.id), d => {
+      if (!_stHost) return;
+      const v = (d && d.exists && d.exists()) ? (d.data() || {}) : null;
+      if (!v) return;
+      _stHost.state = v;
+      if (v.at && _stHost.mine && v.at <= _stHost.mine) return;
+      toStarter('starter-state', { state: v });
+    }, () => {});
+  } catch (x) {}
+}
+function wireStarterMessages() {
+  if (_stMsgWired) return; _stMsgWired = true;
+  window.addEventListener('message', async (ev) => {
+    if (ev.origin !== location.origin) return;
+    const d = ev.data; if (!d || !d.__dingus || !_stHost) return;
+    if (d.type === 'starter-ready') { _stHost.win = ev.source; sendStarter(); return; }
+    if (d.type === 'starter-save') { await keepStarterState(d); return; }
+    if (d.type === 'starter-upload') { await fileVendorQuote(d); return; }
+    if (d.type === 'starter-pick') { await goWithVendor(d); return; }
+    if (d.type === 'starter-see') { await seeVendorQuote(d); return; }
+    if (d.type === 'starter-export') { await starterToExcel(d); return; }
+  });
+}
+async function keepStarterState(d) {
+  if (!job) return;
+  const state = Object.assign({}, d.state || {}, { at: d.at || Date.now() });
+  _stHost.mine = state.at;
+  _stHost.state = state;
+  try { await FB.setDoc(starterRef(job.id), clean(state)); }
+  catch (e) { toStarter('starter-say', { text: 'Could not save: ' + (e.message || e), bad: true }); }
+  if (d.final) requestCloseStarter();
+}
+/* A vendor's proposal, filed where vendors' proposals go and nowhere else. */
+async function fileVendorQuote(d) {
+  const back = more => toStarter('starter-filed', Object.assign({ key: d.key, slot: d.slot }, more));
+  if (!jobFolder) { back({ ok: false, why: 'The ShareFile folder for this job is not loaded on this computer.' }); return; }
+  try {
+    const sec = findSection(d.secKey) || { key: d.secKey, number: d.secKey };
+    const who = String(d.vendor || '').trim();
+    const name = sanitizeFileName(who ? who + ' - ' + d.name : d.name);
+    const rec = await putFileInDir(new File([d.bytes], name), vendorQuoteDirFor(sec), name);
+    back({ ok: true, name: d.name, dir: rec.dir, file: rec.file });
+  } catch (e) { back({ ok: false, why: writeError(e) }); }
+}
+async function seeVendorQuote(d) {
+  if (!jobFolder || !d.dir || !d.file) { toast('That quote is not on this computer', true); return; }
+  try {
+    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
+    const dh = await walkDir(filesRoot, d.dir);
+    const fh = await dh.getFileHandle(d.file);
+    const url = URL.createObjectURL(await fh.getFile());
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast('Could not open it: ' + (e.message || e), true); }
+}
+/* Statuses that are further on than "ready to send" — going with a vendor must never drag a
+   section that is already with the GC back to the start of the queue. */
+const PAST_READY = { submitted_gc: 1, partial_approval: 1, approved: 1, revise_resubmit: 1,
+  revision_requested: 1, revision_sent: 1, na: 1 };
+/* Going with a vendor. The maker goes on the register, the one proposal we are going with is
+   copied into the submittal flow as the packet, and the section says it is ready to send. The
+   proposals we are not going with are not touched: they stay in the vendor quotes folder. */
+async function goWithVendor(d) {
+  const back = more => toStarter('starter-picked', Object.assign({ key: d.key, slot: d.slot }, more));
+  const s = findSection(d.secKey);
+  if (!s) { back({ ok: false, why: 'That line is not on a spec section any more.' }); return; }
+  const who = String(d.vendor || '').trim();
+  if (!who) { back({ ok: false, why: 'No vendor named in that slot.' }); return; }
+  try {
+    /* Who we are submitting on, against every product the line stands for. */
+    const want = new Set((d.pids && d.pids.length ? d.pids : [d.pid]).filter(Boolean));
+    const prods = sectionProducts(s);
+    let named = 0;
+    for (const p of prods) if (want.has(p.id)) { p.make = who; named++; }
+    if (!named && !String(s.manufacturer || '').trim()) s.manufacturer = who;
+
+    /* The packet. */
+    let where = '';
+    if (d.file && d.file.dir && d.file.file && jobFolder) {
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
+      const dh = await walkDir(filesRoot, d.file.dir);
+      const blob = await (await dh.getFileHandle(d.file.file)).getFile();
+      const dot = String(d.file.file).lastIndexOf('.');
+      const ext = dot > 0 ? String(d.file.file).slice(dot) : '';
+      const name = sanitizeFileName([String(s.number || s.key || '').trim(),
+        String(d.item || d.name || '').trim(), who].filter(Boolean).join(' - ') + ext);
+      const rec = await putFileInDir(new File([blob], name), statusDirName('ready_gc'), name);
+      s.submittals = (s.submittals || []).concat([{ id: uid('doc'), name: name, size: blob.size,
+        status: 'ready_gc', uploaded: Date.now(), dir: rec.dir, file: rec.file, vendor: who }]);
+      where = rec.dir;
+    }
+
+    if (!PAST_READY[s.status || 'not_started']) applyStatus(s, 'ready_gc', '');
+    await patchSection(s.key, { products: prods, manufacturer: s.manufacturer || '',
+      submittals: s.submittals || [], status: s.status, history: s.history || [] });
+    renderJob();
+    back({ ok: true, where: where });
+  } catch (e) { console.error(e); back({ ok: false, why: writeError(e) }); }
+}
+/* The same sheet as an Excel file, carrying whatever has been typed into it here. */
+async function starterToExcel(d) {
+  if (_stHost && d.state) _stHost.state = Object.assign({}, _stHost.state, d.state);
+  toStarter('starter-say', { text: 'Building the Excel file…' });
+  try { await exportStarterXlsx(_stHost ? _stHost.state : null); toStarter('starter-say', { text: 'Excel file downloaded' }); }
+  catch (e) { toStarter('starter-say', { text: 'Could not build it: ' + (e.message || e), bad: true }); }
 }
 function openExportMenu() {
   if (!job) return;
@@ -20953,8 +21313,8 @@ function openExportMenu() {
         <button class="choice-btn" onclick="closePdf();openStarterModal()">
           <b>▦ Submittal starter — to get quotes on</b>
           <span>A line per piece of equipment under the spec section it answers to, what that
-            section demands of it, and room for several quotes a line. Pick who you are going with
-            and it lands on a vendors tab.</span>
+            section demands of it, and room for several quotes a line. Open it here, where everybody
+            works off the same sheet, or take it away as an Excel file.</span>
         </button>
         <button class="choice-btn" onclick="closePdf();exportCsv()">
           <b>⤓ CSV spreadsheet</b>
@@ -21911,6 +22271,8 @@ async function ensureSubmittalCategoryFolders(filesRoot) {
     const rel = STATUS_DIR[id]; if (seen.has(rel)) continue; seen.add(rel);
     try { await walkDirCreate(filesRoot, rel); } catch (e) {}
   }
+  /* And the one folder that is not a status: what vendors sent in while we were still pricing. */
+  try { await walkDirCreate(filesRoot, VENDOR_QUOTE_DIR); } catch (e) {}
 }
 /* Where each old flat folder's leftovers belong now. */
 const OLD_FLAT_TARGET = {

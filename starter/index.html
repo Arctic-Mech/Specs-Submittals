@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Submittal starter</title>
+<style>
+  :root{
+    --ink:#0f172a; --dim:#64748b; --line:#e2e8f0; --rule:#cbd5e1; --bg:#fff;
+    --band:#f8fafc; --head:#1f2a37; --headink:#fff;
+    --sec:#fef3c7; --secink:#78350f; --sub:#f1f5f9; --subink:#334155;
+    --ask:#fdf0d5; --askink:#854d0e; --got:#ddebfb; --gotink:#1e3a8a;
+    --win:#d7f0db; --winink:#14532d; --bad:#b91c1c; --badbg:#fee2e2;
+    --pick:#1d4ed8; --find:#fef08a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    color:var(--ink);background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit}
+  .btn{border:1px solid var(--rule);background:#fff;color:var(--ink);border-radius:6px;
+    padding:4px 10px;cursor:pointer;white-space:nowrap}
+  .btn:hover:not(:disabled){background:#f1f5f9}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.go{background:var(--head);border-color:var(--head);color:#fff}
+  .btn.go:hover{background:#334155}
+
+  /* the two bars that stay put */
+  #bar{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--head);
+    color:var(--headink);flex:0 0 auto}
+  #bar b{font-size:14px}
+  #bar .job{opacity:.85;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #bar .gap{flex:1}
+  #bar .btn{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.25);color:#fff}
+  #bar .btn:hover:not(:disabled){background:rgba(255,255,255,.2)}
+  #bar .btn.go{background:#fff;border-color:#fff;color:var(--head);font-weight:600}
+
+  #find{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#f8fafc;
+    border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap}
+  #find label{color:var(--dim);font-weight:600}
+  #q{border:1px solid var(--rule);border-radius:6px;padding:4px 8px;width:260px;font:inherit}
+  #q:focus{outline:2px solid var(--pick);outline-offset:-1px}
+  #hits{color:var(--dim);min-width:92px}
+  #marks{display:flex;align-items:center;gap:6px;margin-left:auto}
+  #marks .lab{color:var(--dim)}
+
+  #wrap{flex:1;overflow:auto;position:relative}
+  table{border-collapse:separate;border-spacing:0;table-layout:fixed}
+  th,td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:3px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    vertical-align:middle;background:var(--bg)}
+  thead th{position:sticky;top:0;z-index:3;background:var(--head);color:var(--headink);
+    font-weight:600;text-align:center;border-right-color:#334155;cursor:default;
+    user-select:none}
+  thead tr.slots th{top:0;height:19px;font-size:11px;letter-spacing:.04em}
+  thead tr.heads th{height:26px}
+  thead tr.slots th.q{background:#2b3a4d}
+  thead tr.heads th.left{text-align:left}
+  th .grip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:4}
+  thead th{position:sticky}
+  .froze{position:sticky;z-index:2}
+  thead .froze{z-index:5}
+  tr.band td{background:var(--sec);color:var(--secink);font-weight:700;font-size:13px}
+  tr.says td{background:#fbfdff;white-space:normal;padding:7px 10px 8px 34px;
+    border-bottom:1px solid var(--rule)}
+  .said{display:flex;gap:10px;align-items:flex-start;padding:1px 0;max-width:1100px}
+  .said b{flex:0 0 112px;color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;
+    letter-spacing:.03em;padding-top:1px}
+  .said span{white-space:pre-wrap;color:var(--ink);min-width:0}
+  .opener{border:0;background:none;color:var(--dim);cursor:pointer;font-size:12px;padding:0 5px 0 0;
+    line-height:1}
+  .opener:hover{color:var(--pick)}
+  tr.sub td{background:var(--sub);color:var(--subink);font-weight:600}
+  tr.odd td{background:var(--band)}
+  tr.band td.froze,tr.sub td.froze{background:inherit}
+  td.ro{color:#475569}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.mid{text-align:center}
+  td.on{box-shadow:inset 0 0 0 2px var(--pick);border-radius:2px}
+  td.inrange{background:#eff6ff}
+  tr.hit td{background:var(--find)!important}
+  tr.hit td.froze{background:var(--find)!important}
+  .tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;vertical-align:bottom}
+  .dup{color:var(--bad);font-weight:700}
+  td.ask{background:var(--ask)!important;color:var(--askink)}
+  td.got{background:var(--got)!important;color:var(--gotink)}
+  td.win{background:var(--win)!important;color:var(--winink);font-weight:600}
+  .up{border:1px dashed var(--rule);border-radius:5px;background:#fff;color:var(--dim);
+    padding:1px 6px;cursor:pointer;font-size:11.5px;max-width:100%;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .up:hover{border-color:var(--pick);color:var(--pick)}
+  .have{display:flex;align-items:center;gap:4px;min-width:0}
+  .have a{color:var(--pick);text-decoration:none;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;min-width:0}
+  .have a:hover{text-decoration:underline}
+  .have .x{border:0;background:none;color:var(--dim);cursor:pointer;padding:0 2px;font-size:13px}
+  .have .x:hover{color:var(--bad)}
+  .addrow{border:0;background:rgba(0,0,0,.06);border-radius:5px;color:var(--secink);
+    cursor:pointer;padding:1px 8px;font-size:11.5px;font-weight:600;margin-left:10px}
+  .addrow:hover{background:rgba(0,0,0,.12)}
+  #edit{position:absolute;z-index:9;border:2px solid var(--pick);background:#fff;
+    font:inherit;padding:2px 5px;display:none;border-radius:2px}
+  #pick{position:absolute;z-index:9;border:2px solid var(--pick);background:#fff;
+    font:inherit;display:none;border-radius:2px}
+  #note{padding:24px;color:var(--dim);max-width:46em;line-height:1.5}
+  #say{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--head);
+    color:#fff;padding:7px 14px;border-radius:8px;z-index:20;opacity:0;transition:opacity .15s;
+    pointer-events:none;max-width:80vw}
+  #say.up{opacity:1}
+  #say.bad{background:var(--bad)}
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>Submittal starter</b>
+  <span class="job" id="jobName"></span>
+  <div class="gap"></div>
+  <button class="btn" id="bUndo" onclick="stepBack()" title="Undo (Ctrl+Z)">↶ Undo</button>
+  <button class="btn" id="bRedo" onclick="stepOn()" title="Redo (Ctrl+Y)">↷ Redo</button>
+  <button class="btn" onclick="toExcel()" title="Build the same sheet as an Excel file">Excel…</button>
+  <button class="btn go" onclick="leave()">✓ Done</button>
+</div>
+<div id="find">
+  <label for="q">Find</label>
+  <input id="q" type="search" placeholder="a mark, a section, a maker, anything on the sheet"
+    autocomplete="off" oninput="runFind()" onkeydown="findKey(event)">
+  <span id="hits"></span>
+  <button class="btn" onclick="hop(-1)" title="Previous match (Shift+Enter)">↑</button>
+  <button class="btn" onclick="hop(1)" title="Next match (Enter)">↓</button>
+  <button class="btn" onclick="openAll(1)" title="Open what the spec says under every line">⊕ all</button>
+  <button class="btn" onclick="openAll(0)" title="Shut them all">⊖ all</button>
+  <div id="marks"></div>
+</div>
+<div id="wrap"><div id="note">Waiting for the job to come through…</div></div>
+<input type="file" id="pickFile" style="display:none" accept=".pdf,.doc,.docx,.xls,.xlsx,.msg,.eml,.zip,.jpg,.jpeg,.png">
+<input id="edit"><select id="pick"></select>
+<div id="say"></div>
+<script>
+/* ──────────────────────────────────────────────────────────────────────────────
+   The submittal starter, on the website.
+
+   The same sheet everybody used to pass round as a spreadsheet, except there is
+   only ever one of it and everyone is looking at the same one. It behaves like a
+   spreadsheet on purpose — click a cell and type, arrow keys and tab move, copy
+   and paste work, and there is an undo — because that is what the people using
+   it already know how to do.
+
+   It holds no ShareFile folder and no database of its own. The page that opened
+   it does both: this one asks for a quote to be filed, or for a vendor to be
+   gone with, and the Dingus does it and says what happened. That is deliberate.
+   A vendor's proposal must never land anywhere near the submittal process, and
+   there is one place that rule is kept.
+   ────────────────────────────────────────────────────────────────────────────── */
+
+var HOST = null;                 // the window that opened us
+var JOB = { name: '', number: '' };
+var LINES = [];                  // what the spec and the register came to
+var ROWS = [];                   // what is drawn, a descriptor per table row
+var ST = null;                   // everything anybody typed
+var CAN_FILE = false;            // is a ShareFile folder loaded over there
+var READY = false;
+
+/* ── the shape of the sheet ── */
+var FIX = [
+  { k: 'item',   h: 'Item',        w: 104, edit: 1 },
+  { k: 'name',   h: 'What it is',  w: 280, edit: 1, left: 1 },
+  { k: 'qty',    h: 'Qty',         w: 52,  edit: 1, num: 1 },
+  { k: 'sec',    h: 'Spec section', w: 104 },
+  { k: 'makers', h: 'Who the spec will take', w: 250, left: 1 },
+  { k: 'must',   h: 'Must meet',   w: 250, left: 1 }
+];
+var SLOT = [
+  { k: 'v',  h: 'Vendor',   w: 150, edit: 1, left: 1 },
+  { k: 'p',  h: 'Price',    w: 92,  edit: 1, num: 1 },
+  { k: 'f',  h: 'Quote / submittal', w: 168, file: 1 },
+  { k: 'st', h: 'Where it stands',   w: 146, pick: 1 }
+];
+var TAIL = [
+  { k: 'chose', h: 'Going with', w: 150 },
+  { k: 'cp',    h: 'Their price', w: 92, num: 1 }
+];
+var ASK = 'Request from vendor', GOT = 'Received from vendor', WIN = 'Going with this one';
+var STATES = ['', ASK, GOT, WIN];
+var FROZEN = 2;                  // columns that stay put when you scroll sideways
+
+var COLS = [];                   // the flat column list, built once the slot count is known
+function layOut(n) {
+  COLS = [];
+  for (var i = 0; i < FIX.length; i++) COLS.push({ c: FIX[i], fix: i });
+  for (var s = 0; s < n; s++)
+    for (var j = 0; j < SLOT.length; j++) COLS.push({ c: SLOT[j], slot: s });
+  for (var t = 0; t < TAIL.length; t++) COLS.push({ c: TAIL[t], tail: t });
+  for (var x = 0; x < COLS.length; x++) {
+    COLS[x].at = x;
+    COLS[x].w = (ST && ST.w && ST.w[x]) || COLS[x].c.w;
+  }
+}
+
+/* ── talking to the Dingus ── */
+function tell(type, more) {
+  var m = { __dingus: true, type: type };
+  if (more) for (var k in more) m[k] = more[k];
+  try { (HOST || window.parent).postMessage(m, location.origin); } catch (e) {}
+}
+function say(text, bad) {
+  var el = document.getElementById('say');
+  el.textContent = text; el.className = 'up' + (bad ? ' bad' : '');
+  clearTimeout(say._t); say._t = setTimeout(function () { el.className = ''; }, bad ? 6000 : 2600);
+}
+window.addEventListener('message', function (ev) {
+  if (ev.origin !== location.origin) return;
+  var d = ev.data; if (!d || !d.__dingus) return;
+  if (d.type === 'starter-open') { HOST = ev.source || HOST; open(d); return; }
+  if (d.type === 'starter-state') { camein(d.state); return; }
+  if (d.type === 'starter-filed') { filed(d); return; }
+  if (d.type === 'starter-picked') { picked(d); return; }
+  if (d.type === 'starter-say') { say(d.text || '', !!d.bad); return; }
+});
+
+function open(d) {
+  HOST = HOST || window.parent;
+  JOB = d.job || JOB;
+  LINES = d.lines || [];
+  CAN_FILE = !!d.canFile;
+  ST = fill(d.state, d.slots || 4);
+  document.getElementById('jobName').textContent =
+    [JOB.number ? 'Job ' + JOB.number : '', JOB.name || ''].filter(Boolean).join('  ·  ');
+  READY = true;
+  layOut(ST.slots);
+  draw();
+  say(count() + ' line' + (count() === 1 ? '' : 's') + ' to get priced');
+}
+/* Whatever was saved before, with everything it does not have filled in. A sheet that has lost a
+   line because the spec was read again must not lose what was typed against the others. */
+function fill(state, slots) {
+  var s = state && typeof state === 'object' ? state : {};
+  return { slots: Math.max(2, Math.min(8, s.slots || slots)), rows: s.rows || {},
+    add: s.add || {}, w: s.w || {}, open: s.open || {}, at: s.at || 0 };
+}
+function count() { var n = 0; for (var i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'item') n++; return n; }
+
+/* A row the sheet has typing against, made on demand. */
+function row(key) {
+  if (!ST.rows[key]) ST.rows[key] = { s: [] };
+  var r = ST.rows[key];
+  if (!r.s) r.s = [];
+  while (r.s.length < ST.slots) r.s.push({});
+  return r;
+}
+
+/* ── what gets drawn ── */
+function rowsOf() {
+  var out = [], n = 0;
+  for (var i = 0; i < LINES.length; i++) {
+    var ln = LINES[i];
+    if (ln.blank) continue;
+    if (ln.band) {
+      out.push({ kind: 'band', line: ln, secKey: (ln.sec || {}).key || '' });
+      /* Lines somebody put in by hand go under the section they were put under. */
+      var mine = ST.add[(ln.sec || {}).key || ''] || [];
+      continue;
+    }
+    if (ln.sub) { out.push({ kind: 'sub', line: ln, secKey: (ln.sec || {}).key || '' }); continue; }
+    var key = ln.key || ('L' + i);
+    out.push({ kind: 'item', line: ln, key: key, secKey: (ln.sec || {}).key || '',
+      odd: (n++ % 2) === 1 });
+    if (ST.open && ST.open[key] && saysOf(ln).length)
+      out.push({ kind: 'says', line: ln, key: key, secKey: (ln.sec || {}).key || '' });
+  }
+  /* And the hand-written ones, each after the last line of its section. */
+  var withAdds = [];
+  for (var j = 0; j < out.length; j++) {
+    withAdds.push(out[j]);
+    var next = out[j + 1];
+    var lastOfSec = out[j].kind !== 'band' && (!next || next.kind === 'band' || next.secKey !== out[j].secKey);
+    var onlyBand = out[j].kind === 'band' && (!next || next.kind === 'band');
+    if (!lastOfSec && !onlyBand) continue;
+    var mine = ST.add[out[j].secKey] || [];
+    for (var m = 0; m < mine.length; m++)
+      withAdds.push({ kind: 'item', line: { sec: (out[j].line || {}).sec || {}, mine: true },
+        key: mine[m].key, secKey: out[j].secKey, own: mine[m], odd: (n++ % 2) === 1 });
+  }
+  return withAdds;
+}
+
+/* Everything the spec said about a line, which is too much for a cell and too useful to lose.
+   It opens under the line it belongs to — nothing behind a hover, nothing to guess at. */
+function saysOf(ln) {
+  var out = [];
+  if (ln.dupTag && ln.dupWith) out.push(['Same mark as', ln.dupWith]);
+  if (ln.underArticle) out.push(['Part of', ln.underArticle]);
+  if (ln.covers) out.push(['Covers', ln.covers]);
+  var who = ln.makers || {};
+  if (who.all && who.count > 1) out.push(['Will take', who.all]);
+  var must = ln.must || {};
+  if (must.full || must.all) out.push(['Must meet', must.full || must.all]);
+  if (ln.wording) out.push(['The book says', ln.wording]);
+  return out;
+}
+function cellText(d, col) {
+  var ln = d.line, own = d.own, r = ST.rows[d.key];
+  if (col.fix != null) {
+    var k = col.c.k;
+    if (k === 'item') return pick2(r && r.item, own && own.item, ln.tag || ln.mark || '');
+    if (k === 'name') return pick2(r && r.name, own && own.name, [ln.name, ln.desc].filter(Boolean).join(' — '));
+    if (k === 'qty') {
+      var q = pick2(r && r.qty, own && own.qty, ln.qty || '');
+      return q === '' ? '' : String(q);
+    }
+    if (k === 'sec') return String((ln.sec || {}).number || (ln.sec || {}).key || '');
+    if (k === 'makers') return ((ln.makers || {}).short || '');
+    if (k === 'must') return ((ln.must || {}).short || '');
+  }
+  if (col.slot != null) {
+    var sl = (r && r.s && r.s[col.slot]) || {};
+    if (col.c.k === 'f') return sl.f ? (sl.f.name || sl.f.file || 'quote') : '';
+    return sl[col.c.k] == null ? '' : String(sl[col.c.k]);
+  }
+  if (col.tail != null) {
+    if (!r || r.chose == null) return '';
+    var w = (r.s && r.s[r.chose]) || {};
+    return col.c.k === 'chose' ? (w.v || '') : (w.p == null ? '' : String(w.p));
+  }
+  return '';
+}
+function pick2(a, b, c) {
+  if (a != null && a !== '') return a;
+  if (b != null && b !== '') return b;
+  return c == null ? '' : c;
+}
+
+var TBL = null, CELLS = {};       // key: rowIndex + ':' + colIndex -> td
+function draw() {
+  ROWS = rowsOf();
+  var left = [], run = 0;
+  for (var i = 0; i < COLS.length; i++) { left.push(run); if (i < FROZEN) run += COLS[i].w; }
+  var wide = 0;
+  for (var w0 = 0; w0 < COLS.length; w0++) wide += COLS[w0].w;
+  var h = '<table id="grid" style="width:' + wide + 'px"><colgroup>';
+  for (var c = 0; c < COLS.length; c++) h += '<col style="width:' + COLS[c].w + 'px">';
+  h += '</colgroup><thead><tr class="slots">';
+  h += '<th colspan="' + FIX.length + '">WHAT IS BEING PRICED</th>';
+  for (var s = 0; s < ST.slots; s++)
+    h += '<th class="q" colspan="' + SLOT.length + '">QUOTE ' + (s + 1) + '</th>';
+  h += '<th colspan="' + TAIL.length + '">GOING WITH</th></tr><tr class="heads">';
+  for (var k = 0; k < COLS.length; k++) {
+    var cc = COLS[k].c;
+    h += '<th class="' + (cc.left ? 'left' : '') + (k < FROZEN ? ' froze' : '') + '"'
+      + (k < FROZEN ? ' style="left:' + left[k] + 'px"' : '')
+      + '>' + esc(cc.h) + '<span class="grip" data-grip="' + k + '"></span></th>';
+  }
+  h += '</tr></thead><tbody>';
+  for (var r2 = 0; r2 < ROWS.length; r2++) h += rowHtml(ROWS[r2], r2, left);
+  h += '</tbody></table>';
+  var wrap = document.getElementById('wrap');
+  wrap.innerHTML = h;
+  TBL = document.getElementById('grid');
+  CELLS = {};
+  var trs = TBL.tBodies[0].rows;
+  for (var t = 0; t < trs.length; t++) {
+    var tds = trs[t].cells;
+    for (var u = 0; u < tds.length; u++) {
+      var at = tds[u].getAttribute('data-c');
+      if (at != null) CELLS[t + ':' + at] = tds[u];
+    }
+  }
+  marks();
+  runFind(true);
+  able();
+  if (CUR) show(CUR.r, CUR.c, true);
+}
+function froze(k, left) { return k < FROZEN ? ' class="froze" style="left:' + left[k] + 'px"' : ''; }
+
+function rowHtml(d, at, left) {
+  if (d.kind === 'band') {
+    var sec = d.line.sec || {};
+    return '<tr class="band" data-r="' + at + '"><td colspan="' + COLS.length + '">'
+      + esc(String(sec.number || sec.key || '') + '   ' + String(sec.title || '').toUpperCase())
+      + '<button class="addrow" data-add="' + esc(sec.key || '') + '">+ add a line</button></td></tr>';
+  }
+  if (d.kind === 'sub')
+    return '<tr class="sub" data-r="' + at + '"><td colspan="' + COLS.length + '">'
+      + esc('   ' + [d.line.article, d.line.name].filter(Boolean).join('  ')) + '</td></tr>';
+  if (d.kind === 'says') {
+    var says = saysOf(d.line), bits = '';
+    for (var q = 0; q < says.length; q++)
+      bits += '<div class="said"><b>' + esc(says[q][0]) + '</b><span>' + esc(says[q][1]) + '</span></div>';
+    return '<tr class="says" data-r="' + at + '"><td colspan="' + COLS.length + '">' + bits + '</td></tr>';
+  }
+  var r = ST.rows[d.key], out = '<tr class="' + (d.odd ? 'odd' : '') + '" data-r="' + at + '">';
+  for (var k = 0; k < COLS.length; k++) out += cellHtml(d, COLS[k], k, left, r);
+  return out + '</tr>';
+}
+function cellHtml(d, col, k, left, r) {
+  var cc = col.c, cls = [], style = '', inner = esc(cellText(d, col));
+  if (k < FROZEN) { cls.push('froze'); style = 'left:' + left[k] + 'px'; }
+  if (cc.num) cls.push('num');
+  if (!cc.edit && !cc.pick && !cc.file) cls.push('ro');
+  if (cc.k === 'item' && d.line.dupTag) inner = '<span class="tag dup" title="'
+    + esc('This mark is on more than one line: ' + (d.line.dupWith || '')) + '">' + inner + '</span>';
+  /* What the spec said, opened under the line rather than squeezed into it. */
+  if (cc.k === 'name' && saysOf(d.line).length)
+    inner = '<button class="opener" data-open="' + esc(d.key) + '">'
+      + (ST.open && ST.open[d.key] ? '\u2296' : '\u2295') + '</button>' + inner;
+  if (cc.pick) {
+    var now = ((r && r.s && r.s[col.slot]) || {}).st || '';
+    if (now === ASK) cls.push('ask'); else if (now === GOT) cls.push('got');
+    else if (now === WIN) cls.push('win');
+    cls.push('mid');
+  }
+  if (col.tail != null && r && r.chose != null) cls.push('win');
+  if (cc.file) {
+    cls.push('mid');
+    var f = ((r && r.s && r.s[col.slot]) || {}).f;
+    inner = f
+      ? '<span class="have"><a href="#" data-see="' + k + '" title="' + esc(f.name || '') + '">'
+        + esc(trim(f.name || f.file || 'quote', 22)) + '</a>'
+        + '<button class="x" data-drop="' + k + '" title="Take it off this line">×</button></span>'
+      : '<button class="up" data-up="' + k + '">upload vendor quote/submittal</button>';
+  }
+  return '<td data-c="' + k + '" class="' + cls.join(' ') + '"'
+    + (style ? ' style="' + style + '"' : '') + '>' + inner + '</td>';
+}
+function trim(t, n) { t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+function esc(t) {
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* Repaint one row where it stands, instead of the whole sheet. */
+function redo(at) {
+  var d = ROWS[at]; if (!d || d.kind !== 'item') return;
+  var left = [], run = 0;
+  for (var i = 0; i < COLS.length; i++) { left.push(run); if (i < FROZEN) run += COLS[i].w; }
+  var r = ST.rows[d.key];
+  for (var k = 0; k < COLS.length; k++) {
+    var td = CELLS[at + ':' + k]; if (!td) continue;
+    var holder = document.createElement('tr');
+    holder.innerHTML = cellHtml(d, COLS[k], k, left, r);
+    var fresh = holder.cells[0];
+    td.className = fresh.className + (td.classList.contains('on') ? ' on' : '')
+      + (td.classList.contains('inrange') ? ' inrange' : '');
+    td.innerHTML = fresh.innerHTML;
+  }
+}
+
+/* ── where you are ── */
+var CUR = null, SEL = null;
+function itemAt(at) { return ROWS[at] && ROWS[at].kind === 'item'; }
+function nextItem(from, way) {
+  for (var i = from; i >= 0 && i < ROWS.length; i += way) if (itemAt(i)) return i;
+  return -1;
+}
+function show(r, c, keep) {
+  if (!itemAt(r)) { var f = nextItem(r, 1); if (f < 0) f = nextItem(r, -1); if (f < 0) return; r = f; }
+  c = Math.max(0, Math.min(COLS.length - 1, c));
+  paint(null);
+  CUR = { r: r, c: c };
+  if (!keep || !SEL) SEL = { r0: r, c0: c, r1: r, c1: c };
+  paint(CUR);
+  var td = CELLS[r + ':' + c];
+  if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+function paint(at) {
+  var old = TBL && TBL.querySelectorAll('td.on, td.inrange');
+  if (old) for (var i = 0; i < old.length; i++) old[i].classList.remove('on', 'inrange');
+  if (!at) return;
+  var td = CELLS[at.r + ':' + at.c]; if (td) td.classList.add('on');
+  if (!SEL) return;
+  var r0 = Math.min(SEL.r0, SEL.r1), r1 = Math.max(SEL.r0, SEL.r1);
+  var c0 = Math.min(SEL.c0, SEL.c1), c1 = Math.max(SEL.c0, SEL.c1);
+  if (r0 === r1 && c0 === c1) return;
+  for (var r = r0; r <= r1; r++) for (var c = c0; c <= c1; c++) {
+    var t = CELLS[r + ':' + c];
+    if (t && !(r === at.r && c === at.c)) t.classList.add('inrange');
+  }
+}
+
+/* ── typing in it ── */
+var EDIT = null;
+function editable(r, c) {
+  var d = ROWS[r], col = COLS[c];
+  if (!d || d.kind !== 'item' || !col) return false;
+  return !!(col.c.edit || col.c.pick);
+}
+function begin(r, c, wipe, first) {
+  if (!editable(r, c)) return;
+  var col = COLS[c], td = CELLS[r + ':' + c];
+  if (!td) return;
+  stop();
+  /* The box you type in sits over the cell. It hangs off the page, not off the scroller, so where
+     it goes is simply where the cell is on the screen — the page itself never scrolls. */
+  var box = td.getBoundingClientRect();
+  var top = box.top, leftAt = box.left;
+  var el;
+  if (col.c.pick) {
+    el = document.getElementById('pick');
+    el.innerHTML = '';
+    for (var i = 0; i < STATES.length; i++) {
+      var o = document.createElement('option');
+      o.value = STATES[i]; o.textContent = STATES[i] || '—';
+      el.appendChild(o);
+    }
+    el.value = cellText(ROWS[r], col);
+  } else {
+    el = document.getElementById('edit');
+    el.value = wipe ? (first == null ? '' : first) : cellText(ROWS[r], col);
+    el.style.textAlign = col.c.num ? 'right' : 'left';
+  }
+  el.style.display = 'block';
+  el.style.left = leftAt + 'px'; el.style.top = top + 'px';
+  el.style.width = box.width + 'px'; el.style.height = box.height + 'px';
+  el.focus();
+  if (el.select && !col.c.pick) { if (wipe) el.setSelectionRange(el.value.length, el.value.length); else el.select(); }
+  EDIT = { r: r, c: c, el: el, pick: !!col.c.pick };
+}
+function stop(save) {
+  if (!EDIT) return;
+  var e = EDIT; EDIT = null;
+  var v = e.el.value;
+  e.el.style.display = 'none'; e.el.blur();
+  if (save) write(e.r, e.c, v);
+}
+function write(r, c, v) {
+  var d = ROWS[r], col = COLS[c];
+  if (!d || d.kind !== 'item') return;
+  if (cellText(d, col) === String(v)) return;
+  mark();
+  var rec = row(d.key);
+  if (col.fix != null) {
+    var k = col.c.k;
+    if (k === 'qty') rec.qty = v === '' ? '' : (isNaN(Number(v)) ? v : Number(v));
+    else rec[k] = v;
+    if (d.own) { d.own[k] = v; }
+  } else if (col.slot != null) {
+    var sl = rec.s[col.slot];
+    if (col.c.k === 'st') setState(d, rec, col.slot, v);
+    else {
+      var was = sl[col.c.k];
+      sl[col.c.k] = col.c.k === 'p' ? (v === '' ? '' : (isNaN(money(v)) ? v : money(v))) : v;
+      /* Putting a vendor in a slot that had nobody in it means we are going out to them. */
+      if (col.c.k === 'v' && v && !was && !sl.st) sl.st = ASK;
+    }
+  }
+  redo(r);
+  keep();
+}
+function money(v) {
+  var n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? NaN : n;
+}
+/* Only one slot on a line can be the one we are going with. Saying so sends it over to be filed
+   and put on the register; the other two just colour the slot. */
+function setState(d, rec, slot, v) {
+  rec.s[slot].st = v;
+  if (v !== WIN) { if (rec.chose === slot) { rec.chose = null; } return; }
+  for (var i = 0; i < rec.s.length; i++) if (i !== slot && rec.s[i].st === WIN) rec.s[i].st = GOT;
+  rec.chose = slot;
+  var who = rec.s[slot].v || '';
+  if (!who) { say('Put the vendor in that slot first', true); rec.s[slot].st = ''; rec.chose = null; return; }
+  tell('starter-pick', { key: d.key, slot: slot, secKey: d.secKey,
+    vendor: who, price: rec.s[slot].p || '', file: rec.s[slot].f || null,
+    item: cellText(d, { fix: 0, c: FIX[0] }), name: cellText(d, { fix: 1, c: FIX[1] }) });
+  say('Going with ' + who + ' — filing the packet…');
+}
+function picked(d) {
+  if (!d.ok) {
+    var rec = ST.rows[d.key];
+    if (rec && rec.s && rec.s[d.slot]) { rec.s[d.slot].st = GOT; rec.chose = null; }
+    at(d.key, function (i) { redo(i); });
+    keep();
+    say(d.why || 'Could not put that on the register', true);
+    return;
+  }
+  say(d.where ? 'On the register — packet filed in ' + d.where : 'On the register');
+}
+function at(key, fn) { for (var i = 0; i < ROWS.length; i++) if (ROWS[i].key === key) fn(i); }
+
+/* ── undo ── */
+var BACK = [], ON = [];
+function snap() { return JSON.stringify({ rows: ST.rows, add: ST.add }); }
+function mark() { BACK.push(snap()); if (BACK.length > 120) BACK.shift(); ON.length = 0; able(); }
+function able() {
+  document.getElementById('bUndo').disabled = !BACK.length;
+  document.getElementById('bRedo').disabled = !ON.length;
+}
+function stepBack() {
+  if (!BACK.length) return;
+  ON.push(snap());
+  put(BACK.pop());
+  say('Undone');
+}
+function stepOn() {
+  if (!ON.length) return;
+  BACK.push(snap());
+  put(ON.pop());
+  say('Redone');
+}
+function put(json) {
+  var was = JSON.parse(json);
+  ST.rows = was.rows || {}; ST.add = was.add || {};
+  draw(); keep(); able();
+}
+
+/* ── saving ── */
+var _save = null, _mine = 0;
+function keep() {
+  clearTimeout(_save);
+  _save = setTimeout(function () {
+    _mine = Date.now();
+    tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w, open: ST.open }, at: _mine });
+  }, 500);
+}
+/* Somebody else changed it. Theirs wins unless we are in the middle of typing, in which case we
+   leave it until they are done — the next save of ours will carry it. */
+function camein(state) {
+  if (!READY || !state) return;
+  if (EDIT) return;
+  if (state.at && _mine && state.at <= _mine) return;
+  var fresh = fill(state, ST.slots);
+  if (JSON.stringify(fresh.rows) === JSON.stringify(ST.rows)
+    && JSON.stringify(fresh.add) === JSON.stringify(ST.add)) return;
+  ST.rows = fresh.rows; ST.add = fresh.add;
+  draw();
+  say('Brought in a change somebody else made');
+}
+
+/* ── the keyboard, the way a spreadsheet does it ── */
+document.addEventListener('keydown', function (e) {
+  if (!READY) return;
+  var inFind = e.target === document.getElementById('q');
+  if (EDIT) {
+    if (e.key === 'Escape') { e.preventDefault(); stop(false); show(EDIT ? EDIT.r : CUR.r, CUR.c); return; }
+    if (e.key === 'Enter') { e.preventDefault(); var at2 = EDIT; stop(true); move(at2.r, at2.c, e.shiftKey ? -1 : 1, 0); return; }
+    if (e.key === 'Tab') { e.preventDefault(); var at3 = EDIT; stop(true); move(at3.r, at3.c, 0, e.shiftKey ? -1 : 1); return; }
+    return;
+  }
+  if (inFind) return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault(); if (e.shiftKey) stepOn(); else stepBack(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); stepOn(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault(); document.getElementById('q').focus(); document.getElementById('q').select(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { copy(e); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+    e.preventDefault();
+    var f = nextItem(0, 1), l = nextItem(ROWS.length - 1, -1);
+    if (f >= 0) { SEL = { r0: f, c0: 0, r1: l, c1: COLS.length - 1 }; show(CUR ? CUR.r : f, CUR ? CUR.c : 0, true); }
+    return;
+  }
+  if (!CUR) return;
+  var r = CUR.r, c = CUR.c;
+  if (e.key === 'ArrowUp') { e.preventDefault(); move(r, c, -1, 0, e.shiftKey); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); move(r, c, 1, 0, e.shiftKey); return; }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); move(r, c, 0, -1, e.shiftKey); return; }
+  if (e.key === 'ArrowRight') { e.preventDefault(); move(r, c, 0, 1, e.shiftKey); return; }
+  if (e.key === 'Tab') { e.preventDefault(); move(r, c, 0, e.shiftKey ? -1 : 1); return; }
+  if (e.key === 'Enter') { e.preventDefault(); begin(r, c, false); return; }
+  if (e.key === 'F2') { e.preventDefault(); begin(r, c, false); return; }
+  if (e.key === 'Home') { e.preventDefault(); show(r, 0); return; }
+  if (e.key === 'End') { e.preventDefault(); show(r, COLS.length - 1); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); wipe(); return; }
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault(); begin(r, c, true, e.key); return;
+  }
+});
+function move(r, c, dr, dc, keepSel) {
+  var nr = r, nc = c;
+  if (dr) { var f = nextItem(r + dr, dr > 0 ? 1 : -1); if (f >= 0) nr = f; }
+  if (dc) {
+    nc = c + dc;
+    if (nc < 0) { var up = nextItem(r - 1, -1); if (up >= 0) { nr = up; nc = COLS.length - 1; } else nc = 0; }
+    else if (nc > COLS.length - 1) { var dn = nextItem(r + 1, 1); if (dn >= 0) { nr = dn; nc = 0; } else nc = COLS.length - 1; }
+  }
+  if (keepSel && SEL) { SEL.r1 = nr; SEL.c1 = nc; CUR = { r: nr, c: nc }; paint(CUR);
+    var td = CELLS[nr + ':' + nc]; if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; }
+  SEL = null;
+  show(nr, nc);
+}
+function range() {
+  if (!SEL) return null;
+  return { r0: Math.min(SEL.r0, SEL.r1), r1: Math.max(SEL.r0, SEL.r1),
+    c0: Math.min(SEL.c0, SEL.c1), c1: Math.max(SEL.c0, SEL.c1) };
+}
+function wipe() {
+  var g = range(); if (!g) return;
+  mark();
+  for (var r = g.r0; r <= g.r1; r++) {
+    if (!itemAt(r)) continue;
+    for (var c = g.c0; c <= g.c1; c++) if (editable(r, c)) quiet(r, c, '');
+    redo(r);
+  }
+  keep();
+}
+/* The same write, without a fresh undo mark — a range is one go, not one per cell. */
+function quiet(r, c, v) {
+  var d = ROWS[r], col = COLS[c], rec = row(d.key);
+  if (col.fix != null) { if (col.c.k === 'qty') rec.qty = v === '' ? '' : Number(v) || v; else rec[col.c.k] = v;
+    if (d.own) d.own[col.c.k] = v; return; }
+  if (col.slot == null) return;
+  var sl = rec.s[col.slot];
+  if (col.c.k === 'st') { sl.st = STATES.indexOf(v) > 0 ? v : ''; if (sl.st !== WIN && rec.chose === col.slot) rec.chose = null; return; }
+  var was = sl[col.c.k];
+  sl[col.c.k] = col.c.k === 'p' ? (v === '' ? '' : (isNaN(money(v)) ? v : money(v))) : v;
+  if (col.c.k === 'v' && v && !was && !sl.st) sl.st = ASK;
+}
+function copy(e) {
+  var g = range(); if (!g) return;
+  var out = [];
+  for (var r = g.r0; r <= g.r1; r++) {
+    if (!itemAt(r)) continue;
+    var line = [];
+    for (var c = g.c0; c <= g.c1; c++) line.push(String(cellText(ROWS[r], COLS[c])).replace(/[\t\r\n]+/g, ' '));
+    out.push(line.join('\t'));
+  }
+  var text = out.join('\n');
+  if (e && e.clipboardData) { e.clipboardData.setData('text/plain', text); e.preventDefault(); }
+  else if (navigator.clipboard) navigator.clipboard.writeText(text);
+  say(out.length + ' row' + (out.length === 1 ? '' : 's') + ' copied');
+}
+document.addEventListener('copy', function (e) { if (!EDIT && CUR) copy(e); });
+document.addEventListener('paste', function (e) {
+  if (EDIT || !CUR) return;
+  var text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text) return;
+  e.preventDefault();
+  var grid = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map(function (l) { return l.split('\t'); });
+  mark();
+  var r = CUR.r, put = 0;
+  for (var i = 0; i < grid.length && r < ROWS.length; i++) {
+    while (r < ROWS.length && !itemAt(r)) r++;
+    if (r >= ROWS.length) break;
+    for (var j = 0; j < grid[i].length; j++) {
+      var c = CUR.c + j;
+      if (c > COLS.length - 1) break;
+      if (!editable(r, c)) continue;
+      quiet(r, c, grid[i][j]); put++;
+    }
+    redo(r); r++;
+  }
+  keep();
+  say(put + ' cell' + (put === 1 ? '' : 's') + ' pasted');
+});
+
+/* ── the mouse ── */
+var DRAG = false, GRIP = null;
+document.addEventListener('mousedown', function (e) {
+  var grip = e.target.closest && e.target.closest('.grip');
+  if (grip) {
+    GRIP = { at: Number(grip.getAttribute('data-grip')), x: e.clientX, w: COLS[Number(grip.getAttribute('data-grip'))].w };
+    e.preventDefault(); return;
+  }
+  var opener = e.target.closest && e.target.closest('[data-open]');
+  if (opener) { e.preventDefault(); e.stopPropagation(); openOne(opener.getAttribute('data-open')); return; }
+  var add = e.target.closest && e.target.closest('[data-add]');
+  if (add) { addLine(add.getAttribute('data-add')); return; }
+  var up = e.target.closest && e.target.closest('[data-up]');
+  if (up) { askFile(up.closest('tr'), Number(up.getAttribute('data-up'))); return; }
+  var drop = e.target.closest && e.target.closest('[data-drop]');
+  if (drop) { dropFile(drop.closest('tr'), Number(drop.getAttribute('data-drop'))); return; }
+  var see = e.target.closest && e.target.closest('[data-see]');
+  if (see) { e.preventDefault(); seeFile(see.closest('tr'), Number(see.getAttribute('data-see'))); return; }
+  var td = e.target.closest && e.target.closest('td[data-c]');
+  if (!td) return;
+  var tr = td.closest('tr');
+  var r = Number(tr.getAttribute('data-r')), c = Number(td.getAttribute('data-c'));
+  if (EDIT && EDIT.r === r && EDIT.c === c) return;
+  stop(true);
+  if (e.shiftKey && CUR) { SEL = { r0: CUR.r, c0: CUR.c, r1: r, c1: c }; CUR = { r: r, c: c }; paint(CUR); return; }
+  SEL = null; show(r, c);
+  DRAG = true;
+});
+document.addEventListener('mousemove', function (e) {
+  if (GRIP) {
+    var w = Math.max(40, GRIP.w + (e.clientX - GRIP.x));
+    COLS[GRIP.at].w = w;
+    var col = TBL && TBL.getElementsByTagName('col')[GRIP.at];
+    if (col) col.style.width = w + 'px';
+    return;
+  }
+  if (!DRAG || !CUR) return;
+  var td = e.target.closest && e.target.closest('td[data-c]');
+  if (!td) return;
+  var tr = td.closest('tr');
+  var r = Number(tr.getAttribute('data-r')), c = Number(td.getAttribute('data-c'));
+  if (!itemAt(r)) return;
+  SEL = { r0: CUR.r, c0: CUR.c, r1: r, c1: c };
+  paint(CUR);
+});
+document.addEventListener('mouseup', function () {
+  if (GRIP) { ST.w[GRIP.at] = COLS[GRIP.at].w; GRIP = null; draw(); keep(); }
+  DRAG = false;
+});
+document.addEventListener('dblclick', function (e) {
+  var td = e.target.closest && e.target.closest('td[data-c]');
+  if (!td) return;
+  var tr = td.closest('tr');
+  begin(Number(tr.getAttribute('data-r')), Number(td.getAttribute('data-c')), false);
+});
+document.getElementById('pick').addEventListener('change', function () {
+  if (!EDIT) return;
+  var at2 = EDIT; stop(true); show(at2.r, at2.c);
+});
+document.getElementById('edit').addEventListener('blur', function () { stop(true); });
+/* Scroll the sheet while a cell is open and the box would be left behind, so it is put away. */
+document.addEventListener('scroll', function (e) {
+  if (EDIT && e.target && e.target.id === 'wrap') { var a = EDIT; stop(true); paint(CUR); }
+}, true);
+
+function openOne(key) {
+  if (!ST.open) ST.open = {};
+  if (ST.open[key]) delete ST.open[key]; else ST.open[key] = 1;
+  draw(); keep();
+}
+function openAll(on) {
+  ST.open = {};
+  if (on) for (var i = 0; i < ROWS.length; i++)
+    if (ROWS[i].kind === 'item' && saysOf(ROWS[i].line).length) ST.open[ROWS[i].key] = 1;
+  draw(); keep();
+}
+
+/* ── a line somebody puts in by hand ── */
+function addLine(secKey) {
+  mark();
+  if (!ST.add[secKey]) ST.add[secKey] = [];
+  var key = secKey + '|+' + (Date.now().toString(36)) + (ST.add[secKey].length + 1);
+  ST.add[secKey].push({ key: key, item: '', name: '', qty: 1 });
+  draw(); keep();
+  at(key, function (i) { show(i, 0); begin(i, 0, true, ''); });
+}
+
+/* ── the vendor's quote ── */
+var WANT = null;
+function slotOf(tr, k) {
+  var r = Number(tr.getAttribute('data-r')), col = COLS[k];
+  return { r: r, d: ROWS[r], slot: col.slot };
+}
+function askFile(tr, k) {
+  if (!CAN_FILE) { say('Load the job ShareFile folder in the Dingus first, then the quote can be filed', true); return; }
+  WANT = slotOf(tr, k);
+  var inp = document.getElementById('pickFile');
+  inp.value = ''; inp.click();
+}
+document.getElementById('pickFile').addEventListener('change', function () {
+  var f = this.files && this.files[0], w = WANT;
+  WANT = null;
+  if (!f || !w) return;
+  if (f.size > 60 * 1024 * 1024) { say('That file is over 60 MB — too big to hand across', true); return; }
+  var fr = new FileReader();
+  fr.onload = function () {
+    tell('starter-upload', { key: w.d.key, slot: w.slot, secKey: w.d.secKey,
+      name: f.name, size: f.size, bytes: fr.result,
+      vendor: ((ST.rows[w.d.key] || {}).s || [])[w.slot] && ST.rows[w.d.key].s[w.slot].v || '' });
+    say('Filing ' + f.name + '…');
+  };
+  fr.onerror = function () { say('Could not read that file', true); };
+  fr.readAsArrayBuffer(f);
+});
+function filed(d) {
+  if (!d.ok) { say(d.why || 'Could not file that quote', true); return; }
+  mark();
+  var rec = row(d.key);
+  rec.s[d.slot].f = { name: d.name, dir: d.dir, file: d.file };
+  /* A quote that has come in is a quote received, unless somebody has already said more. */
+  if (!rec.s[d.slot].st || rec.s[d.slot].st === ASK) rec.s[d.slot].st = GOT;
+  at(d.key, function (i) { redo(i); });
+  keep();
+  say('Filed in ' + (d.dir || 'the vendor quotes folder'));
+}
+function dropFile(tr, k) {
+  var w = slotOf(tr, k), rec = ST.rows[w.d.key];
+  if (!rec || !rec.s || !rec.s[w.slot] || !rec.s[w.slot].f) return;
+  mark();
+  delete rec.s[w.slot].f;
+  redo(w.r); keep();
+  say('Taken off the line — the file is still in the vendor quotes folder');
+}
+function seeFile(tr, k) {
+  var w = slotOf(tr, k), rec = ST.rows[w.d.key];
+  var f = rec && rec.s && rec.s[w.slot] && rec.s[w.slot].f;
+  if (!f) return;
+  tell('starter-see', { dir: f.dir, file: f.file, name: f.name });
+}
+
+/* ── find, and the jumps ── */
+var HITS = [], SPOT = -1;
+function hay(d) {
+  var bits = [];
+  for (var k = 0; k < COLS.length; k++) {
+    var col = COLS[k];
+    if (col.c.k === 'must' || col.c.k === 'makers' || col.fix != null || col.c.k === 'v')
+      bits.push(cellText(d, col));
+  }
+  var sec = d.line.sec || {};
+  bits.push(sec.number || '', sec.title || '');
+  return bits.join(' · ').toLowerCase();
+}
+function runFind(quietly) {
+  var q = String(document.getElementById('q').value || '').trim().toLowerCase();
+  var was = TBL && TBL.querySelectorAll('tr.hit');
+  if (was) for (var i = 0; i < was.length; i++) was[i].classList.remove('hit');
+  HITS = []; SPOT = -1;
+  if (!q || !TBL) { document.getElementById('hits').textContent = ''; return; }
+  var bands = {};
+  for (var r = 0; r < ROWS.length; r++) {
+    var d = ROWS[r];
+    if (d.kind === 'band') { bands[d.secKey] = r; continue; }
+    if (d.kind !== 'item') continue;
+    if (hay(d).indexOf(q) < 0) continue;
+    HITS.push(r);
+    var tr = TBL.tBodies[0].rows[r];
+    if (tr) tr.classList.add('hit');
+  }
+  document.getElementById('hits').textContent = HITS.length
+    ? HITS.length + ' found' : 'nothing found';
+  if (!quietly && HITS.length) hop(1);
+}
+function findKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); hop(e.shiftKey ? -1 : 1); }
+  if (e.key === 'Escape') { e.preventDefault(); e.target.value = ''; runFind(true); }
+}
+function hop(way) {
+  if (!HITS.length) return;
+  SPOT = (SPOT + way + HITS.length) % HITS.length;
+  var r = HITS[SPOT];
+  SEL = null;
+  show(r, 0);
+  var tr = TBL.tBodies[0].rows[r];
+  if (tr) tr.scrollIntoView({ block: 'center' });
+  document.getElementById('hits').textContent = (SPOT + 1) + ' of ' + HITS.length;
+}
+/* Jumps to the top of each division on the sheet, because a job is nearly always two of them and
+   the plumbing is a long way from the sheet metal. */
+function marks() {
+  var seen = {}, out = [];
+  for (var r = 0; r < ROWS.length; r++) {
+    if (ROWS[r].kind !== 'band') continue;
+    var num = String((ROWS[r].line.sec || {}).number || (ROWS[r].line.sec || {}).key || '').trim();
+    var div = (num.match(/^(\d{2})/) || [])[1];
+    if (!div || seen[div]) continue;
+    seen[div] = 1; out.push({ div: div, r: r });
+  }
+  var host = document.getElementById('marks');
+  if (out.length < 2) { host.innerHTML = ''; return; }
+  var h = '<span class="lab">Jump to</span>';
+  for (var i = 0; i < out.length; i++)
+    h += '<button class="btn" onclick="jump(' + out[i].r + ')">Div ' + out[i].div + '</button>';
+  host.innerHTML = h;
+}
+function jump(r) {
+  var tr = TBL && TBL.tBodies[0].rows[r];
+  if (tr) tr.scrollIntoView({ block: 'start' });
+  var f = nextItem(r, 1);
+  if (f >= 0) { SEL = null; show(f, 0); }
+}
+
+function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST.rows, add: ST.add } }); }
+function leave() { clearTimeout(_save); tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w, open: ST.open }, at: Date.now(), final: true }); }
+
+tell('starter-ready', {});
+setTimeout(function () {
+  if (!READY) document.getElementById('note').textContent =
+    'This page is part of The Dingus — open it from the Submittals tab of a job.';
+}, 2500);
+</script>
+</body>
+</html>
