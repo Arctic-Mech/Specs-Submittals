@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.41';
+const APP_VERSION = 'v8.42';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20505,7 +20505,7 @@ async function buildStarterXlsx(lines, opts) {
   const tall = Math.min(STARTER_MAX_LINES, Math.max(2, most));
   const rowTall = tall * 11.6 + 5;
   let r = top;
-  const itemRows = [], bandAt = [], sawDiv = Object.create(null);
+  const itemRows = [], realRows = [], bandAt = [], sawDiv = Object.create(null);
   for (const ln of lines) {
     const row = ws.getRow(r);
     if (ln.band) {
@@ -20537,6 +20537,10 @@ async function buildStarterXlsx(lines, opts) {
       r++; continue;
     }
     itemRows.push(r);
+    /* The rows left empty to type on are rows like any other — they get the borders, the boxes and
+       the working out — but they are not lines anybody has to go and price, so they are not counted
+       as such. */
+    if (!ln.blank) realRows.push(r);
     if (ln.blank) {
       /* Nothing typed on it yet, but everything a line needs is already here: its section, the
          borders, the boxes and the working out. */
@@ -20646,7 +20650,7 @@ async function buildStarterXlsx(lines, opts) {
   }
   const last = r - 1;
   return { wb: wb, ws: ws, XJ: XJ, N: N, SW: SW, nFix: nFix, nCols: nCols, slotAt: slotAt,
-    tailAt: tailAt, top: top, last: last, itemRows: itemRows, bandAt: bandAt,
+    tailAt: tailAt, top: top, last: last, itemRows: itemRows, realRows: realRows, bandAt: bandAt,
     C: C, ST: ST, VCH: VCH, PCH: PCH };
 }
 /* The bar that stays put at the top of the exported sheet: somewhere to type what you are looking
@@ -20718,7 +20722,7 @@ function starterFindBar(b) {
   }
 }
 function starterFinish(b, lines, opts) {
-  const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, C, ST, VCH, PCH } = b;
+  const { wb, ws, N, SW, nCols, slotAt, tailAt, top, last, itemRows, realRows, C, ST, VCH, PCH } = b;
   starterFindBar(b);
   /* The one you picked goes green across its four cells, so a glance down the sheet says who the
      job is being bought from without reading a word. */
@@ -20754,7 +20758,7 @@ function starterFinish(b, lines, opts) {
   sr.getCell(1).font = { bold: true, size: 11, color: { argb: SCH_INK.headText } };
   sr.getCell(1).alignment = { vertical: 'middle' };
   const picked = itemRows.length
-    ? '=COUNTIF(' + VCH + top + ':' + VCH + last + ',"?*")&" of ' + itemRows.length + ' picked"' : '""';
+    ? '=COUNTIF(' + VCH + top + ':' + VCH + last + ',"?*")&" of ' + (realRows || itemRows).length + ' picked"' : '""';
   sr.getCell(6).value = { formula: picked.slice(1) };
   sr.getCell(6).font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
   sr.getCell(6).alignment = { horizontal: 'left' };

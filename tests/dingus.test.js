@@ -955,6 +955,76 @@ const testCode = `
       hf(9)[24].indexOf(DT + '9<>""') > 0);
     ck('excel: a row with nothing on it is no part of where a block begins',
       hf(9)[24].indexOf('$B9=""') > 0);
+
+    /* ── the submittal starter: what lands where ──
+       Two firms quote a piece of equipment and we go with one of them. Both proposals belong in
+       the vendor quotes folder; only the one we are going with may be copied into the submittal
+       flow. The other must stay where it is, so nobody looking for the submittal picks it up. */
+    var store = { dirs: {}, files: {} };
+    var fakeDir = function (name, path) {
+      return {
+        kind: 'directory', name: name,
+        getDirectoryHandle: async function (n, o) {
+          var q = path ? path + '/' + n : n;
+          if (!store.dirs[q]) { if (!o || !o.create) { var e = new Error('NotFound'); e.name = 'NotFoundError'; throw e; } store.dirs[q] = 1; }
+          return fakeDir(n, q);
+        },
+        getFileHandle: async function (n, o) {
+          var q = (path ? path + '/' : '') + n;
+          if (!(q in store.files)) { if (!o || !o.create) { var e2 = new Error('NotFound'); e2.name = 'NotFoundError'; throw e2; } store.files[q] = 1; }
+          return { kind: 'file', name: n,
+            createWritable: async function () { return { write: async function () {}, close: async function () {} }; },
+            getFile: async function () { return new File([], n); } };
+        },
+        removeEntry: async function () {},
+        values: function () { return { next: async function () { return { done: true }; },
+          [Symbol.asyncIterator]: function () { return this; } }; }
+      };
+    };
+    jobFolder = fakeDir('Job folder', '');
+    var sec2 = { key: '224000', number: '22 40 00', title: 'Plumbing Fixtures',
+      status: 'not_started', history: [], submittals: [], responses: [],
+      products: [{ id: 'p1', tag: 'HB-1', name: 'Wall hydrant', make: '', marks: [] },
+                 { id: 'p2', tag: 'FCO', name: 'Floor cleanout', make: '', marks: [] }] };
+    job = { id: 'j1', name: 'Test job', number: '26-0147', sections: [sec2] };
+    jobs = [job];
+    patchSection = async function () {};
+    renderJob = function () {};
+    var said = [];
+    _stHost = { el: null, win: { postMessage: function (m) { said.push(m); } },
+      lines: [], pay: [], state: {}, mine: 0 };
+
+    await fileVendorQuote({ key: 'k1', slot: 0, secKey: '224000', vendor: 'Ferguson',
+      name: 'HB-1 quote.pdf', bytes: new Uint8Array([5, 6, 7]) });
+    var filed = said[said.length - 1];
+    ck('starter: a vendor quote is filed under the vendor quotes folder',
+      filed.ok === true && filed.dir === VENDOR_QUOTE_DIR + '/22 40 00 Plumbing Fixtures');
+    ck('starter: and the file carries whose quote it is',
+      filed.file === 'Ferguson - HB-1 quote.pdf');
+
+    await fileVendorQuote({ key: 'k1', slot: 1, secKey: '224000', vendor: 'Consolidated',
+      name: 'HB-1 quote.pdf', bytes: new Uint8Array([8, 9]) });
+    await goWithVendor({ key: 'k1', slot: 0, secKey: '224000', vendor: 'Ferguson',
+      item: 'HB-1', name: 'Wall hydrant', pid: 'p1', pids: ['p1'],
+      file: { dir: filed.dir, file: filed.file, name: filed.name } });
+    var picked = said[said.length - 1];
+    var wrote = Object.keys(store.files).sort();
+    ck('starter: going with one of them copies that one into the submittal flow',
+      picked.ok === true && picked.where === STATUS_DIR.ready_gc);
+    ck('starter: the proposals we are not going with stay where they are',
+      wrote.filter(function (f) { return f.indexOf(STATUS_DIR.ready_gc) >= 0; }).length === 1 &&
+      wrote.filter(function (f) { return f.indexOf('Consolidated') >= 0; })
+        .every(function (f) { return f.indexOf(VENDOR_QUOTE_DIR) >= 0; }));
+    ck('starter: the maker goes on the product the line stands for, and no other',
+      sec2.products[0].make === 'Ferguson' && sec2.products[1].make === '');
+    ck('starter: and the section says it is ready to send',
+      sec2.status === 'ready_gc' && (sec2.submittals || []).length === 1 &&
+      sec2.submittals[0].status === 'ready_gc' && sec2.submittals[0].vendor === 'Ferguson');
+    ck('starter: going with somebody already with the GC does not drag it back',
+      (function () {
+        var s3 = Object.assign({}, sec2, { status: 'approved' });
+        return !!PAST_READY[s3.status];
+      })());
     ck('excel: nothing reaches past the last row of the sheet',
       hf(40).join(' ').indexOf('$41') < 0 && hf(7).join(' ').indexOf('$6:') < 0);
     ck('excel: going back from the end the run reads the other neighbour',
