@@ -129,6 +129,10 @@ a { color: var(--accent); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
 .btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+/* The submittal starter is a place people go to all day, so its way in is not a ghost like the
+   rest of the toolbar — it is filled and sits forward. */
+.btn.starter-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.starter-btn:hover { filter: brightness(1.08); }
 .btn.danger { color: var(--red); border-color: var(--border-2); }
 .btn.danger:hover { background: var(--red-sf); border-color: var(--red); }
 .btn.sm { padding: 4px 9px; font-size: 12px; }
@@ -1559,7 +1563,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
   <div id="jobActions" class="job-actions" hidden>
     <span id="folderSaveStatus" class="save-status" hidden onclick="saveNow()"></span>
     <button class="btn ghost" onclick="openSpecMenu()" id="btnSpec" title="The spec book — open it, upload a new issue, or remove one">📄 <span class="lbl">Spec book</span></button>
-    <button class="btn ghost" onclick="openStarterModal()" id="btnStarter" title="The submittal starter — get the job priced, pick who you are going with">▦ <span class="lbl">Starter</span></button>
+    <button class="btn starter-btn" onclick="openStarter()" id="btnStarter" title="The submittal starter — get the job priced, pick who you are going with. Its own link to share.">▦ <span class="lbl">Submittal Starter</span></button>
     <button class="btn ghost" onclick="openExportMenu()" title="Export the submittal register (PDF or CSV)">⤓ <span class="lbl">Export</span></button>
   </div>
   <button class="me-chip" id="meChip" onclick="askMeName()" title="Who you are on this device — your name goes on what you change"></button>
@@ -1720,7 +1724,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.50';
+const APP_VERSION = 'v8.51';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4234,11 +4238,13 @@ function watchJobs() {
         .sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0));
       jobsLoaded = true;
       setSync('live');
-      if (!_deepLinkDone && jobs.length) {          // "Open The Dingus" launcher deep-links via ?job=<id>
+      if (!_deepLinkDone && jobs.length) {          // deep links: ?job=<id>, or #starter/<id> straight into the starter
         _deepLinkDone = true;
         try {
+          const m = /^#starter\/(.+)$/.exec(location.hash || '');
           const want = new URLSearchParams(location.search).get('job');
-          if (want && view === 'jobs' && jobs.some(x => x.id === want)) openJob(want);
+          if (m && jobs.some(x => x.id === decodeURIComponent(m[1]))) openStarterForJob(decodeURIComponent(m[1]));
+          else if (want && view === 'jobs' && jobs.some(x => x.id === want)) openJob(want);
         } catch (e) {}
       }
       if (job) {
@@ -21311,6 +21317,21 @@ function starterStarted(state) {
   }
   return false;
 }
+/* The one way in: the button on the job, or a #starter/<job> link. It opens the sheet straight
+   away when one is already going, and otherwise asks what to start it from. The URL carries the
+   job so the link is shareable. */
+function openStarter() { openStarterModal(); }
+/* A #starter/<job> link, from a cold start: open the job, wait for its sections to arrive, then
+   open the starter. */
+async function openStarterForJob(jobId) {
+  const j = jobs.find(x => x.id === jobId); if (!j) return;
+  if (!job || job.id !== jobId) await openJob(jobId);
+  for (let i = 0; i < 50 && job && job.id === jobId && !sectionsOf(job).length; i++)
+    await new Promise(r => setTimeout(r, 100));
+  if (!job || job.id !== jobId) return;
+  if (jobTab !== 'submittals') { jobTab = 'submittals'; renderJob(); }
+  openStarter();
+}
 async function openStarterModal() {
   if (!job) return;
   const secs = visibleSections();
@@ -21489,6 +21510,8 @@ function closeStarter() {
     if (_stHost.el) { try { _stHost.el.remove(); } catch (x) {} }
   }
   _stHost = null;
+  /* Leave the job in the URL, not the starter, once it is shut. */
+  if (/^#starter\//.test(location.hash || '')) { try { history.replaceState(history.state, '', location.pathname + location.search); } catch (x) {} }
 }
 function requestCloseStarter() {
   if (_stHost && _stHost.pushed) { _stHost.pushed = false; try { history.back(); return; } catch (x) {} }
@@ -21508,7 +21531,7 @@ function mountStarter(lines, state) {
   const iframe = host.querySelector('iframe');
   _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, mine: 0 };
   wireStarterPop();
-  try { history.pushState({ __dingusStarter: true }, ''); _stHost.pushed = true; } catch (x) {}
+  try { history.pushState({ __dingusStarter: true }, '', '#starter/' + encodeURIComponent(job.id)); _stHost.pushed = true; } catch (x) {}
   iframe.addEventListener('load', () => { _stHost && (_stHost.win = iframe.contentWindow); });
   wireStarterMessages();
   watchStarter();
@@ -22651,6 +22674,7 @@ async function markFolderLoaded(handle) {
 async function tryAutoLoadFolder(jobId) {
   jobFolder = null; folderRemembered = null; jobFolderCount = null;
   updateFolderBar();
+  if (onFirebase()) return;               // a cloud job has no folder to find
   if (!fsSupported()) return;
   const handle = await recallHandle(jobId);
   if (!handle) return;                    // never paired on this machine → pick when needed
@@ -22724,6 +22748,13 @@ function updateFolderBar() {
   if (!bar) return;
   if (!job) { bar.hidden = true; bar.innerHTML = ''; return; }
   bar.hidden = false;
+  /* A cloud job keeps its files in Firebase, so there is no folder to load or nag about — the bar
+     just says so, and offers the way back to a ShareFile folder on the home page. */
+  if (onFirebase()) {
+    bar.className = 'folder-bar on';
+    bar.innerHTML = '<span class="fb-ico">☁</span><span>This job’s files are in <b>cloud storage</b> — every device sees them, no folder needed.</span>';
+    return;
+  }
   const open = !!folderBarOpen;
   /* The folder's name is the one thing on here worth hiding: it is a ShareFile path, it means
      nothing to anybody else in the room, and it is the sort of thing that should not be read off
