@@ -1073,6 +1073,32 @@ const testCode = `
         (jobStorage({ storage: 'firebase' }) === 'firebase')
         && (jobStorage({}) === 'sharefile') && (jobStorage(null) === 'sharefile'));
 
+      ck('storage: the move finds a file in every kind of document',
+        fileRecsOf('sections', { submittals: [{ dir: 'a', file: 'x' }], responses: [{ dir: 'b', file: 'y' }],
+          releases: [{ emails: [{ dir: 'c', file: 'z' }] }] }).length === 3
+        && fileRecsOf('estimates', { docs: [{ dir: 'e', file: 'f' }], file: { dir: 'g', file: 'h' } }).length === 2
+        && fileRecsOf('contracts', { docs: [{ dir: 'i', file: 'j' }], changes: [{ docs: [{ dir: 'k', file: 'l' }] }] }).length === 2
+        && fileRecsOf('sections', { submittals: [{ link: true, url: 'http://x' }] }).length === 0);
+
+      ck('storage: the home-page total counts only the cloud jobs',
+        (function () {
+          var sj = jobs;
+          jobs = [{ id: 'a', storage: 'firebase', storageBytes: 100 },
+                  { id: 'b', storage: 'sharefile', storageBytes: 999 },
+                  { id: 'c', storage: 'firebase', storageBytes: 50 }];
+          var used = firebaseBytesUsed();
+          jobs = sj;
+          return used === 150;
+        })());
+
+      ck('storage: a stored file is counted at roughly its real size, not the base64',
+        (function () {
+          var sj = job; job = { id: 'q', storage: 'firebase', storageBytes: 0 };
+          bumpStorage(1000);                 // ~1.37x for the base64 that actually sits in the store
+          var v = job.storageBytes; job = sj;
+          return v >= 1300 && v <= 1400;
+        })());
+
       FB = saveFB; job = saveJob; jobFolder = saveFolder;
     })();
 

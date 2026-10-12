@@ -1366,6 +1366,21 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 .sync-dot.off { background: var(--red); }
 .sync-dot.wait { background: var(--amber); }
 
+.job-store {
+  position: absolute; top: 9px; right: 58px; width: 24px; height: 24px; border-radius: 5px;
+  border: none; background: transparent; color: var(--text-3); cursor: pointer; font-size: 14px; line-height: 1; opacity: .35;
+}
+.job-card:hover .job-store { opacity: 1; }
+.job-store.on { opacity: 1; color: var(--accent); }
+.job-store:hover { background: var(--surface-3); }
+.stg-gauge { margin-top: 20px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.stg-gauge.near { border-color: var(--amber); background: var(--amber-sf); }
+.stg-top { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
+.stg-top .muted { font-weight: 400; color: var(--text-3); }
+.stg-bar { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.stg-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.stg-gauge.near .stg-bar > span { background: var(--amber); }
+.stg-warn { margin-top: 8px; font-size: 11.5px; color: var(--amber); }
 .storage-note { margin-top: 22px; font-size: 12px; color: var(--text-3); line-height: 1.7; }
 .storage-note b { color: var(--text-2); font-weight: 600; }
 .notice {
@@ -1566,6 +1581,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
     <div id="legacyNotice"></div>
     <div id="homeWork"></div>
     <div class="jobs-grid" id="jobsGrid"></div>
+    <div id="storageGauge"></div>
     <div class="storage-note" id="storageNote"></div>
   </section>
 
@@ -2943,6 +2959,11 @@ async function saveJobMeta(j) {
        on every save, and every plan on the job would quietly recompute on a Mon-Fri week it was
        never set to. */
     workCal: target.workCal || {},
+    /* Where this job keeps its files — "firebase" or (the default) the ShareFile folder — and,
+       for a Firebase job, roughly how many bytes it is holding, so the home page can show how full
+       the shared store is without reading every file. */
+    storage: target.storage || 'sharefile',
+    storageBytes: target.storageBytes || 0,
     /* The companies typed on this job's plans. Kept here so one typed once is still on the list
        after the line it was typed on is gone. */
     crews: target.crews || [],
@@ -3236,9 +3257,15 @@ async function putFileInDir(file, relDir, cleanName, opts) {
   if (onFirebase()) {
     if (file.size > BLOB_MAX) throw new Error('That file is ' + Math.round(file.size / 1048576) + ' MB — over the ' + Math.round(BLOB_MAX / 1048576) + ' MB limit for a cloud-stored file.');
     const fixedId = (opts && opts.overwrite) ? fbOverwriteId(relDir, cleanName) : null;
-    const { blobId } = await blobPut(job.id, file, cleanName, fixedId);
-    return { dir: relDir, file: cleanName, fb: true, blobId, size: file.size };
+    const put = await blobPut(job.id, file, cleanName, fixedId);
+    bumpStorage(put.size - (put.oldSize || 0));
+    return { dir: relDir, file: cleanName, fb: true, blobId: put.blobId, size: file.size };
   }
+  return putToFolder(file, relDir, cleanName, opts);
+}
+/* The ShareFile side of putFileInDir, on its own so moving files between the two stores can reach
+   it without going back through the mode check. */
+async function putToFolder(file, relDir, cleanName, opts) {
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
   let dirHandle = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
   for (const part of relDir.split('/').filter(Boolean)) {
@@ -3354,12 +3381,25 @@ async function blobPut(jobId, blob, name, fixedId) {
   /* A file saved under a fixed id is one we overwrite in place — a spreadsheet mirror re-saved on
      every edit, say. Reusing the id means it does not pile up a new copy each time; any chunks the
      old, longer version had are cleared so nothing of it is left behind. */
-  let oldParts = 0;
-  if (fixedId) { try { oldParts = ((await FB.getDoc(blobDocRef(jobId, id))).data() || {}).n || 0; } catch (e) {} }
+  let oldParts = 0, oldSize = 0;
+  if (fixedId) { try { const m = (await FB.getDoc(blobDocRef(jobId, id))).data() || {}; oldParts = m.n || 0; oldSize = m.size || 0; } catch (e) {} }
   await FB.setDoc(blobDocRef(jobId, id), { n: parts, name: name || 'file', size: blob.size, type: blob.type || 'application/pdf', added: Date.now() });
   for (let i = 0; i < parts; i++) await FB.setDoc(blobPartRef(jobId, id, i), { d: b64.slice(i * STAGE_PART, (i + 1) * STAGE_PART) });
   for (let i = parts; i < oldParts; i++) { try { await FB.deleteDoc(blobPartRef(jobId, id, i)); } catch (e) {} }
-  return { blobId: id, parts, size: blob.size };
+  return { blobId: id, parts, size: blob.size, oldSize };
+}
+/* A rough tally of how many bytes this job holds in Firestore, kept on the job so the home page
+   can show how full the store is without reading every file. base64 is about a third bigger than
+   the file, which is what actually sits in the store, so that is what is counted. */
+function bumpStorage(bytes) {
+  if (!job || !bytes) return;
+  job.storageBytes = Math.max(0, Math.round((job.storageBytes || 0) + bytes * 1.37));
+  scheduleMetaSave();
+}
+let _metaSaveTimer = null;
+function scheduleMetaSave() {
+  clearTimeout(_metaSaveTimer);
+  _metaSaveTimer = setTimeout(() => { if (job) saveJobMeta().catch(() => {}); }, 1500);
 }
 /* A stable id for a file that lives at one place and is overwritten there, so re-saving reuses the
    same blob instead of leaving the last one orphaned. */
@@ -3372,7 +3412,9 @@ async function blobGet(jobId, id) {
   return new Blob([b64ToBytes(b64)], { type: meta.type || 'application/pdf' });
 }
 async function blobDel(jobId, id) {
-  try { const meta = (await FB.getDoc(blobDocRef(jobId, id))).data() || {}; for (let i = 0; i < (meta.n || 0); i++) { try { await FB.deleteDoc(blobPartRef(jobId, id, i)); } catch (e) {} } await FB.deleteDoc(blobDocRef(jobId, id)); } catch (e) {}
+  let size = 0;
+  try { const meta = (await FB.getDoc(blobDocRef(jobId, id))).data() || {}; size = meta.size || 0; for (let i = 0; i < (meta.n || 0); i++) { try { await FB.deleteDoc(blobPartRef(jobId, id, i)); } catch (e) {} } await FB.deleteDoc(blobDocRef(jobId, id)); } catch (e) {}
+  return size;
 }
 async function docUrl(doc) {
   if (!doc) return null;
@@ -4051,7 +4093,7 @@ async function assignUnassigned(i) {
 async function deleteStoredDoc(doc) {
   if (!doc) return;
   if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
-  if (doc.fb && doc.blobId) { await blobDel(job.id, doc.blobId); return; }   // a Firebase-stored file
+  if (doc.fb && doc.blobId) { const n = await blobDel(job.id, doc.blobId); bumpStorage(-(n || 0) / 1.37); return; }   // a Firebase-stored file
   if (!jobFolder) return;               // not loaded → the file stays in ShareFile
   try {
     const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
@@ -4622,6 +4664,7 @@ function renderJobs() {
     html += `<div class="job-card${fav ? ' fav' : ''}" onclick="openJob('${j.id}')">
       <button class="job-star" title="${fav ? 'One of your jobs — click to unstar' : 'Star this job so it sits at the front and shows on your home page'}" onclick="toggleFav('${j.id}',event)">${fav ? '★' : '☆'}</button>
       <button class="job-del" title="Delete job" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
+      <button class="job-store${jobStorage(j) === 'firebase' ? ' on' : ''}" title="${jobStorage(j) === 'firebase' ? 'Files are in the cloud — click to change where this job keeps its files' : 'Files are in the ShareFile folder — click to keep them in the cloud instead'}" onclick="event.stopPropagation();storageMenu('${j.id}')">${jobStorage(j) === 'firebase' ? '☁' : '📁'}</button>
       <h3>${esc(j.name)}</h3>
       <div class="meta">${j.number ? '<b>' + esc(j.number) + '</b> · ' : ''}${count} section${count === 1 ? '' : 's'} · ${fmtDate(j.updated || j.created)}</div>
       <div class="bar">${bars || '<span style="width:100%;background:var(--surface-3)"></span>'}</div>
@@ -4631,8 +4674,150 @@ function renderJobs() {
   html += `<div class="job-card new-card" onclick="newJob()"><span class="plus">+</span><span>New job</span></div>`;
   grid.innerHTML = html;
   renderLegacyNotice();
+  renderStorageGauge();
   renderStorageNote();
   renderHomeWork();
+}
+
+/* ── switching a job between ShareFile and Firebase ──
+   The file records that live in each kind of document, so a move can find every one of them. */
+function fileRecsOf(kind, data) {
+  const out = [];
+  const push = a => (a || []).forEach(r => { if (r && !isLink(r) && (r.dir || r.fb || r.staged || r.file)) out.push(r); });
+  if (kind === 'sections') { push(data.submittals); push(data.responses); (data.releases || []).forEach(r => push(r.emails)); }
+  else if (kind === 'rfis') push(data.docs);
+  else if (kind === 'drawings') { if (data.doc) push([data.doc]); push(data.markups); }
+  else if (kind === 'tracking') push(data.files);
+  else if (kind === 'changeorders') { push(data.docs); push(data.emails); }
+  else if (kind === 'ledger') { push(data.docs); push(data.emails); }
+  else if (kind === 'contracts') { push(data.docs); push(data.emails); (data.changes || []).forEach(ch => push(ch.docs)); }
+  else if (kind === 'estimates') { push(data.docs); if (data.file && (data.file.file || data.file.fb)) push([data.file]); }
+  return out;
+}
+const STORAGE_COLLS = [
+  ['sections', 'sections'], ['rfis', 'rfis'], ['drawings', 'drawings'], ['tracking', 'tracking'],
+  ['changeorders', 'changeorders'], ['quotes', 'ledger'], ['purchaseorders', 'ledger'],
+  ['contracts', 'contracts'], ['estimates', 'estimates']
+];
+/* Move every file on the open job from one store to the other, a document at a time, and record
+   where each one now lives. Reading is driven by the record itself, so it works whichever store the
+   file is in now; writing goes straight to the target store, not through the mode switch. The job's
+   mode is flipped only at the very end, once everything that could move has moved. */
+async function migrateJobStorage(to, onStep) {
+  const jobId = job.id;
+  let moved = 0, skipped = 0, bytes = 0, seen = 0;
+  const moveRec = async rec => {
+    const already = to === 'firebase' ? !!(rec.fb && rec.blobId) : !rec.fb;
+    if (already) return false;
+    let blob = null;
+    try { blob = await readDocBlob(rec); } catch (e) {}
+    if (!blob) { skipped++; return false; }
+    try {
+      if (to === 'firebase') {
+        const put = await blobPut(jobId, blob, rec.file || rec.name);
+        rec.fb = true; rec.blobId = put.blobId; bytes += put.size;
+      } else {
+        const oldId = rec.blobId;
+        const nm = rec.file || sanitizeFileName(rec.name || 'file.pdf');
+        const res = await putToFolder(new File([blob], nm), rec.dir || 'Filed', nm,
+          { overwrite: !!(rec.xlsx || rec.coProposal) });
+        rec.dir = res.dir; rec.file = res.file; delete rec.fb; delete rec.blobId;
+        if (oldId) { try { await blobDel(jobId, oldId); } catch (e) {} }
+      }
+      moved++; return true;
+    } catch (e) { skipped++; return false; }
+  };
+  for (const [coll, kind] of STORAGE_COLLS) {
+    let snap;
+    try { snap = await FB.getDocs(FB.collection(FB.db, 'jobs', jobId, coll)); } catch (e) { continue; }
+    for (const dsnap of (snap.docs || [])) {
+      const data = dsnap.data() || {};
+      const recs = fileRecsOf(kind, data); seen += recs.length;
+      let changed = false;
+      for (const rec of recs) if (await moveRec(rec)) changed = true;
+      if (changed) { try { await FB.setDoc(FB.doc(FB.db, 'jobs', jobId, coll, dsnap.id), clean(data)); } catch (e) {} }
+      if (onStep) onStep(moved, skipped, seen);
+    }
+  }
+  /* The spec books and the labor-rate source live on the job itself. */
+  for (const sp of (job.specs || [])) await moveRec(sp);
+  if (job.laborRates && job.laborRates.sourceDoc) await moveRec(job.laborRates.sourceDoc);
+  job.storage = to;
+  job.storageBytes = to === 'firebase' ? Math.round(bytes * 1.37) : 0;
+  await saveJobMeta();
+  return { moved, skipped, seen };
+}
+function storageModalShell(inner) {
+  $('modalHost').innerHTML = `<div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal">${inner}</div></div>`;
+}
+function storageMenu(jobId) {
+  const j = jobs.find(x => x.id === jobId); if (!j) return;
+  const onFb = jobStorage(j) === 'firebase';
+  storageModalShell(`
+    <div class="modal-head"><h3>Where ${esc(j.name)} keeps its files</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12.5px">Right now its PDFs and spreadsheets live
+        ${onFb ? '<b>in the cloud (Firebase)</b> — every device sees them, no folder needed.'
+               : 'in its <b>ShareFile folder</b> — reachable on a computer with the folder loaded.'}</p>
+      ${onFb ? `
+        <div class="folder-bar" style="margin:10px 0"><span class="fb-ico">☁</span><span>Cloud storage is on.
+          Switching back files everything into the ShareFile folder again (needs the folder loaded).</span></div>
+        <button class="btn" onclick="doStorageSwitch('${j.id}','sharefile')">Move back to the ShareFile folder</button>`
+      : `
+        <div class="folder-bar warn" style="margin:10px 0"><span class="fb-ico">⚠</span><span>Everything already
+          filed in ShareFile is copied up, and from then on every file is kept in the cloud. The whole shared
+          store is about 1 GB, and <b>anyone with this site's link can read what's in it</b> — the same as the
+          register text already is. The Arctic company file is never included.</span></div>
+        <div class="muted" style="font-size:12px;margin-bottom:10px">You'll need this job's ShareFile folder
+          loaded so the existing files can be read and copied up. Chrome or Edge, on a computer.</div>
+        <button class="btn primary" onclick="doStorageSwitch('${j.id}','firebase')">Turn on cloud storage & copy everything up</button>`}
+    </div>`);
+}
+let _storageBusy = false;
+async function doStorageSwitch(jobId, to) {
+  if (_storageBusy) return; _storageBusy = true;
+  try {
+    if (!job || job.id !== jobId) await openJob(jobId);
+    if (!jobFolder) {
+      if (!fsSupported()) { closePdf(); toast('Moving files needs Chrome or Edge on a computer with the folder', true); return; }
+      if (!(await loadJobFolder())) { closePdf(); toast('The ShareFile folder is needed to move the files', true); return; }
+    }
+    storageModalShell(`<div class="modal-head"><h3>${to === 'firebase' ? 'Moving files to the cloud…' : 'Moving files back to ShareFile…'}</h3></div>
+      <div class="modal-body"><div id="stgStep" class="muted">Starting…</div>
+      <div class="progress"><div id="stgBar" style="width:8%"></div></div></div>`);
+    const res = await migrateJobStorage(to, (m, s, seen) => {
+      const step = $('stgStep'), bar = $('stgBar');
+      if (step) step.textContent = `Moved ${m} file${m === 1 ? '' : 's'}${s ? ', ' + s + ' skipped' : ''}…`;
+      if (bar && seen) bar.style.width = Math.min(96, Math.round(m / Math.max(seen, 1) * 100)) + '%';
+    });
+    renderJobs();
+    storageModalShell(`<div class="modal-head"><h3>${to === 'firebase' ? 'Cloud storage is on' : 'Back on the ShareFile folder'}</h3>
+      <button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body"><p>${res.moved} file${res.moved === 1 ? '' : 's'} moved${res.skipped ? `, <b>${res.skipped} could not be read</b> and were left where they were — load the full folder and switch again to pick them up` : ''}.</p>
+      ${to === 'firebase' ? `<p class="muted" style="font-size:12px">New files on this job now go straight to the cloud.</p>` : ''}
+      <div class="modal-foot" style="margin-top:12px"><button class="btn primary" onclick="closePdf()">Done</button></div></div>`);
+  } catch (e) { console.error(e); closePdf(); toast('Could not finish: ' + (e.message || e), true); }
+  finally { _storageBusy = false; }
+}
+/* How full the shared cloud store is, across every Firebase job, against the ~1 GB free tier. */
+const FB_FREE_BYTES = 1024 * 1024 * 1024;
+function firebaseBytesUsed() {
+  return jobsInOrder().reduce((n, j) => n + (jobStorage(j) === 'firebase' ? (j.storageBytes || 0) : 0), 0);
+}
+function renderStorageGauge() {
+  const host = $('storageGauge'); if (!host) return;
+  const cloudJobs = jobsInOrder().filter(j => jobStorage(j) === 'firebase');
+  if (!cloudJobs.length) { host.innerHTML = ''; return; }
+  const used = firebaseBytesUsed();
+  const pct = Math.min(100, used / FB_FREE_BYTES * 100);
+  const near = pct >= 80;
+  host.innerHTML = `<div class="stg-gauge${near ? ' near' : ''}">
+    <div class="stg-top"><span>☁ Cloud storage <span class="muted">· ${cloudJobs.length} job${cloudJobs.length === 1 ? '' : 's'}</span></span>
+      <span>${fmtBytes(used)} <span class="muted">of ~1 GB</span></span></div>
+    <div class="stg-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+    ${near ? `<div class="stg-warn">The free cloud store is nearly full — move a finished job back to its ShareFile folder to free space.</div>` : ''}
+  </div>`;
 }
 
 function renderStorageNote() {
@@ -4644,7 +4829,7 @@ function renderStorageNote() {
       ? '<span class="sync-dot off"></span>Not connected. Changes you make now are held in this browser until the connection is fixed.'
       : '<span class="sync-dot wait"></span>Connecting…';
   host.innerHTML = state +
-    '<br>Each job’s <b>PDFs live in its ShareFile folder</b>, not in the register — open a job and load its folder to view or add PDFs.';
+    '<br>Each job keeps its files in its <b>ShareFile folder</b> by default — the 📁 on a job switches it to <b>cloud storage</b> (☁), where every device sees every file without a folder.';
 }
 
 function renderLegacyNotice() {
