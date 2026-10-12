@@ -1704,7 +1704,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.49';
+const APP_VERSION = 'v8.50';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3230,6 +3230,15 @@ async function uniqueFileName(dirHandle, name) {
    version — the synced .xlsx, branded PDFs); without it, a name clash is de-duped
    with " (2)" so a user's dropped file never clobbers an existing one. */
 async function putFileInDir(file, relDir, cleanName, opts) {
+  /* On a Firebase job there is no folder to write to — the bytes go to Firestore and the record
+     carries the blob id. The dir and name are kept as labels so everything that reads them (what
+     a doc is called, where it would sit) still works. */
+  if (onFirebase()) {
+    if (file.size > BLOB_MAX) throw new Error('That file is ' + Math.round(file.size / 1048576) + ' MB — over the ' + Math.round(BLOB_MAX / 1048576) + ' MB limit for a cloud-stored file.');
+    const fixedId = (opts && opts.overwrite) ? fbOverwriteId(relDir, cleanName) : null;
+    const { blobId } = await blobPut(job.id, file, cleanName, fixedId);
+    return { dir: relDir, file: cleanName, fb: true, blobId, size: file.size };
+  }
   if (!jobFolder) throw new Error('The ShareFile folder for this job is not loaded.');
   let dirHandle = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
   for (const part of relDir.split('/').filter(Boolean)) {
@@ -3288,6 +3297,7 @@ async function walkDirCreate(root, relDir) {
 }
 async function readDocBlob(doc) {
   if (!doc) return null;
+  if (doc.fb && doc.blobId) return blobGet(job.id, doc.blobId).catch(() => null);           // a Firebase-stored file
   if (doc.staged && doc.stagedId) return readStagedBlob(doc.stagedId).catch(() => null);   // phone upload held in Firebase
   if (!jobFolder) return null;
   try {
@@ -3322,6 +3332,47 @@ async function readStagedBlob(id) {
 }
 async function deleteStaged(id) {
   try { const meta = (await FB.getDoc(stagedRef(job.id, id))).data() || {}; for (let i = 0; i < (meta.n || 0); i++) { try { await FB.deleteDoc(stagedPart(job.id, id, i)); } catch (e) {} } await FB.deleteDoc(stagedRef(job.id, id)); } catch (e) {}
+}
+
+/* ── Where a job keeps its files ──
+   Two backends. "sharefile" (the default) writes PDFs into the job's ShareFile folder on a
+   desktop; "firebase" keeps them in Firestore, chunked the same way a phone upload is, so a job
+   needs no folder and every device sees every file at once. A job is switched between them on the
+   home page, and the switch copies what is already filed across. The one thing that never goes to
+   Firestore is the Arctic company file — it is not a tracked document and is never read through
+   here, so nothing below can reach it. */
+function jobStorage(j) { return (j && j.storage === 'firebase') ? 'firebase' : 'sharefile'; }
+function onFirebase(j) { return jobStorage(j || job) === 'firebase'; }
+/* A permanent file in Firestore: the same base64 chunking the staging code uses, in a collection
+   of its own because these are not waiting to be filed anywhere — this is where they live. */
+const BLOB_MAX = 40 * 1024 * 1024;       // one file; the whole free tier is ~1 GB, so this is generous
+const blobDocRef  = (jobId, id)    => FB.doc(FB.db, 'jobs', jobId, 'blobs', id);
+const blobPartRef = (jobId, id, i) => FB.doc(FB.db, 'jobs', jobId, 'blobs', id, 'parts', String(i));
+async function blobPut(jobId, blob, name, fixedId) {
+  const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
+  const id = fixedId || uid('blob'), parts = Math.ceil(b64.length / STAGE_PART) || 1;
+  /* A file saved under a fixed id is one we overwrite in place — a spreadsheet mirror re-saved on
+     every edit, say. Reusing the id means it does not pile up a new copy each time; any chunks the
+     old, longer version had are cleared so nothing of it is left behind. */
+  let oldParts = 0;
+  if (fixedId) { try { oldParts = ((await FB.getDoc(blobDocRef(jobId, id))).data() || {}).n || 0; } catch (e) {} }
+  await FB.setDoc(blobDocRef(jobId, id), { n: parts, name: name || 'file', size: blob.size, type: blob.type || 'application/pdf', added: Date.now() });
+  for (let i = 0; i < parts; i++) await FB.setDoc(blobPartRef(jobId, id, i), { d: b64.slice(i * STAGE_PART, (i + 1) * STAGE_PART) });
+  for (let i = parts; i < oldParts; i++) { try { await FB.deleteDoc(blobPartRef(jobId, id, i)); } catch (e) {} }
+  return { blobId: id, parts, size: blob.size };
+}
+/* A stable id for a file that lives at one place and is overwritten there, so re-saving reuses the
+   same blob instead of leaving the last one orphaned. */
+function fbOverwriteId(relDir, name) {
+  return ('o_' + String(relDir || '') + '_' + String(name || '')).replace(/[^\w.-]+/g, '_').slice(0, 300);
+}
+async function blobGet(jobId, id) {
+  const meta = (await FB.getDoc(blobDocRef(jobId, id))).data(); if (!meta) return null;
+  let b64 = ''; for (let i = 0; i < (meta.n || 0); i++) b64 += ((await FB.getDoc(blobPartRef(jobId, id, i))).data() || {}).d || '';
+  return new Blob([b64ToBytes(b64)], { type: meta.type || 'application/pdf' });
+}
+async function blobDel(jobId, id) {
+  try { const meta = (await FB.getDoc(blobDocRef(jobId, id))).data() || {}; for (let i = 0; i < (meta.n || 0); i++) { try { await FB.deleteDoc(blobPartRef(jobId, id, i)); } catch (e) {} } await FB.deleteDoc(blobDocRef(jobId, id)); } catch (e) {}
 }
 async function docUrl(doc) {
   if (!doc) return null;
@@ -4000,6 +4051,7 @@ async function assignUnassigned(i) {
 async function deleteStoredDoc(doc) {
   if (!doc) return;
   if (blobUrlCache.has(doc.id)) { URL.revokeObjectURL(blobUrlCache.get(doc.id)); blobUrlCache.delete(doc.id); }
+  if (doc.fb && doc.blobId) { await blobDel(job.id, doc.blobId); return; }   // a Firebase-stored file
   if (!jobFolder) return;               // not loaded → the file stays in ShareFile
   try {
     const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR);
@@ -5063,7 +5115,7 @@ async function deleteRfi(id) {
 
 /* ── RFI PDFs (question / answer) into files/RFI Questions|Answers/ ── */
 async function pickRfiFiles(id, kind) {
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
   inp.onchange = () => addRfiFiles(id, kind, Array.from(inp.files));
@@ -5071,7 +5123,7 @@ async function pickRfiFiles(id, kind) {
 }
 async function addRfiFiles(id, kind, all) {
   if (!rfiById(id) || !all.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const files = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (files.length < all.length) toast('Non-PDF files were skipped', true);
   if (!files.length) return;
@@ -5079,8 +5131,8 @@ async function addRfiFiles(id, kind, all) {
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putRfiFile(f, kind, rfiById(id));
-      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, added: Date.now() });
+      const { dir, file, fb, blobId } = await putRfiFile(f, kind, rfiById(id));
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, kind, dir, file, fb, blobId, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!newDocs.length) return;
@@ -5605,7 +5657,7 @@ function trackAssign(catId, kind, thingId, itemId) {
 }
 
 async function pickEmailFiles(catId, itemId) {
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
   inp.accept = '.msg,.eml,.pdf,application/pdf,message/rfc822';
@@ -5614,14 +5666,14 @@ async function pickEmailFiles(catId, itemId) {
 }
 async function addEmailFiles(catId, files, itemId) {
   const start = catById(catId); if (!start || !files.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const catName = start.name;                 // fix the folder path for this upload
   const newFiles = [];
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
       const { dir, file } = await putEmailFile(f, catName);
-      newFiles.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, item: itemId || '', added: Date.now() });
+      newFiles.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, item: itemId || '', added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!newFiles.length) return;
@@ -5941,7 +5993,7 @@ async function deleteCo(id) {
 
 /* CO PDFs into files/Change Orders/ */
 async function pickCoFiles(id) {
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
   inp.onchange = () => addCoFiles(id, Array.from(inp.files));
@@ -5949,7 +6001,7 @@ async function pickCoFiles(id) {
 }
 async function addCoFiles(id, all) {
   if (!coById(id) || !all.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const files = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (files.length < all.length) toast('Non-PDF files were skipped', true);
   if (!files.length) return;
@@ -5957,8 +6009,8 @@ async function addCoFiles(id, all) {
   for (const f of files) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putFileInDir(f, coDocDir(coById(id)), sanitizeFileName(f.name));
-      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+      const { dir, file, fb, blobId } = await putFileInDir(f, coDocDir(coById(id)), sanitizeFileName(f.name));
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!newDocs.length) return;
@@ -5999,7 +6051,7 @@ function coDocList(c) {
 }
 /* ── emails attached to a change order (.msg/.eml) ── */
 async function pickCoEmails(id) {
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
   inp.onchange = () => addCoEmails(id, Array.from(inp.files));
@@ -6007,7 +6059,7 @@ async function pickCoEmails(id) {
 }
 async function addCoEmails(id, all) {
   if (!coById(id) || !all.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name));
   if (emails.length < all.length) toast('Only .msg / .eml emails were kept', true);
   if (!emails.length) return;
@@ -6015,8 +6067,8 @@ async function addCoEmails(id, all) {
   for (const f of emails) {
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putFileInDir(f, coEmailDir(coById(id)), sanitizeAnyName(f.name, 'email'));
-      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() });
+      const { dir, file, fb, blobId } = await putFileInDir(f, coEmailDir(coById(id)), sanitizeAnyName(f.name, 'email'));
+      newDocs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!newDocs.length) return;
@@ -6401,7 +6453,7 @@ async function importLaborRatesPdf(file) {
     const n = applyParsedRates(parsed);
     _lrDraft.source = file.name;
     // stash the PDF into the job folder if it's loaded (source of truth)
-    if (jobFolder) { try { const { dir, file: fn } = await putFileInDir(file, 'Labor Rates', sanitizeFileName(file.name)); _lrDraft.sourceDoc = { name: file.name, dir, file: fn }; } catch (e) { console.error(e); } }
+    if (jobFolder || onFirebase()) { try { const { dir, file: fn, fb, blobId } = await putFileInDir(file, 'Labor Rates', sanitizeFileName(file.name)); _lrDraft.sourceDoc = { name: file.name, dir, file: fn, fb, blobId }; } catch (e) { console.error(e); } }
     renderLaborRates();
     toast(n ? `Filled ${n} rate${n === 1 ? '' : 's'} from ${file.name} — review, then Save` : 'Could not read rates automatically — enter them by hand; the PDF is attached');
   } catch (e) { console.error(e); toast('Could not read that PDF: ' + (e.message || e), true); }
@@ -6696,7 +6748,7 @@ function exportChangeProposal(id) {
     const blob = doc.output('blob');
     // Save into the CO's ShareFile folder if loaded; always download too.
     (async () => {
-      if (jobFolder) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, coDocDir(c), base + '.pdf', { overwrite: true }); removeNumberedSiblings(coDocDir(c), base + '.pdf').catch(() => {}); c.docs = (c.docs || []).filter(d => d.file !== file); c.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveCo(c); noteFolderChanged(); } catch (e) { console.error(e); } }
+      if (jobFolder || onFirebase()) { try { const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file, fb, blobId } = await putFileInDir(f, coDocDir(c), base + '.pdf', { overwrite: true }); removeNumberedSiblings(coDocDir(c), base + '.pdf').catch(() => {}); c.docs = (c.docs || []).filter(d => d.file !== file); c.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, fb, blobId, added: Date.now() }); await saveCo(c); noteFolderChanged(); } catch (e) { console.error(e); } }
       doc.save(base + '.pdf');
       toast('Change Proposal PDF created');
       if (openCo === c.id) renderCoDrawer();
@@ -7301,7 +7353,7 @@ function exportEstimatePdf(id) {
     const base = (job.number ? job.number + '_' : '') + 'Estimate_' + String(e.name || '').replace(/[^\w.-]+/g, '-');
     const blob = doc.output('blob');
     (async () => {
-      if (jobFolder) { try { const eDir = ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate'); const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file } = await putFileInDir(f, eDir, base + '.pdf', { overwrite: true }); removeNumberedSiblings(eDir, base + '.pdf').catch(() => {}); e.docs = (e.docs || []).filter(x => x.file !== file); e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() }); await saveEstimate(e); noteFolderChanged(); } catch (x) { console.error(x); } }
+      if (jobFolder || onFirebase()) { try { const eDir = ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate'); const f = new File([blob], base + '.pdf', { type: 'application/pdf' }); const { dir, file, fb, blobId } = await putFileInDir(f, eDir, base + '.pdf', { overwrite: true }); removeNumberedSiblings(eDir, base + '.pdf').catch(() => {}); e.docs = (e.docs || []).filter(x => x.file !== file); e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, fb, blobId, added: Date.now() }); await saveEstimate(e); noteFolderChanged(); } catch (x) { console.error(x); } }
       doc.save(base + '.pdf');
       toast('Estimate summary PDF created');
     })();
@@ -7805,15 +7857,15 @@ async function writeEstimateFile(e, opts) {
       desired = estFileOldName(e); mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
     const f = new File([out], desired, { type: mime });
-    const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
+    const { dir, file, fb, blobId } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
     removeNumberedSiblings(ESTIMATE_DIR, desired, estFileKeepSet()).catch(() => {});   // sweep "<name> (2)" duplicates (never another estimate's file)
     // remove a stale file left by a rename, and the other-format sibling for this estimate
     if (e.file && e.file.file && e.file.file !== file) { try { const d = await estDirHandle(false); await d.removeEntry(e.file.file); } catch (x) {} }
     { const other = desired === estFileDesiredName(e) ? estFileOldName(e) : estFileDesiredName(e); if (other !== file) removeNamedSibling(ESTIMATE_DIR, other).catch(() => {}); }
-    e.file = { dir, file };
+    e.file = { dir, file, fb, blobId };
     e.fileSyncedAt = await estFileMtime(e);
     e.fileSig = estInputSig(e);
-    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xls[xm]$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, xlsx: true, added: Date.now() }]); }
+    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xls[xm]$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, fb, blobId, xlsx: true, added: Date.now() }]); }
     await FB.setDoc(estimateRef(job.id, e.id), clean(e));
     noteFolderChanged();
     if (view === 'job' && jobTab === 'estimates') { if (openEstimate === e.id) renderEstimateEditor(); else renderEstimates(); }
@@ -8067,7 +8119,7 @@ async function fileEstimatorSave(d) {
     e.estimatorTotal = (d.total != null && isFinite(d.total)) ? round2(d.total) : e.estimatorTotal;
     e.updated = Date.now();
     await FB.setDoc(estimateRef(job.id, e.id), clean(e));
-    if (jobFolder) await writeEstimateBytes(e, bytes);          // file the estimator's exact spreadsheet as this estimate's mirror
+    if (jobFolder || onFirebase()) await writeEstimateBytes(e, bytes);          // file the estimator's exact spreadsheet as this estimate's mirror
     if (view === 'job' && jobTab === 'estimates') renderEstimates();
   } catch (x) { console.error('fileEstimatorSave:', x); }
 }
@@ -8081,23 +8133,23 @@ async function fileCoEstimatorSave(d) {
     if (c.estimatorTotal != null) c.amount = String(c.estimatorTotal);
     c.updated = Date.now();
     await saveCo(c);                                            // saveCo skips the CP mirror for estimator-managed COs
-    if (jobFolder) await writeCoBytes(c, bytes);               // file the bid spreadsheet as this CO's proposal
+    if (jobFolder || onFirebase()) await writeCoBytes(c, bytes);               // file the bid spreadsheet as this CO's proposal
     if (view === 'job' && jobTab === 'changeorders') { renderCos(); if (openCo === c.id) renderCoDrawer(); }
   } catch (x) { console.error('fileCoEstimatorSave:', x); }
 }
 /* Write the estimator's bid spreadsheet as the CO's Change Proposal file in the CO folder. */
 async function writeCoBytes(c, bytes) {
-  if (!jobFolder || !c) return;
+  if ((!jobFolder && !onFirebase()) || !c) return;
   try {
     const fname = CO_PROPOSAL_NAME;   // Change Proposal.xlsm (now a bid-format workbook)
     const f = new File([bytes], fname, { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
-    const { dir, file } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
+    const { dir, file, fb, blobId } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
     removeNumberedSiblings(coDocDir(c), fname).catch(() => {});
     removeNamedSibling(coDocDir(c), CO_PROPOSAL_OLD).catch(() => {});
     const existing = coProposalDoc(c);
     const oldDir = existing && existing.dir;
-    if (existing) { existing.dir = dir; existing.file = file; existing.name = fname; existing.added = Date.now(); }
-    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
+    if (existing) { existing.dir = dir; existing.file = file; existing.fb = fb; existing.blobId = blobId; existing.name = fname; existing.added = Date.now(); }
+    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, fb, blobId, xlsx: true, coProposal: true, added: Date.now() }]);
     if (oldDir && oldDir !== dir) { removeNamedSibling(oldDir, CO_PROPOSAL_NAME).catch(() => {}); removeNamedSibling(oldDir, CO_PROPOSAL_OLD).catch(() => {}); }
     c.coFileSyncedAt = await coFileMtime(c);
     await FB.setDoc(coRef(job.id, c.id), clean(c));
@@ -8107,15 +8159,15 @@ async function writeCoBytes(c, bytes) {
 
 /* Write exact spreadsheet bytes (from the estimator) as the estimate's mirror in the folder. */
 async function writeEstimateBytes(e, bytes) {
-  if (!jobFolder || !e) return;
+  if ((!jobFolder && !onFirebase()) || !e) return;
   try {
     const desired = estFileDesiredName(e);
     const f = new File([bytes], desired, { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
-    const { dir, file } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
+    const { dir, file, fb, blobId } = await putFileInDir(f, ESTIMATE_DIR, desired, { overwrite: true });
     removeNumberedSiblings(ESTIMATE_DIR, desired, estFileKeepSet()).catch(() => {});
     if (e.file && e.file.file && e.file.file !== file) { try { const d = await estDirHandle(false); await d.removeEntry(e.file.file); } catch (x) {} }
-    e.file = { dir, file }; e.fileSyncedAt = await estFileMtime(e); e.fileSig = estInputSig(e);
-    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xls[xm]$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, xlsx: true, added: Date.now() }]); }
+    e.file = { dir, file, fb, blobId }; e.fileSyncedAt = await estFileMtime(e); e.fileSig = estInputSig(e);
+    if (!(e.docs || []).some(x => x.file === file)) { e.docs = (e.docs || []).filter(x => !/\.xls[xm]$/i.test(x.file || '')).concat([{ id: uid('doc'), name: desired, dir, file, fb, blobId, xlsx: true, added: Date.now() }]); }
     await FB.setDoc(estimateRef(job.id, e.id), clean(e));
     noteFolderChanged();
   } catch (x) { console.error('writeEstimateBytes:', x); }
@@ -8149,7 +8201,7 @@ function importEstimateFilePick() {
       e.src = 'estimator';                                          // the estimator owns the uploaded spreadsheet from here on
       estimates = estimates.concat([e]);
       await FB.setDoc(estimateRef(job.id, e.id), clean(e));
-      if (jobFolder) await writeEstimateBytes(e, bytes);           // file the exact uploaded spreadsheet
+      if (jobFolder || onFirebase()) await writeEstimateBytes(e, bytes);           // file the exact uploaded spreadsheet
       renderEstimates();
       toast('Imported estimate — opening in the estimator…');
       openEstimateInEstimator(e.id, bytes);                        // open it there with its exact bytes
@@ -11563,15 +11615,15 @@ function wbPdfName(cfg, e, sheets) {
 }
 /* file it where every other generated document for this record goes */
 async function wbPdfFile(cfg, e, base, blob) {
-  if (!jobFolder) return;
+  if (!jobFolder && !onFirebase()) return;
   try {
     const dirName = _wb.kind === 'co' ? coDocDir(e)
       : ESTIMATE_DIR + '/' + sanitizeAnyName(String(e.name || 'Estimate').slice(0, 60), 'Estimate');
     const f = new File([blob], base + '.pdf', { type: 'application/pdf' });
-    const { dir, file } = await putFileInDir(f, dirName, base + '.pdf', { overwrite: true });
+    const { dir, file, fb, blobId } = await putFileInDir(f, dirName, base + '.pdf', { overwrite: true });
     removeNumberedSiblings(dirName, base + '.pdf').catch(() => {});
     e.docs = (e.docs || []).filter(d => d.file !== file);
-    e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, added: Date.now() });
+    e.docs.push({ id: uid('doc'), name: base + '.pdf', size: blob.size, dir, file, fb, blobId, added: Date.now() });
     if (_wb.kind === 'co') await saveCo(e); else await saveEstimate(e);
     noteFolderChanged();
   } catch (x) { console.error(x); }
@@ -12148,14 +12200,14 @@ async function writeCoFile(c, opts) {
       fname = CO_PROPOSAL_OLD; mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
     const f = new File([out], fname, { type: mime });
-    const { dir, file } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
+    const { dir, file, fb, blobId } = await putFileInDir(f, coDocDir(c), fname, { overwrite: true });
     removeNumberedSiblings(coDocDir(c), fname).catch(() => {});                                  // sweep "Change Proposal (2)" duplicates
     const otherName = fname === CO_PROPOSAL_NAME ? CO_PROPOSAL_OLD : CO_PROPOSAL_NAME;
     removeNamedSibling(coDocDir(c), otherName).catch(() => {}); removeNumberedSiblings(coDocDir(c), otherName).catch(() => {});  // remove the other-format mirror so only one remains
     const existing = coProposalDoc(c);
     const oldDir = existing && existing.dir;
-    if (existing) { existing.dir = dir; existing.file = file; existing.name = fname; existing.added = Date.now(); }
-    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, xlsx: true, coProposal: true, added: Date.now() }]);
+    if (existing) { existing.dir = dir; existing.file = file; existing.fb = fb; existing.blobId = blobId; existing.name = fname; existing.added = Date.now(); }
+    else c.docs = (c.docs || []).concat([{ id: uid('doc'), name: fname, dir, file, fb, blobId, xlsx: true, coProposal: true, added: Date.now() }]);
     // If the CO was renamed (number/description changed → new folder), the mirror we just
     // wrote lives in the new folder but a stale copy is left behind in the old one. Remove it
     // so the folder tree doesn't grow a second "CO 3" — syncCoFolders then prunes the empty dir.
@@ -12382,33 +12434,33 @@ async function removeChange(id, chId) {
   c.changes = c.changes.filter(x => x.id !== chId);
   renderContracts(); renderContractDrawer(); saveContract(c);
 }
-async function pickChangeFile(id, chId) { if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.onchange = () => addChangeFile(id, chId, inp.files[0]); inp.click(); }
+async function pickChangeFile(id, chId) { if (!onFirebase() && fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.onchange = () => addChangeFile(id, chId, inp.files[0]); inp.click(); }
 async function addChangeFile(id, chId, f) {
   if (!f) return; const c = contractById(id); const ch = c && (c.changes || []).find(x => x.id === chId); if (!ch) return;
-  if (!jobFolder && !fsSupported()) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); return; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); ch.doc = { id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid }; } catch (e) { toast('Upload failed', true); return; } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
-  try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractChangeDir(c), sanitizeFileName(f.name)); ch.doc = { id: uid('doc'), name: f.name, size: f.size, dir, file }; } catch (e) { toast(storageError(e), true); return; }
+  if (!onFirebase() && !jobFolder && !fsSupported()) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); return; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); ch.doc = { id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid }; } catch (e) { toast('Upload failed', true); return; } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
+  try { stickyToast(`Saving ${f.name}…`); const { dir, file, fb, blobId } = await putFileInDir(f, contractChangeDir(c), sanitizeFileName(f.name)); ch.doc = { id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId }; } catch (e) { toast(storageError(e), true); return; }
   renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
 }
 function viewChangeDoc(id, chId) { const c = contractById(id); const ch = c && (c.changes || []).find(x => x.id === chId); if (ch && ch.doc) openStoredDoc(ch.doc); }
-async function pickContractFiles(id) { if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true; inp.onchange = () => addContractFiles(id, Array.from(inp.files)); inp.click(); }
+async function pickContractFiles(id) { if (!onFirebase() && fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true; inp.onchange = () => addContractFiles(id, Array.from(inp.files)); inp.click(); }
 async function addContractFiles(id, all) {
   const c = contractById(id); if (!c || !all.length) return;
   const pdfs = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (!pdfs.length) { toast('Non-PDF files were skipped', true); return; }
   c.docs = c.docs || [];
-  if (!jobFolder && !fsSupported()) { for (const f of pdfs) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); continue; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid, added: Date.now() }); } catch (e) { toast('Upload failed', true); } } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
-  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractDocDir(c), sanitizeFileName(f.name)); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  if (!onFirebase() && !jobFolder && !fsSupported()) { for (const f of pdfs) { if (f.size > STAGE_MAX) { toast('Too big (25 MB max)', true); continue; } try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid, added: Date.now() }); } catch (e) { toast('Upload failed', true); } } renderContractDrawer(); await saveContract(c); toast('Uploaded — a computer will file it'); return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
+  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file, fb, blobId } = await putFileInDir(f, contractDocDir(c), sanitizeFileName(f.name)); c.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
   renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
 }
-async function pickContractEmails(id) { if (!jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true; inp.onchange = () => addContractEmails(id, Array.from(inp.files)); inp.click(); }
+async function pickContractEmails(id) { if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; } const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true; inp.onchange = () => addContractEmails(id, Array.from(inp.files)); inp.click(); }
 async function addContractEmails(id, all) {
   const c = contractById(id); if (!c || !all.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name)); if (!emails.length) { toast('Only .msg / .eml emails were kept', true); return; }
   c.emails = c.emails || [];
-  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, contractEmailDir(c), sanitizeAnyName(f.name, 'email')); c.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file, fb, blobId } = await putFileInDir(f, contractEmailDir(c), sanitizeAnyName(f.name, 'email')); c.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
   renderContractDrawer(); await saveContract(c); syncContractFolders().catch(() => {}); noteFolderChanged();
 }
 function viewContractDoc(id, kind, docId) { const c = contractById(id); const d = c && (c[kind] || []).find(x => x.id === docId); if (d) openStoredDoc(d); }
@@ -12691,12 +12743,12 @@ function renderLedgerDrawer() {
   autosizeAll($('drawerHost'));
 }
 async function pickLedgerFiles(lk, id) {
-  if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.multiple = true;
   inp.onchange = () => addLedgerFiles(lk, id, Array.from(inp.files)); inp.click();
 }
 async function pickLedgerEmails(lk, id) {
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.msg,.eml,message/rfc822'; inp.multiple = true;
   inp.onchange = () => addLedgerEmails(lk, id, Array.from(inp.files)); inp.click();
 }
@@ -12704,24 +12756,24 @@ async function addLedgerFiles(lk, id, all) {
   const it = ledgerById(lk, id); if (!it || !all.length) return;
   const pdfs = all.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (!pdfs.length) { toast('Non-PDF files were skipped', true); return; }
-  if (!jobFolder && !fsSupported()) {                 // phone: stage to Firebase
+  if (!onFirebase() && !jobFolder && !fsSupported()) {                 // phone: stage to Firebase
     const big = pdfs.find(f => f.size > STAGE_MAX); if (big) { toast(`"${big.name}" is too big (25 MB max)`, true); return; }
     it.docs = it.docs || [];
     for (const f of pdfs) { try { stickyToast(`Uploading ${f.name}…`); const sid = await stageBlob(f, f.name); it.docs.push({ id: uid('doc'), name: f.name, size: f.size, staged: true, stagedId: sid, added: Date.now() }); } catch (e) { toast('Upload failed', true); } }
     renderLedgerDrawer(); await saveLedger(lk, it); toast('Uploaded — a computer will file it into ShareFile'); return;
   }
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   it.docs = it.docs || [];
-  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, ledgerDocDir(lk, it), sanitizeFileName(f.name)); it.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  for (const f of pdfs) { try { stickyToast(`Saving ${f.name}…`); const { dir, file, fb, blobId } = await putFileInDir(f, ledgerDocDir(lk, it), sanitizeFileName(f.name)); it.docs.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
   renderLedger(lk); renderLedgerDrawer(); await saveLedger(lk, it); syncLedgerFolders(lk).catch(() => {}); noteFolderChanged();
 }
 async function addLedgerEmails(lk, id, all) {
   const it = ledgerById(lk, id); if (!it || !all.length) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const emails = all.filter(f => /\.(msg|eml)$/i.test(f.name));
   if (!emails.length) { toast('Only .msg / .eml emails were kept', true); return; }
   it.emails = it.emails || [];
-  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file } = await putFileInDir(f, ledgerEmailDir(lk, it), sanitizeAnyName(f.name, 'email')); it.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
+  for (const f of emails) { try { stickyToast(`Saving ${f.name}…`); const { dir, file, fb, blobId } = await putFileInDir(f, ledgerEmailDir(lk, it), sanitizeAnyName(f.name, 'email')); it.emails.push({ id: uid('doc'), name: f.name, size: f.size, dir, file, fb, blobId, added: Date.now() }); } catch (e) { toast(storageError(e), true); } }
   renderLedgerDrawer(); await saveLedger(lk, it); syncLedgerFolders(lk).catch(() => {}); noteFolderChanged();
 }
 function viewLedgerDoc(lk, id, kind, docId) {
@@ -17493,7 +17545,7 @@ function pickReleaseEmails(key, relId) {
 }
 async function addReleaseEmails(key, relId, all) {
   const s = findSection(key); if (!s || !releaseById(s, relId) || !all.length) return;
-  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store emails', true); return; } }
+  if (!onFirebase() && !jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store emails', true); return; } }
   const mail = all.filter(f => /\.(msg|eml)$/i.test(f.name));
   if (mail.length < all.length) toast('Only .msg / .eml emails were kept', true);
   if (!mail.length) return;
@@ -17503,7 +17555,7 @@ async function addReleaseEmails(key, relId, all) {
       stickyToast(`Saving ${f.name}…`);
       const rec = await putFileInDir(f, RELEASE_EMAIL_DIR, sanitizeAnyName(f.name, 'email'));
       made.push({ id: uid('doc'), name: f.name, size: f.size, dir: rec.dir, file: rec.file,
-        added: Date.now(), by: meName() || '' });
+        fb: rec.fb, blobId: rec.blobId, added: Date.now(), by: meName() || '' });
     } catch (e) { console.error(e); toast(storageError(e), true); }
   }
   if (!made.length) return;
@@ -17854,7 +17906,7 @@ async function setField(key, field, value) {
 async function pickFiles(key, kind) {
   // On desktop, load the folder first (this click is a clean gesture for the picker)
   // so the PDF has somewhere to go. On a phone there's no folder — it stages to Firebase.
-  if (fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && fsSupported() && !jobFolder) { if (!(await loadJobFolder())) return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'application/pdf,.pdf';
@@ -17935,7 +17987,8 @@ async function addFiles(key, kind, files) {
   if (!pdfs.length) return;
   // On a phone the ShareFile folder can't be written — stage the PDF in Firebase
   // and let a computer file it. On desktop, load the folder and file it directly.
-  if (!jobFolder) {
+  // A Firebase job keeps files in Firestore, so it needs no folder at all.
+  if (!onFirebase() && !jobFolder) {
     if (fsSupported()) { if (!(await ensureJobFolder())) return; }
     else return stageSectionPdfs(key, kind, pdfs);
   }
@@ -17951,8 +18004,8 @@ async function addFiles(key, kind, files) {
     const docId = uid('doc');
     try {
       stickyToast(`Saving ${f.name}…`);
-      const { dir, file } = await putFile(f, status);
-      s[kind].push({ id: docId, name: f.name, size: f.size, status, uploaded: Date.now(), dir, file });
+      const { dir, file, fb, blobId } = await putFile(f, status);
+      s[kind].push({ id: docId, name: f.name, size: f.size, status, uploaded: Date.now(), dir, file, fb, blobId });
       added++;
     } catch (e) {
       console.error(e);
@@ -19342,7 +19395,7 @@ async function confirmImport() {
     // and the organise that runs on every save moves the file there with the usual rollback
     if (again) { again.pages = pageCount; again.reread = Date.now(); if (meName()) again.rereadBy = meName(); }
     else job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
-      dir, file: onDisk, added: Date.now(), by: meName() || '',
+      dir, file: onDisk, fb: put.fb, blobId: put.blobId, added: Date.now(), by: meName() || '',
       replaces: outgoing.map(sp => sp.id) });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
@@ -19662,7 +19715,7 @@ function setSheetField(id, field, val) {
 async function confirmDrawingImport() {
   const p = pendingDrawings;
   if (!p) return;
-  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the drawings', true); return; } }
+  if (!onFirebase() && !jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the drawings', true); return; } }
   const label = (($('dwLabel') || {}).value || '').trim() || suggestDrawingLabel() || 'Drawings';
   const issued = (($('dwIssued') || {}).value || '') || today();
   importModal(`<div class="modal-head"><h3>Saving ${esc(p.file.name)}</h3></div>
@@ -19673,7 +19726,7 @@ async function confirmDrawingImport() {
     const prevSet = p.prevSet;
     const d = {
       id: uid('dwg'), label, issued, received: today(),
-      doc: { id: uid('doc'), name: p.file.name, size: p.file.size, dir: rec.dir, file: rec.file },
+      doc: { id: uid('doc'), name: p.file.name, size: p.file.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId },
       sheets: p.sheets.map(sh => ({ id: sh.id, number: sh.number, title: sh.title, page: sh.page,
         note: sh.note || '', changed: !!(sh.changed || sh.note) })),
       replaces: prevSet ? prevSet.id : '',
@@ -21327,22 +21380,25 @@ async function keepStarterState(d) {
 /* A vendor's proposal, filed where vendors' proposals go and nowhere else. */
 async function fileVendorQuote(d) {
   const back = more => toStarter('starter-filed', Object.assign({ key: d.key, slot: d.slot }, more));
-  if (!jobFolder) { back({ ok: false, why: 'The ShareFile folder for this job is not loaded on this computer.' }); return; }
+  if (!onFirebase() && !jobFolder) { back({ ok: false, why: 'The ShareFile folder for this job is not loaded on this computer.' }); return; }
   try {
     const sec = findSection(d.secKey) || { key: d.secKey, number: d.secKey };
     const who = String(d.vendor || '').trim();
     const name = sanitizeFileName(who ? who + ' - ' + d.name : d.name);
     const rec = await putFileInDir(new File([d.bytes], name), vendorQuoteDirFor(sec), name);
-    back({ ok: true, name: d.name, dir: rec.dir, file: rec.file });
+    back({ ok: true, name: d.name, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId });
   } catch (e) { back({ ok: false, why: writeError(e) }); }
 }
 async function seeVendorQuote(d) {
-  if (!jobFolder || !d.dir || !d.file) { toast('That quote is not on this computer', true); return; }
   try {
-    const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
-    const dh = await walkDir(filesRoot, d.dir);
-    const fh = await dh.getFileHandle(d.file);
-    const url = URL.createObjectURL(await fh.getFile());
+    let blob = null;
+    if (d.fb && d.blobId) blob = await blobGet(job.id, d.blobId);
+    else if (jobFolder && d.dir && d.file) {
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
+      blob = await (await (await walkDir(filesRoot, d.dir)).getFileHandle(d.file)).getFile();
+    }
+    if (!blob) { toast('That quote is not on this computer', true); return; }
+    const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) { toast('Could not open it: ' + (e.message || e), true); }
@@ -21368,19 +21424,24 @@ async function goWithVendor(d) {
     for (const p of prods) if (want.has(p.id)) { p.make = who; named++; }
     if (!named && !String(s.manufacturer || '').trim()) s.manufacturer = who;
 
-    /* The packet. */
+    /* The packet: the chosen quote, copied into the submittal flow. It is read from wherever it
+       was filed — the ShareFile folder on a folder job, Firestore on a cloud job. */
     let where = '';
-    if (d.file && d.file.dir && d.file.file && jobFolder) {
+    let srcBlob = null;
+    if (d.file && d.file.fb && d.file.blobId) srcBlob = await blobGet(job.id, d.file.blobId);
+    else if (d.file && d.file.dir && d.file.file && jobFolder) {
       const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
-      const dh = await walkDir(filesRoot, d.file.dir);
-      const blob = await (await dh.getFileHandle(d.file.file)).getFile();
-      const dot = String(d.file.file).lastIndexOf('.');
-      const ext = dot > 0 ? String(d.file.file).slice(dot) : '';
+      srcBlob = await (await (await walkDir(filesRoot, d.file.dir)).getFileHandle(d.file.file)).getFile();
+    }
+    if (srcBlob && (jobFolder || onFirebase())) {
+      const fromName = (d.file && d.file.file) || (d.file && d.file.name) || 'quote.pdf';
+      const dot = String(fromName).lastIndexOf('.');
+      const ext = dot > 0 ? String(fromName).slice(dot) : '';
       const name = sanitizeFileName([String(s.number || s.key || '').trim(),
         String(d.item || d.name || '').trim(), who].filter(Boolean).join(' - ') + ext);
-      const rec = await putFileInDir(new File([blob], name), statusDirName('ready_gc'), name);
-      s.submittals = (s.submittals || []).concat([{ id: uid('doc'), name: name, size: blob.size,
-        status: 'ready_gc', uploaded: Date.now(), dir: rec.dir, file: rec.file, vendor: who }]);
+      const rec = await putFileInDir(new File([srcBlob], name), statusDirName('ready_gc'), name);
+      s.submittals = (s.submittals || []).concat([{ id: uid('doc'), name: name, size: srcBlob.size,
+        status: 'ready_gc', uploaded: Date.now(), dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, vendor: who }]);
       where = rec.dir;
     }
 
@@ -21979,7 +22040,7 @@ async function exportResponses() {
     picks.push({ s, doc: resp[0] });
   }
   if (!picks.length) { toast('No response PDFs in the current view to export', true); return; }
-  if (!jobFolder) { if (!(await loadJobFolder())) return; }
+  if (!onFirebase() && !jobFolder) { if (!(await loadJobFolder())) return; }
   stickyToast(`Preparing ${picks.length} response${picks.length === 1 ? '' : 's'}…`);
   let JSZip;
   try { JSZip = await ensureJSZip(); } catch (e) { toast(e.message || 'Could not load the zip library', true); return; }

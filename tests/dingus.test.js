@@ -55,12 +55,38 @@ const sandbox = {
   parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
   URL: { createObjectURL: () => 'blob:stub', revokeObjectURL() {} },
   Blob: function Blob(parts, opts) {
-    this.size = (parts || []).reduce((n, p) => n + (p && p.length != null ? p.length
-      : (p && p.byteLength != null ? p.byteLength : 0)), 0);
+    /* Hold the real bytes so a round-trip through storage can be checked, not just its length. */
+    const chunks = (parts || []).map(p => {
+      if (typeof p === 'string') return Uint8Array.from(Buffer.from(p, 'binary'));
+      if (p instanceof Uint8Array) return p;
+      if (p && p.byteLength != null && !(p.length != null)) return new Uint8Array(p);   // ArrayBuffer
+      if (p && p._bytes) return p._bytes;                                               // another Blob/File
+      if (p && p.length != null) return Uint8Array.from(p);
+      return new Uint8Array(0);
+    });
+    let total = 0; for (const c of chunks) total += c.length;
+    const bytes = new Uint8Array(total); let at = 0;
+    for (const c of chunks) { bytes.set(c, at); at += c.length; }
+    this._bytes = bytes;
+    this.size = total;
     this.type = (opts && opts.type) || '';
-    this.arrayBuffer = async () => new ArrayBuffer(this.size);
+    this.arrayBuffer = async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length);
   },
-  File: function File(parts, name, opts) { this.name = name; this.size = 0; this.type = (opts && opts.type) || ''; },
+  File: function File(parts, name, opts) {
+    const chunks = (parts || []).map(p => {
+      if (typeof p === 'string') return Uint8Array.from(Buffer.from(p, 'binary'));
+      if (p instanceof Uint8Array) return p;
+      if (p && p.byteLength != null && !(p.length != null)) return new Uint8Array(p);
+      if (p && p._bytes) return p._bytes;
+      if (p && p.length != null) return Uint8Array.from(p);
+      return new Uint8Array(0);
+    });
+    let total = 0; for (const c of chunks) total += c.length;
+    const bytes = new Uint8Array(total); let at = 0;
+    for (const c of chunks) { bytes.set(c, at); at += c.length; }
+    this._bytes = bytes; this.name = name; this.size = total; this.type = (opts && opts.type) || '';
+    this.arrayBuffer = async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length);
+  },
   FileReader: function FileReader() { this.readAsText = function () { if (this.onload) this.onload({ target: { result: '' } }); }; },
   TextEncoder, TextDecoder, btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
   atob: s => Buffer.from(String(s), 'base64').toString('binary'),
@@ -993,6 +1019,62 @@ const testCode = `
     var said = [];
     _stHost = { el: null, win: { postMessage: function (m) { said.push(m); } },
       lines: [], pay: [], state: {}, mine: 0 };
+
+    /* ── a job that keeps its files in Firestore instead of a ShareFile folder ── */
+    await (async function () {
+      var saveFB = FB, saveJob = job, saveFolder = jobFolder;
+      var mem = {};
+      FB = {
+        db: {},
+        collection: function () { return {}; },
+        doc: function () { return { _p: Array.prototype.slice.call(arguments, 1).join('/') }; },
+        getDoc: async function (r) { var d = mem[r._p]; return { exists: function () { return d != null; }, data: function () { return d; } }; },
+        setDoc: async function (r, d) { mem[r._p] = JSON.parse(JSON.stringify(d)); },
+        deleteDoc: async function (r) { delete mem[r._p]; },
+        updateDoc: async function () {}, onSnapshot: function () { return function () {}; },
+        writeBatch: function () { return { set: function () {}, update: function () {}, delete: function () {}, commit: async function () {} }; },
+        deleteField: function () { return null; }
+      };
+      jobFolder = null;
+      job = { id: 'jfb', storage: 'firebase', sections: [] };
+
+      ck('storage: a Firebase job stores a file in Firestore and reads back the same bytes',
+        await (async function () {
+          var src = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+          var rec = await putFileInDir(new File([src], 'x.pdf'), 'Submittals/Approved', 'x.pdf');
+          if (!rec.fb || !rec.blobId) return false;
+          var back = await readDocBlob({ fb: true, blobId: rec.blobId });
+          if (!back) return false;
+          var got = new Uint8Array(await back.arrayBuffer());
+          if (got.length !== src.length) return false;
+          for (var i = 0; i < src.length; i++) if (got[i] !== src[i]) return false;
+          // the chunk docs really landed in Firestore, under this job
+          return Object.keys(mem).some(function (k) { return k.indexOf('jobs/jfb/blobs/') === 0; });
+        })());
+
+      ck('storage: deleting a Firebase-stored file clears its chunks',
+        await (async function () {
+          var rec = await putFileInDir(new File([new Uint8Array([1, 2, 3, 4])], 'y.pdf'), 'x', 'y.pdf');
+          await deleteStoredDoc({ id: 'd', fb: true, blobId: rec.blobId });
+          return !Object.keys(mem).some(function (k) { return k.indexOf('blobs/' + rec.blobId) >= 0; })
+            && (await readDocBlob({ fb: true, blobId: rec.blobId })) == null;
+        })());
+
+      ck('storage: an overwrite-mode file reuses one blob instead of piling up copies',
+        await (async function () {
+          var r1 = await putFileInDir(new File([new Uint8Array([1, 1, 1])], 'm.xlsm'), 'Estimates', 'm.xlsm', { overwrite: true });
+          var r2 = await putFileInDir(new File([new Uint8Array([2, 2])], 'm.xlsm'), 'Estimates', 'm.xlsm', { overwrite: true });
+          if (r1.blobId !== r2.blobId) return false;        // same stable id
+          var back = new Uint8Array(await (await readDocBlob({ fb: true, blobId: r2.blobId })).arrayBuffer());
+          return back.length === 2 && back[0] === 2;          // the newer bytes, not the old
+        })());
+
+      ck('storage: a ShareFile job is untouched by any of this (no fb flag)',
+        (jobStorage({ storage: 'firebase' }) === 'firebase')
+        && (jobStorage({}) === 'sharefile') && (jobStorage(null) === 'sharefile'));
+
+      FB = saveFB; job = saveJob; jobFolder = saveFolder;
+    })();
 
     await fileVendorQuote({ key: 'k1', slot: 0, secKey: '224000', vendor: 'Ferguson',
       name: 'HB-1 quote.pdf', bytes: new Uint8Array([5, 6, 7]) });

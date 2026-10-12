@@ -1350,7 +1350,7 @@ function filed(d) {
   if (!d.ok) { say(d.why || 'Could not file that quote', true); return; }
   mark();
   var rec = row(d.key);
-  rec.s[d.slot].f = { name: d.name, dir: d.dir, file: d.file };
+  rec.s[d.slot].f = { name: d.name, dir: d.dir, file: d.file, fb: d.fb, blobId: d.blobId };
   /* A quote that has come in is a quote received, unless somebody has already said more. */
   if (!rec.s[d.slot].st || rec.s[d.slot].st === ASK) rec.s[d.slot].st = GOT;
   at(d.key, function (i) { redo(i); });
@@ -1391,13 +1391,13 @@ function seeByKey(key, slot) {
   var k = slot >= 0 ? slot : rec.chose;
   var f = k != null && rec.s[k] && rec.s[k].f;
   if (!f) return;
-  tell('starter-see', { dir: f.dir, file: f.file, name: f.name });
+  tell('starter-see', { dir: f.dir, file: f.file, name: f.name, fb: f.fb, blobId: f.blobId });
 }
 function seeFile(tr, k) {
   var w = slotOf(tr, k), rec = ST.rows[w.d.key];
   var f = rec && rec.s && rec.s[w.slot] && rec.s[w.slot].f;
   if (!f) return;
-  tell('starter-see', { dir: f.dir, file: f.file, name: f.name });
+  tell('starter-see', { dir: f.dir, file: f.file, name: f.name, fb: f.fb, blobId: f.blobId });
 }
 
 /* ── find, and the jumps ── */
