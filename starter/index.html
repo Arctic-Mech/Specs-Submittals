@@ -151,6 +151,20 @@
      spreadsheet. It never shows anything and never holds anything. */
   #clip{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;
     resize:none;overflow:hidden;z-index:-1}
+  /* the load bar for the long exports */
+  #prog{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);
+    align-items:center;justify-content:center}
+  .prog-card{background:#fff;border-radius:12px;padding:22px 24px;width:min(420px,88vw);
+    box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .prog-label{font-size:13.5px;color:var(--ink);font-weight:600;margin-bottom:12px}
+  .prog-track{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+  .prog-fill{height:100%;width:0;background:var(--go,#2563eb);border-radius:999px;transition:width .2s ease}
+  .prog-row{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+  .prog-pct{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .prog-cancel{font:inherit;font-size:12.5px;padding:6px 14px;border:1px solid #cbd5e1;
+    background:#fff;color:var(--ink);border-radius:8px;cursor:pointer}
+  .prog-cancel:hover{background:#f1f5f9}
+  .prog-cancel:disabled{opacity:.55;cursor:default}
   #note{padding:24px;color:var(--dim);max-width:46em;line-height:1.5}
   /* the two lists that read themselves off the quote sheet */
   .pad{padding:18px 22px 60px}
@@ -368,9 +382,37 @@ window.addEventListener('message', function (ev) {
   if (d.type === 'starter-state') { camein(d.state); return; }
   if (d.type === 'starter-filed') { filed(d); return; }
   if (d.type === 'starter-picked') { picked(d); return; }
-  if (d.type === 'starter-say') { say(d.text || '', !!d.bad); return; }
+  if (d.type === 'starter-say') { progHide(); say(d.text || '', !!d.bad); return; }
+  if (d.type === 'starter-progress') { if (d.done) progHide(); else progShow(d.pct || 0, d.label || ''); return; }
   if (d.type === 'starter-saved') { setLive(false); return; }
 });
+
+/* A load bar for the long jobs — building a vendor export with the spec book stapled on can take a
+   while, so it says how far along it is and gives a way out. */
+function progShow(pct, label) {
+  var box = document.getElementById('prog');
+  if (!box) {
+    box = document.createElement('div'); box.id = 'prog';
+    box.innerHTML = '<div class="prog-card">'
+      + '<div class="prog-label" id="progLabel"></div>'
+      + '<div class="prog-track"><div class="prog-fill" id="progFill"></div></div>'
+      + '<div class="prog-row"><span class="prog-pct" id="progPct"></span>'
+      + '<button type="button" class="prog-cancel" id="progCancel">Cancel</button></div></div>';
+    document.body.appendChild(box);
+    document.getElementById('progCancel').addEventListener('click', function () {
+      tell('starter-ask-cancel'); say('Cancelling…');
+      var b = document.getElementById('progCancel'); if (b) { b.textContent = 'Cancelling…'; b.disabled = true; }
+    });
+  }
+  box.style.display = 'flex';
+  document.getElementById('progLabel').textContent = label || 'Working…';
+  document.getElementById('progFill').style.width = Math.max(0, Math.min(100, pct)) + '%';
+  document.getElementById('progPct').textContent = Math.round(pct) + '%';
+}
+function progHide() {
+  var box = document.getElementById('prog');
+  if (box) { box.style.display = 'none'; var b = document.getElementById('progCancel'); if (b) { b.textContent = 'Cancel'; b.disabled = false; } }
+}
 
 function open(d) {
   HOST = HOST || window.parent;
@@ -1233,18 +1275,36 @@ document.addEventListener('paste', function (e) {
   if (!text) return;
   e.preventDefault();
   var grid = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map(function (l) { return l.split('\t'); });
+  var g = range();                                   // the highlighted block, if any
+  var single = grid.length === 1 && grid[0].length === 1;
   mark();
-  var r = CUR.r, put = 0;
-  for (var i = 0; i < grid.length && r < ROWS.length; i++) {
-    while (r < ROWS.length && !itemAt(r)) r++;
-    if (r >= ROWS.length) break;
-    for (var j = 0; j < grid[i].length; j++) {
-      var c = CUR.c + j;
-      if (c > COLS.length - 1) break;
-      if (!editable(r, c)) continue;
-      quiet(r, c, grid[i][j]); put++;
+  var put = 0;
+  if (single && g && (g.r0 !== g.r1 || g.c0 !== g.c1)) {
+    /* one value poured into every cell of the highlighted block */
+    var val = grid[0][0];
+    for (var rr = g.r0; rr <= g.r1; rr++) {
+      if (!itemAt(rr)) continue;
+      var touched = false;
+      for (var cc = g.c0; cc <= g.c1; cc++) {
+        if (!editable(rr, cc)) continue;
+        quiet(rr, cc, val); put++; touched = true;
+      }
+      if (touched) redo(rr);
     }
-    redo(r); r++;
+  } else {
+    /* a block laid down from the top-left of the selection (or the current cell) */
+    var r = g ? g.r0 : CUR.r, c0 = g ? g.c0 : CUR.c;
+    for (var i = 0; i < grid.length && r < ROWS.length; i++) {
+      while (r < ROWS.length && !itemAt(r)) r++;
+      if (r >= ROWS.length) break;
+      for (var j = 0; j < grid[i].length; j++) {
+        var c = c0 + j;
+        if (c > COLS.length - 1) break;
+        if (!editable(r, c)) continue;
+        quiet(r, c, grid[i][j]); put++;
+      }
+      redo(r); r++;
+    }
   }
   keep();
   say(put + ' cell' + (put === 1 ? '' : 's') + ' pasted');
@@ -1391,7 +1451,7 @@ function slotOf(tr, k) {
   return { r: r, d: ROWS[r], slot: col.slot };
 }
 function askFile(tr, k) {
-  if (!CAN_FILE) { say('Load the job ShareFile folder in the Dingus first, then the quote can be filed', true); return; }
+  if (!CAN_FILE) { say('Turn on cloud storage, or load the job ShareFile folder, in the Dingus first — then the quote can be filed', true); return; }
   WANT = slotOf(tr, k);
   var inp = document.getElementById('pickFile');
   inp.value = ''; inp.click();

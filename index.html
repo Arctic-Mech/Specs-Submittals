@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.58';
+const APP_VERSION = 'v8.59';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21558,7 +21558,7 @@ function toStarter(type, more) {
 function sendStarter() {
   if (!_stHost) return;
   toStarter('starter-open', { job: { name: job.name || '', number: job.number || '' },
-    lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder });
+    lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder || onFirebase() });
 }
 /* Somebody else on the job typing into it. Their save comes back here and goes straight on. */
 function watchStarter() {
@@ -21586,6 +21586,7 @@ function wireStarterMessages() {
     if (d.type === 'starter-see') { await seeVendorQuote(d); return; }
     if (d.type === 'starter-export') { await starterToExcel(d); return; }
     if (d.type === 'starter-ask-list') { await exportAskList(d); return; }
+    if (d.type === 'starter-ask-cancel') { cancelAskList(); return; }
   });
 }
 async function keepStarterState(d) {
@@ -21755,13 +21756,15 @@ async function specPagesOf(secKey) {
   } catch (e) { return Object.assign({ pages: null, why: e.message || String(e) }, where); }
 }
 /* Those pages, drawn on to the end of the document a page at a time. */
-async function addSpecPages(doc, got, label) {
+async function addSpecPages(doc, got, label, onPage, shouldStop) {
   if (!got || !got.pages) return 0;
   const lib = await loadPdfJs();
   const src = await lib.getDocument({ data: got.pages }).promise;
   const first = Math.max(1, got.from), last = Math.min(src.numPages, got.to);
+  const total = Math.min(60, Math.max(0, last - first + 1));
   let n = 0;
   for (let i = first; i <= last && i - first < 60; i++) {
+    if (shouldStop && shouldStop()) { try { src.destroy(); } catch (e) {} return n; }
     const page = await src.getPage(i);
     const base = page.getViewport({ scale: 1 });
     /* Enough to read, not so much that the file is too big to send. */
@@ -21782,6 +21785,8 @@ async function addSpecPages(doc, got, label) {
     doc.addImage(img, 'JPEG', (pw - w) / 2, head + 6, w, h);
     page.cleanup();
     n++;
+    if (onPage) onPage(n, total);
+    await new Promise(r => setTimeout(r, 0));   // let a cancel click land between pages
   }
   try { src.destroy(); } catch (e) {}
   return n;
@@ -21918,10 +21923,18 @@ function askListFeet(doc, vendor, listedTo) {
   }
   return doc;
 }
+let _askCancel = false;
+function cancelAskList() { _askCancel = true; }   // the starter's Cancel button reaches this
+const ASK_STOPPED = { stopped: true };
+function askProg(pct, label) { toStarter('starter-progress', { pct: Math.max(0, Math.min(100, Math.round(pct))), label: label }); }
+function askProgDone() { toStarter('starter-progress', { done: true }); }
 async function exportAskList(d) {
   const vendor = String(d.vendor || '').trim();
   if (!vendor) { toStarter('starter-say', { text: 'No vendor to build a list for', bad: true }); return; }
   if (_stHost && d.state) _stHost.state = Object.assign({}, _stHost.state, d.state);
+  _askCancel = false;
+  const stop = () => _askCancel;
+  const guard = () => { if (_askCancel) throw ASK_STOPPED; };
   try {
     const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {}, d.secKey);
     const items = groups.reduce((n, g) => n + g.lines.length, 0);
@@ -21930,11 +21943,15 @@ async function exportAskList(d) {
        the top can say whether they are on the end of it or only named — unless the spec pages were
        not wanted on this one, in which case none are fetched or attached. */
     const wantSpec = d.attachSpec !== false;
+    askProg(2, wantSpec ? 'Gathering the spec pages…' : 'Building the list…');
     const books = [];
-    if (wantSpec) for (const g of groups) {
-      const got = await specPagesOf((g.sec || {}).key || '');
-      books.push({ g: g, got: got });
+    if (wantSpec) for (let gi = 0; gi < groups.length; gi++) {
+      guard();
+      askProg(2 + (gi / groups.length) * 23, 'Reading the spec — section ' + (gi + 1) + ' of ' + groups.length + '…');
+      const got = await specPagesOf((groups[gi].sec || {}).key || '');
+      books.push({ g: groups[gi], got: got });
     }
+    guard();
     const have = books.filter(b => b.got && b.got.pages);
     const named = books.filter(b => b.got && !b.got.pages && b.got.from != null);
     const said = have.length
@@ -21943,16 +21960,33 @@ async function exportAskList(d) {
         ? 'The spec pages are ' + named.map(b => (b.got.name || 'the spec') + ' p. ' + b.got.from
             + (b.got.to && b.got.to !== b.got.from ? '\u2013' + b.got.to : '')).join('; ') + '.'
         : '';
+    askProg(27, 'Laying out the list\u2026');
     const doc = await buildAskListPdf(vendor, groups, said);
+    guard();
     const listedTo = doc.internal.getNumberOfPages();
-    for (const b of have)
-      await addSpecPages(doc, b.got, String((b.g.sec || {}).number || '').trim());
+    const spanOf = b => Math.min(60, Math.max(0, ((b.got.to || b.got.from) - b.got.from) + 1));
+    const totalPages = have.reduce((n, b) => n + spanOf(b), 0) || 1;
+    let done = 0;
+    for (const b of have) {
+      guard();
+      await addSpecPages(doc, b.got, String((b.g.sec || {}).number || '').trim(),
+        (inSec) => askProg(30 + ((done + inSec) / totalPages) * 67,
+          'Adding spec pages \u2014 ' + Math.min(done + inSec, totalPages) + ' of ' + totalPages + '\u2026'),
+        stop);
+      guard();
+      done += spanOf(b);
+    }
+    guard();
+    askProg(99, 'Saving\u2026');
     askListFeet(doc, vendor, listedTo);
     const only = groups.length === 1 ? ' ' + String((groups[0].sec || {}).number || '').trim() : '';
     doc.save(sanitizeAnyName(jobFileBase() + only + ' \u2014 for ' + vendor, 'vendor list') + '.pdf');
+    askProgDone();
     toStarter('starter-say', { text: vendor + ': ' + items + ' item' + (items === 1 ? '' : 's')
       + ' across ' + groups.length + ' section' + (groups.length === 1 ? '' : 's') + ' downloaded' });
   } catch (e) {
+    askProgDone();
+    if (e === ASK_STOPPED) { toStarter('starter-say', { text: 'Export cancelled' }); return; }
     console.error(e);
     toStarter('starter-say', { text: 'Could not build it: ' + (e.message || e), bad: true });
   }
