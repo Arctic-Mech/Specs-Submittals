@@ -128,6 +128,7 @@
     padding:1px 6px;cursor:pointer;font-size:11.5px;max-width:100%;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   .up:hover{border-color:var(--pick);color:var(--pick)}
+  .up.up-mini{font-size:10.5px;padding:1px 4px}
   .have{display:flex;align-items:center;gap:4px;min-width:0}
   .have a{color:var(--pick);text-decoration:none;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;min-width:0}
@@ -141,6 +142,11 @@
     font:inherit;padding:2px 5px;display:none;border-radius:2px}
   #pick{position:absolute;z-index:9;border:2px solid var(--pick);background:#fff;
     font:inherit;display:none;border-radius:2px}
+  /* Kept focused while the sheet is up but out of the way: it is what makes Ctrl+C / Ctrl+V fire
+     at all when no cell is being typed in, so a highlighted block copies and pastes like a
+     spreadsheet. It never shows anything and never holds anything. */
+  #clip{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;
+    resize:none;overflow:hidden;z-index:-1}
   #note{padding:24px;color:var(--dim);max-width:46em;line-height:1.5}
   /* the two lists that read themselves off the quote sheet */
   .pad{padding:18px 22px 60px}
@@ -170,6 +176,10 @@
     color:#fff;border-radius:7px 7px 0 0}
   .firmhead b{font-size:14px}
   .firmsay{color:#cbd5e1;font-size:11.5px}
+  .firmhead .btn.ask{margin-left:auto;background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.3);color:#fff;font-size:11.5px;font-weight:600}
+  .firmhead .btn.ask:hover{background:rgba(255,255,255,.24)}
+  .attach{display:inline-flex;align-items:center;gap:7px;color:var(--dim);font-size:12.5px;cursor:pointer}
+  .attach input{cursor:pointer}
   .firmhead .btn.ask{margin-left:auto;background:rgba(255,255,255,.12);
     border-color:rgba(255,255,255,.3);color:#fff}
   .firmhead .btn.ask:hover{background:rgba(255,255,255,.22)}
@@ -226,6 +236,7 @@
 <div id="wrap"><div id="note">Waiting for the job to come through…</div></div>
 <input type="file" id="pickFile" style="display:none" accept=".pdf,.doc,.docx,.xls,.xlsx,.msg,.eml,.zip,.jpg,.jpeg,.png">
 <input id="edit"><select id="pick"></select>
+<textarea id="clip" aria-hidden="true" tabindex="-1"></textarea>
 <div id="say"></div>
 <script>
 /* ──────────────────────────────────────────────────────────────────────────────
@@ -287,14 +298,21 @@ var COLS = [];                   // the flat column list, built once the slot co
 /* A quote nobody is looking at takes one narrow column saying so, not six. Quote 1 is open to
    begin with and the rest are a click away, because most lines only ever go to one vendor and six
    empty columns apiece is a sheet you have to scroll past rather than read. */
-var SHUT_COL = { k: '_shut', h: '', w: 30, shut: 1 };
-function quoteOpen(i) { return i === 0 || !!(ST && ST.qopen && ST.qopen[i]); }
+/* A quote is collapsed to its two useful columns — who it is and the button to put their quote on
+   — until you open it out to fill in the price, the lead time, where it stands and any notes. Every
+   quote starts collapsed, because most lines only ever go to one vendor and a sheet of six open
+   columns apiece is one you scroll past rather than read. */
+var SLOT_MINI = [
+  { k: 'v', h: 'Vendor', w: 140, edit: 1, left: 1 },
+  { k: 'f', h: 'Quote',  w: 170, file: 1 }
+];
+function quoteOpen(i) { return !!(ST && ST.qopen && ST.qopen[i]); }
 function layOut(n) {
   COLS = [];
   for (var i = 0; i < FIX.length; i++) COLS.push({ c: FIX[i], fix: i });
   for (var s = 0; s < n; s++) {
-    if (!quoteOpen(s)) { COLS.push({ c: SHUT_COL, slot: s, shut: 1 }); continue; }
-    for (var j = 0; j < SLOT.length; j++) COLS.push({ c: SLOT[j], slot: s });
+    if (quoteOpen(s)) { for (var j = 0; j < SLOT.length; j++) COLS.push({ c: SLOT[j], slot: s }); }
+    else { for (var j = 0; j < SLOT_MINI.length; j++) COLS.push({ c: SLOT_MINI[j], slot: s, mini: 1 }); }
   }
   for (var t = 0; t < TAIL.length; t++) COLS.push({ c: TAIL[t], tail: t });
   for (var x = 0; x < COLS.length; x++) {
@@ -486,6 +504,7 @@ function goTab(which) {
   document.getElementById('tabProgress').className = 'tab' + (which === 'progress' ? ' on' : '');
   document.getElementById('find').style.display = which === 'sheet' ? '' : 'none';
   draw();
+  focusClip();
 }
 /* Every line on the sheet with what has been typed against it, which is what both lists read. */
 function priced() {
@@ -628,6 +647,8 @@ function drawVendors() {
    vendors quoting it under that. Whichever is on, the sheet says so in as many words at the top. */
 /* The spec section is the thing you work a job by, so that is the way round it opens. */
 var PROG = 'section';
+function attachSpec() { return !ST || ST.attachSpec !== false; }
+function setAttachSpec(on) { if (ST) ST.attachSpec = !!on; keep(); }
 function goProg(which) { PROG = which; draw(); }
 function gather(rows, outerBy, innerBy) {
   var at = {}, order = [];
@@ -669,9 +690,12 @@ function drawProgress() {
     + '<button class="btn' + (firstFirm ? ' on' : '') + '" onclick="goProg(\'vendor\')">Vendor</button>'
     + '<button class="btn' + (firstFirm ? '' : ' on') + '" onclick="goProg(\'section\')">Spec section</button>'
     + '</div>'
+    + '<div class="howbar"><label class="attach"><input type="checkbox" ' + (attachSpec() ? 'checked' : '')
+      + ' onchange="setAttachSpec(this.checked)"> Attach the spec pages to the PDF</label></div>'
     + '<p>Every quote still to be asked for, and every one back and waiting on somebody to decide. '
     + 'Say you are going with one on the quote sheet and it leaves this list for Vendors. '
-    + 'A list goes out one spec section at a time \u2014 the button is on the section.</p>';
+    + 'Send a vendor one spec section (the button on the section) or everything they are quoting at '
+    + 'once (the button on their name).</p>';
   if (!groups.length)
     h += '<div id="none">Nothing out to anybody yet. Put a vendor in a quote slot and it lands here.</div>';
   for (var f = 0; f < groups.length; f++) {
@@ -680,7 +704,12 @@ function drawProgress() {
       + '<span class="firmsay">' + g.n + ' item' + (g.n === 1 ? '' : 's') + ' across '
       + g.order.length + (firstFirm ? ' section' : ' vendor') + (g.order.length === 1 ? '' : 's')
       + (g.ask ? '  \u00b7  ' + g.ask + ' still to ask for' : '')
-      + (g.star ? '  \u00b7  \u2605 ' + g.star : '') + '</span></div>';
+      + (g.star ? '  \u00b7  \u2605 ' + g.star : '') + '</span>'
+      + (firstFirm && g.order.length > 1 ? '<button class="btn ask" data-askfor="' + esc(g.vendor)
+          + '" data-askall="1" title="One PDF to send ' + esc(g.vendor) + ': everything they are '
+          + 'quoting, across all ' + g.order.length + ' spec sections">\u2913 Send ' + esc(g.vendor)
+          + ' everything</button>' : '')
+      + '</div>';
     for (var k = 0; k < g.order.length; k++) {
       var sg = g.inner[g.order[k]];
       var who = firstFirm ? g.vendor : sg.vendor;
@@ -740,12 +769,10 @@ function draw() {
   h += '<th colspan="' + FIX.length + '">WHAT IS BEING PRICED</th>';
   for (var s = 0; s < ST.slots; s++) {
     var open = quoteOpen(s);
-    h += '<th class="q gs ge ' + (s % 2 ? 'qb' : 'qa') + (open ? '' : ' shutq')
-      + '" colspan="' + (open ? SLOT.length : 1) + '">'
-      + (s === 0 ? 'QUOTE 1'
-        : '<button class="qtog" data-quote="' + s + '" title="'
-          + (open ? 'Shut quote ' + (s + 1) : 'Open quote ' + (s + 1)) + '">'
-          + (open ? 'QUOTE ' + (s + 1) + '  \u00d7' : (s + 1)) + '</button>')
+    h += '<th class="q gs ge ' + (s % 2 ? 'qb' : 'qa') + '" colspan="' + (open ? SLOT.length : SLOT_MINI.length) + '">'
+      + '<button class="qtog" data-quote="' + s + '" title="'
+        + (open ? 'Collapse quote ' + (s + 1) + ' back to vendor + upload' : 'Open quote ' + (s + 1) + ' to fill in price, lead time and more') + '">'
+        + 'QUOTE ' + (s + 1) + ' ' + (open ? '\u2715' : '\u25b8') + '</button>'
       + '</th>';
   }
   h += '<th class="qt gs ge" colspan="' + TAIL.length + '">GOING WITH</th></tr><tr class="heads">';
@@ -776,6 +803,7 @@ function draw() {
   able();
   if (keepAt) { var b2 = document.getElementById('wrap'); b2.scrollTop = wasY; b2.scrollLeft = wasX; }
   if (CUR) show(CUR.r, CUR.c, true);
+  focusClip();
 }
 function froze(k, left) { return k < FROZEN ? ' class="froze" style="left:' + left[k] + 'px"' : ''; }
 
@@ -854,7 +882,7 @@ function cellHtml(d, col, k, left, r) {
       ? '<span class="have"><a href="#" data-see="' + k + '" title="' + esc(f.name || '') + '">'
         + esc(trim(f.name || f.file || 'quote', 22)) + '</a>'
         + '<button class="x" data-drop="' + k + '" title="Take it off this line">×</button></span>'
-      : '<button class="up" data-up="' + k + '">upload vendor quote/submittal</button>';
+      : '<button class="up' + (col.mini ? ' up-mini' : '') + '" data-up="' + k + '">upload vendor quote/submittal</button>';
   }
   return '<td data-c="' + k + '" class="' + cls.join(' ') + '"'
     + (style ? ' style="' + style + '"' : '') + '>' + inner + '</td>';
@@ -901,6 +929,7 @@ function show(r, c, keep) {
   paint(CUR);
   var td = CELLS[r + ':' + c];
   if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  focusClip();
 }
 function paint(at) {
   var old = TBL && TBL.querySelectorAll('td.on, td.inrange');
@@ -961,6 +990,7 @@ function stop(save) {
   var v = e.el.value;
   e.el.style.display = 'none'; e.el.blur();
   if (save) write(e.r, e.c, v);
+  focusClip();
 }
 function write(r, c, v) {
   var d = ROWS[r], col = COLS[c];
@@ -1086,7 +1116,6 @@ document.addEventListener('keydown', function (e) {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault(); document.getElementById('q').focus(); document.getElementById('q').select(); return;
   }
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { copy(e); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
     e.preventDefault();
     var f = nextItem(0, 1), l = nextItem(ROWS.length - 1, -1);
@@ -1150,6 +1179,15 @@ function quiet(r, c, v) {
   sl[col.c.k] = NUMKEY[col.c.k] ? (v === '' ? '' : (isNaN(reads(v)) ? v : reads(v))) : v;
   if (col.c.k === 'v' && v && !was && !sl.st) sl.st = ASK;
 }
+/* The hidden textarea stays focused while the sheet is in front and no cell is open, which is what
+   lets a copy or paste happen at all when you have only highlighted a block. */
+function focusClip() {
+  if (VIEW !== 'sheet' || EDIT) return;
+  var ae = document.activeElement;
+  if (ae && (ae.id === 'q' || ae.id === 'edit' || ae.id === 'pick')) return;   // don't yank focus off the search box or an open cell
+  var c = document.getElementById('clip');
+  if (c && ae !== c) { try { c.focus({ preventScroll: true }); } catch (e) { try { c.focus(); } catch (e2) {} } c.value = ''; }
+}
 function copy(e) {
   var g = range(); if (!g) return;
   var out = [];
@@ -1165,6 +1203,7 @@ function copy(e) {
   say(out.length + ' row' + (out.length === 1 ? '' : 's') + ' copied');
 }
 document.addEventListener('copy', function (e) { if (!EDIT && CUR) copy(e); });
+document.addEventListener('cut', function (e) { if (EDIT || !CUR) return; copy(e); wipe(); });
 document.addEventListener('paste', function (e) {
   if (EDIT || !CUR) return;
   var text = (e.clipboardData || window.clipboardData).getData('text');
@@ -1199,7 +1238,8 @@ document.addEventListener('mousedown', function (e) {
   /* A line on either list is the line on the quote sheet — click it and you are on it. */
   var askfor = e.target.closest && e.target.closest('[data-askfor]');
   if (askfor) { e.preventDefault(); e.stopPropagation();
-    askList(askfor.getAttribute('data-askfor'), askfor.getAttribute('data-asksec')); return; }
+    askList(askfor.getAttribute('data-askfor'),
+      askfor.getAttribute('data-askall') ? '' : askfor.getAttribute('data-asksec')); return; }
   var see2 = e.target.closest && e.target.closest('[data-see2]');
   if (see2) { e.preventDefault(); e.stopPropagation(); seeByKey(see2.getAttribute('data-see2'),
     Number(see2.getAttribute('data-slot') || -1)); return; }
@@ -1251,6 +1291,7 @@ document.addEventListener('mousemove', function (e) {
 document.addEventListener('mouseup', function () {
   if (GRIP) { ST.w[GRIP.at] = COLS[GRIP.at].w; GRIP = null; draw(); keep(); }
   DRAG = false;
+  focusClip();
 });
 document.addEventListener('dblclick', function (e) {
   var td = e.target.closest && e.target.closest('td[data-c]');
@@ -1482,7 +1523,7 @@ function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST
 /* What one vendor has to come back on, as a sheet to send them: their items gathered under the spec
    section each falls in, with what that section demands of it alongside. */
 function askList(vendor, secKey) {
-  tell('starter-ask-list', { vendor: vendor, secKey: secKey || '',
+  tell('starter-ask-list', { vendor: vendor, secKey: secKey || '', attachSpec: attachSpec(),
     state: { slots: ST.slots, rows: ST.rows, add: ST.add } });
   say('Building the list for ' + vendor + '\u2026');
 }

@@ -1099,6 +1099,17 @@ const testCode = `
           return v >= 1300 && v <= 1400;
         })());
 
+      ck('storage: a cloud job attaches its spec pages from Firestore, no folder needed',
+        await (async function () {
+          var put = await blobPut('jfb', new Blob([new Uint8Array([37, 80, 68, 70, 1, 2, 3, 4])]), 'spec.pdf');
+          job = { id: 'jfb', storage: 'firebase',
+            specs: [{ id: 'sp1', name: 'spec.pdf', fb: true, blobId: put.blobId }],
+            sections: [{ key: '230523', number: '23 05 23', title: 'Valves',
+              specId: 'sp1', startPage: 3, endPage: 5 }] };
+          var got = await specPagesOf('230523');
+          return !!(got && got.pages && got.pages.length === 8 && got.from === 3 && got.to === 5);
+        })());
+
       FB = saveFB; job = saveJob; jobFolder = saveFolder;
     })();
 

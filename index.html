@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.52';
+const APP_VERSION = 'v8.53';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21745,7 +21745,9 @@ async function specPagesOf(secKey) {
   const where = { from: from, to: to, name: (sp && sp.name) || 'the spec book' };
   if (!sp) return Object.assign({ pages: null, why: 'the file it was read from is no longer on the job' }, where);
   if (sp.url) return Object.assign({ pages: null, why: 'it is a link, not a file we hold' }, where);
-  if (!jobFolder) return Object.assign({ pages: null, why: 'the ShareFile folder is not loaded on this computer' }, where);
+  /* A cloud job keeps the spec in Firestore, so there is no folder to need; a ShareFile job does. */
+  if (!(sp.fb && sp.blobId) && !onFirebase() && !jobFolder)
+    return Object.assign({ pages: null, why: 'the ShareFile folder is not loaded on this computer' }, where);
   try {
     const blob = await readDocBlob(sp);
     if (!blob) return Object.assign({ pages: null, why: 'the file could not be read' }, where);
@@ -21910,10 +21912,12 @@ async function exportAskList(d) {
     const groups = askListRows(vendor, d.state || (_stHost && _stHost.state) || {}, d.secKey);
     const items = groups.reduce((n, g) => n + g.lines.length, 0);
     if (!items) { toStarter('starter-say', { text: 'Nothing out to ' + vendor + ' to make a list from', bad: true }); return; }
-    /* The pages of the book this section is on, fetched before the document is drawn so the line
-       at the top can say whether they are on the end of it or only named. */
+    /* The pages of the book each section is on, fetched before the document is drawn so the line at
+       the top can say whether they are on the end of it or only named — unless the spec pages were
+       not wanted on this one, in which case none are fetched or attached. */
+    const wantSpec = d.attachSpec !== false;
     const books = [];
-    for (const g of groups) {
+    if (wantSpec) for (const g of groups) {
       const got = await specPagesOf((g.sec || {}).key || '');
       books.push({ g: g, got: got });
     }
