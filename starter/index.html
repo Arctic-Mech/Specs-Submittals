@@ -201,6 +201,8 @@
     color:#fff;padding:7px 14px;border-radius:8px;z-index:20;opacity:0;transition:opacity .15s;
     pointer-events:none;max-width:80vw}
   #say.up{opacity:1}
+  .live{margin-left:12px;font-size:11.5px;color:#9fe6b4;white-space:nowrap}
+  .live.saving{color:#ffd27a}
   #say.bad{background:var(--bad)}
 </style>
 </head>
@@ -208,6 +210,7 @@
 <div id="bar">
   <b>Submittal starter</b>
   <span class="job" id="jobName"></span>
+  <span class="live" id="live" title="Everything you change saves on its own and shows up for everyone else — you do not need to press Done">● Live</span>
   <div class="gap"></div>
   <button class="btn" id="bUndo" onclick="stepBack()" title="Undo (Ctrl+Z)">↶ Undo</button>
   <button class="btn" id="bRedo" onclick="stepOn()" title="Redo (Ctrl+Y)">↷ Redo</button>
@@ -354,6 +357,7 @@ window.addEventListener('message', function (ev) {
   if (d.type === 'starter-filed') { filed(d); return; }
   if (d.type === 'starter-picked') { picked(d); return; }
   if (d.type === 'starter-say') { say(d.text || '', !!d.bad); return; }
+  if (d.type === 'starter-saved') { setLive(false); return; }
 });
 
 function open(d) {
@@ -1076,20 +1080,25 @@ function put(json) {
 
 /* ── saving ── */
 var _save = null, _mine = 0;
+function setLive(saving) {
+  var el = document.getElementById('live'); if (!el) return;
+  el.className = 'live' + (saving ? ' saving' : '');
+  el.textContent = saving ? '● Saving…' : '● Live';
+}
 function keep() {
+  setLive(true);
   clearTimeout(_save);
   _save = setTimeout(function () {
     _mine = Date.now();
     tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
       open: ST.open, shut: ST.shut, qopen: ST.qopen }, at: _mine });
-  }, 500);
+  }, 350);
 }
 /* Somebody else changed it. Theirs wins unless we are in the middle of typing, in which case we
    leave it until they are done — the next save of ours will carry it. */
 function camein(state) {
   if (!READY || !state) return;
-  if (EDIT) return;
-  if (state.at && _mine && state.at <= _mine) return;
+  if (EDIT) return;                              // mid-edit: our next save carries the merge
   var fresh = fill(state, ST.slots);
   if (JSON.stringify(fresh.rows) === JSON.stringify(ST.rows)
     && JSON.stringify(fresh.add) === JSON.stringify(ST.add)) return;

@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.53';
+const APP_VERSION = 'v8.54';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21543,7 +21543,7 @@ function mountStarter(lines, state) {
     + esc(starterUrl()) + '?dingus=1"></iframe>';
   document.body.appendChild(host);
   const iframe = host.querySelector('iframe');
-  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, mine: 0 };
+  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, mine: 0, clientId: 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36) };
   wireStarterPop();
   try { history.pushState({ __dingusStarter: true }, '', '#starter/' + encodeURIComponent(job.id)); _stHost.pushed = true; } catch (x) {}
   iframe.addEventListener('load', () => { _stHost && (_stHost.win = iframe.contentWindow); });
@@ -21569,7 +21569,7 @@ function watchStarter() {
       const v = (d && d.exists && d.exists()) ? (d.data() || {}) : null;
       if (!v) return;
       _stHost.state = v;
-      if (v.at && _stHost.mine && v.at <= _stHost.mine) return;
+      if (v.by && _stHost.clientId && v.by === _stHost.clientId) return;   // our own write echoing back
       toStarter('starter-state', { state: v });
     }, () => {});
   } catch (x) {}
@@ -21592,10 +21592,10 @@ async function keepStarterState(d) {
   if (!job) return;
   /* What it was started from goes away with it, so opening it again never asks. */
   const state = Object.assign({}, d.state || {},
-    { at: d.at || Date.now(), mode: starterMode, slots: starterSlots });
+    { at: d.at || Date.now(), by: _stHost.clientId, mode: starterMode, slots: starterSlots });
   _stHost.mine = state.at;
   _stHost.state = state;
-  try { await FB.setDoc(starterRef(job.id), clean(state)); }
+  try { await FB.setDoc(starterRef(job.id), clean(state)); toStarter('starter-saved', { at: state.at }); }
   catch (e) { toStarter('starter-say', { text: 'Could not save: ' + (e.message || e), bad: true }); }
   if (d.final) requestCloseStarter();
 }
@@ -21799,7 +21799,7 @@ async function buildAskListPdf(vendor, groups, said) {
   const header = () => {
     try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 18, 38, 38); } catch (e) {}
     doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor.apply(doc, ARCTIC_INK);
-    doc.text('WHAT WE NEED FROM ' + String(vendor || '').toUpperCase(), M + 48, 36);
+    doc.text(String(vendor || ''), M + 48, 36);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
     doc.text([(job && job.name) || '', job && job.number ? 'Job ' + job.number : '',
       items + ' item' + (items === 1 ? '' : 's') + ' across ' + groups.length + ' spec section'
@@ -21812,23 +21812,15 @@ async function buildAskListPdf(vendor, groups, said) {
     doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.2); doc.line(M, 62, pageW - M, 62);
   };
   header();
-  const W = [52, 176, 26, 138, 138, 84, 50, 44];      // adds up to the width we have
+  const W = [60, 230, 36, 200, 198];                  // adds up to the width we have
   const cols = {
     0: { cellWidth: W[0], fontStyle: 'bold' },
     1: { cellWidth: W[1] },
     2: { cellWidth: W[2], halign: 'center' },
     3: { cellWidth: W[3], fontSize: 6.8, textColor: [71, 85, 105] },
-    4: { cellWidth: W[4], fontSize: 6.8, textColor: [71, 85, 105] },
-    5: { cellWidth: W[5], fillColor: [243, 250, 245] },
-    6: { cellWidth: W[6], fillColor: [243, 250, 245], halign: 'right' },
-    7: { cellWidth: W[7], fillColor: [243, 250, 245], halign: 'center' }
+    4: { cellWidth: W[4], fontSize: 6.8, textColor: [71, 85, 105] }
   };
-  const HEAD = [[
-    'Item', 'What it is', 'Qty', 'Must meet', 'Who the spec will take',
-    { content: 'Make & model you are proposing', styles: { fillColor: ASK_PDF_YOURS } },
-    { content: 'Price', styles: { fillColor: ASK_PDF_YOURS } },
-    { content: 'Lead (wks)', styles: { fillColor: ASK_PDF_YOURS } }
-  ]];
+  const HEAD = [['Item', 'What it is', 'Qty', 'Must meet', 'Who the spec will take']];
   const base = { margin: { top: 74, left: M, right: M, bottom: 34 }, tableWidth: avail,
     didDrawPage: () => header(),
     styles: { font: 'helvetica', fontSize: 7.6, cellPadding: 3.2, overflow: 'linebreak',
@@ -21836,9 +21828,10 @@ async function buildAskListPdf(vendor, groups, said) {
     headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold',
       fontSize: 7.4, valign: 'middle' } };
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
-  doc.text('Under each section is what that section of the spec asks to be submitted on. The spec\u2019s '
-    + 'own wording is under the line it belongs to, and the three columns on the right are yours to '
-    + 'fill in. ' + (said || ''), M, 74, { maxWidth: avail });
+  doc.text('Under each section is what that section of the spec asks to be submitted on, with the '
+    + 'spec\u2019s own wording under the line it belongs to. Tell us the make and model you are '
+    + 'proposing, your price and your lead time, and we will take it from there. ' + (said || ''),
+    M, 74, { maxWidth: avail });
   let y = 90;
   for (const g of groups) {
     const sec = g.sec || {};
@@ -21864,14 +21857,12 @@ async function buildAskListPdf(vendor, groups, said) {
       const ln = x.ln, who = ln.makers || {};
       body.push([x.item || '', x.name || '', x.qty === '' ? '' : String(x.qty),
         (ln.must || {}).all || (ln.must || {}).short || '',
-        who.all || who.short || '',
-        (x.slot && x.slot.make) || '', (x.slot && x.slot.p != null && x.slot.p !== '') ? String(x.slot.p) : '',
-        (x.slot && x.slot.lead != null && x.slot.lead !== '') ? String(x.slot.lead) : '']);
+        who.all || who.short || '']);
       const says = [];
       if (ln.covers) says.push('Covers: ' + ln.covers);
       if (ln.wording) says.push(ln.wording);
       if (x.slot && x.slot.n) says.push('Our note: ' + x.slot.n);
-      if (says.length) body.push([{ content: says.join('\n\n'), colSpan: 8,
+      if (says.length) body.push([{ content: says.join('\n\n'), colSpan: 5,
         styles: { fontSize: 6.8, fontStyle: 'normal', textColor: [100, 116, 139],
           fillColor: ASK_PDF_SPEC, cellPadding: { top: 4, bottom: 5, left: 10, right: 6 } } }]);
     }
