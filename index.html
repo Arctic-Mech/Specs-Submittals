@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.57';
+const APP_VERSION = 'v8.58';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21827,14 +21827,37 @@ async function buildAskListPdf(vendor, groups, said) {
       textColor: ASK_PDF_INK, valign: 'top', lineColor: [226, 232, 240], lineWidth: 0.5 },
     headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold',
       fontSize: 7.4, valign: 'middle' } };
+  /* ── page 1: just the list ── everything we are asking them to quote, a line each, nothing else.
+     What each one must meet, who the spec will take and the spec's own pages all come after. */
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor.apply(doc, ASK_PDF_INK);
+  doc.text('What we\u2019re asking you to quote', M, 84);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor.apply(doc, ASK_PDF_DIM);
+  doc.text('Everything on this request, at a glance. What each one must meet, who the spec will take, '
+    + 'and the spec\u2019s own pages follow. Tell us the make and model you\u2019re proposing, your price '
+    + 'and your lead time, and we\u2019ll take it from there.', M, 98, { maxWidth: avail });
+  const coverBody = [];
+  for (const g of groups) {
+    const sec = g.sec || {};
+    coverBody.push([{ content: String(sec.number || sec.key || '') + '    ' + String(sec.title || '').toUpperCase(),
+      colSpan: 2, styles: { fontStyle: 'bold', fontSize: 9, fillColor: ASK_PDF_BAND,
+        textColor: ASK_PDF_BANDINK, cellPadding: 4 } }]);
+    for (const x of g.lines) coverBody.push([x.item || '', x.name || '']);
+  }
+  doc.autoTable(Object.assign({}, base, { startY: 116, head: [['Item', 'What it is']], body: coverBody,
+    rowPageBreak: 'avoid',
+    columnStyles: { 0: { cellWidth: 90, fontStyle: 'bold' }, 1: { cellWidth: avail - 90 } } }));
+
+  /* ── the detail, from the next page on ── */
+  doc.addPage();
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, ASK_PDF_DIM);
   doc.text('Under each section is what that section of the spec asks to be submitted on, with the '
-    + 'spec\u2019s own wording under the line it belongs to. Tell us the make and model you are '
-    + 'proposing, your price and your lead time, and we will take it from there. ' + (said || ''),
-    M, 74, { maxWidth: avail });
+    + 'spec\u2019s own wording under the line it belongs to. ' + (said || ''), M, 74, { maxWidth: avail });
   let y = 90;
   for (const g of groups) {
     const sec = g.sec || {};
+    /* Keep a section's heading with the start of its lines: if there is not room for the band and a
+       couple of rows under it, start the section on the next page instead of stranding the heading. */
+    if (y > pageH - M - 150) { doc.addPage(); y = 74; }
     /* the section it all falls under */
     doc.autoTable(Object.assign({}, base, { startY: y, theme: 'plain',
       body: [[String(sec.number || sec.key || '') + '    ' + String(sec.title || '').toUpperCase()]],
@@ -21867,7 +21890,7 @@ async function buildAskListPdf(vendor, groups, said) {
           fillColor: ASK_PDF_SPEC, cellPadding: { top: 4, bottom: 5, left: 10, right: 6 } } }]);
     }
     doc.autoTable(Object.assign({}, base, { startY: y, head: HEAD, body: body,
-      columnStyles: cols }));
+      rowPageBreak: 'avoid', columnStyles: cols }));
     y = doc.lastAutoTable.finalY + 16;
   }
   /* The feet are put on last of all, once the spec pages have gone on the end — otherwise every
