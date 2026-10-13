@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.59';
+const APP_VERSION = 'v8.60';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -5375,7 +5375,7 @@ async function viewRfiDoc(id, docId) {
    (.msg/.eml) in the in-app email viewer, and download anything else. */
 async function openStoredDoc(doc) {
   if (!doc) return;
-  if (!jobFolder) { if (!(await loadJobFolder())) { toast('Load this job’s ShareFile folder to open files', true); return; } }
+  if (!(doc.fb && doc.blobId) && !onFirebase() && !jobFolder) { if (!(await loadJobFolder())) { toast('Load this job’s ShareFile folder to open files', true); return; } }
   stickyToast(`Opening ${doc.name}…`);
   if (isEmailName(doc.name)) {                 // emails get the in-app viewer, never Bluebeam/download
     const blob = await readDocBlob(doc);
@@ -18323,7 +18323,7 @@ async function resolveDoc(key, kind, docId) {
     if (!blob) { toast('Still uploading, or couldn’t load it — try again in a moment', true); return null; }
     return { url: URL.createObjectURL(blob), name: d.name };
   }
-  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
+  if (!(d.fb && d.blobId) && !onFirebase() && !jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view PDFs', true); return null; } }
   stickyToast(`Opening ${d.name}…`);
   const url = await docUrl(d);
   if (!url) { toast(await docReadError(d), true); return null; }
@@ -18651,7 +18651,8 @@ async function openSpecViewer(specId, page) {
     return;
   }
   if (sp.url) { showPdf(sp.url, sp.name, page); return; }     // a ShareFile link
-  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view the spec PDF', true); return; } }
+  /* A cloud spec is read from Firestore, so it needs no folder; only a folder-stored spec does. */
+  if (!(sp.fb && sp.blobId) && !onFirebase() && !jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to view the spec PDF', true); return; } }
   stickyToast(`Opening ${sp.name}…`);
   const url = await docUrl(sp);
   if (!url) { toast(await docReadError(sp), true); return; }
@@ -18793,7 +18794,7 @@ async function rereadSpec(specId) {
   const sp = specId ? specById(specId) : (specsOf(job)[0] || null);
   if (!sp) { toast('No spec book is stored on this job', true); return; }
   if (sp.url) { toast('That spec is a link rather than a file we hold — upload the PDF to read it again', true); return; }
-  if (!jobFolder && !(await ensureJobFolder())) {
+  if (!(sp.fb && sp.blobId) && !onFirebase() && !jobFolder && !(await ensureJobFolder())) {
     toast('Load this job’s ShareFile folder to read the spec again', true); return; }
   stickyToast('Fetching ' + sp.name + '…');
   let blob = null;
@@ -19551,8 +19552,9 @@ function showAddReview(file, pageCount, result) {
 
 async function confirmImport() {
   if (!pendingImport) return;
-  // The spec PDF is saved into the job's ShareFile folder — load it first.
-  if (!jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the spec PDF', true); return; } }
+  // A cloud job stores the spec PDF in Firestore, so it needs no folder; a ShareFile job does, so
+  // load it first.
+  if (!onFirebase() && !jobFolder) { if (!(await ensureJobFolder())) { toast('Load this job’s ShareFile folder to store the spec PDF', true); return; } }
   beginJobEdit();
   const { file, pageCount, result } = pendingImport;
   const boxes = Array.from(document.querySelectorAll('.review-row input[type=checkbox]'));
@@ -19571,7 +19573,7 @@ async function confirmImport() {
   const keeping = new Set(ticked.filter(c => c.dataset.mode === 'keep').map(c => c.dataset.key));
 
   importModal(`<div class="modal-head"><h3>Saving ${esc(file.name)}</h3></div>
-    <div class="modal-body"><div class="muted" id="upStep">Saving the spec PDF to the ShareFile folder…</div>
+    <div class="modal-body"><div class="muted" id="upStep">Saving the spec PDF to ${onFirebase() ? 'cloud storage' : 'the ShareFile folder'}…</div>
     <div class="progress"><div id="upBar"></div></div></div>`);
 
   try {
@@ -19581,9 +19583,10 @@ async function confirmImport() {
     const specId = again ? again.id : uid('spec');
     const step = $('upStep'), bar = $('upBar');
     if (bar) bar.style.width = '60%';
+    let put = null, dir, onDisk;
     if (!again) {
-      const put = await putFile(file, 'spec');                   // files/Specs/<name>
-      var dir = put.dir, onDisk = put.file;
+      put = await putFile(file, 'spec');                         // files/Specs/<name>
+      dir = put.dir; onDisk = put.file;
     }
     if (bar) bar.style.width = '100%';
     if (step) step.textContent = again ? 'Filing the sections…' : 'Saved. Filing the sections…';
@@ -19595,12 +19598,19 @@ async function confirmImport() {
     for (const sp of outgoing) {
       sp.superseded = true; sp.supersededAt = Date.now(); sp.supersededBy = specId;
       if (meName()) sp.supersededByWho = meName();
+      /* Spec PDFs are big, so on the cloud only the book in force keeps its file — the one being
+         replaced drops its bytes to free the space, and is marked so nothing tries to open them.
+         (On a ShareFile job the file is just moved to Specs/Superseded and kept.) */
+      if (onFirebase() && sp.blobId) {
+        try { const freed = await blobDel(job.id, sp.blobId); bumpStorage(-freed); } catch (e) {}
+        delete sp.fb; delete sp.blobId; sp.fileDropped = true;
+      }
     }
     // the flag is all that is needed: specWantDir now sends a superseded book to Specs/Superseded,
     // and the organise that runs on every save moves the file there with the usual rollback
     if (again) { again.pages = pageCount; again.reread = Date.now(); if (meName()) again.rereadBy = meName(); }
     else job.specs.push({ id: specId, name: file.name, pages: pageCount, size: file.size,
-      dir, file: onDisk, fb: put.fb, blobId: put.blobId, added: Date.now(), by: meName() || '',
+      dir, file: onDisk, fb: put && put.fb, blobId: put && put.blobId, added: Date.now(), by: meName() || '',
       replaces: outgoing.map(sp => sp.id) });
 
     const existing = new Set(sectionsOf(job).map(s => s.key));
