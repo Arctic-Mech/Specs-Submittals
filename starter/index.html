@@ -195,6 +195,14 @@
   .how b{color:var(--ink)}
   .howbar .btn.on{background:var(--head);border-color:var(--head);color:#fff}
   table.list tr.lit td{box-shadow:inset 3px 0 0 -1px #f59e0b}
+  /* a spec section (or vendor) as a band inside the one table, so its columns are headed once */
+  table.list tr.ipband td{background:var(--sec);color:var(--secink);font-weight:700;font-size:12px;
+    padding:4px 8px 4px 12px;border-bottom:1px solid var(--line)}
+  table.list tr.ipband .ipband-in{display:flex;align-items:center;gap:12px}
+  table.list tr.ipband .btn.ask{margin-left:auto;background:rgba(0,0,0,.07);border-color:rgba(0,0,0,.18);
+    color:var(--secink);font-size:11px;font-weight:600;padding:2px 8px}
+  table.list tr.ipband .btn.ask:hover{background:rgba(0,0,0,.14)}
+  table.list.ip{margin-top:0;border-radius:0 0 7px 7px;overflow:hidden}
   table.list.tight{border-radius:0;border-top:0}
   .firm table.list.tight:last-child{border-radius:0 0 7px 7px}
   #say{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--head);
@@ -714,21 +722,23 @@ function drawProgress() {
           + 'quoting, across all ' + g.order.length + ' spec sections">\u2913 Send ' + esc(g.vendor)
           + ' everything</button>' : '')
       + '</div>';
+    /* One table for the whole group, with the header shown once; each spec section (or vendor, the
+       other way round) is a band row inside it rather than a table of its own. Far less to read. */
+    h += '<table class="list tight ip"><thead><tr>'
+      + '<th style="width:30px">\u2605</th>'
+      + '<th class="left" style="width:160px">What to do</th>'
+      + '<th style="width:96px">Item</th><th class="left" style="width:280px">What it is</th>'
+      + '<th class="left" style="width:150px">Quote</th><th style="width:92px">Price</th>'
+      + '<th style="width:84px">Lead (wks)</th><th class="left" style="width:210px">Notes</th>'
+      + '</tr></thead><tbody>';
     for (var k = 0; k < g.order.length; k++) {
       var sg = g.inner[g.order[k]];
       var who = firstFirm ? g.vendor : sg.vendor;
       var sk = firstFirm ? sg.secKey : g.secKey;
-      h += '<div class="firmsec"><span>' + esc(sg.label) + '</span>'
+      h += '<tr class="ipband"><td colspan="8"><div class="ipband-in"><span>' + esc(sg.label) + '</span>'
         + '<button class="btn ask" data-askfor="' + esc(who) + '" data-asksec="' + esc(sk)
         + '" title="A PDF to send ' + esc(who) + ': their items in this section, with what the '
-        + 'spec asks of each one">\u2913 Send ' + esc(who) + ' this section</button></div>';
-      h += '<table class="list tight"><thead><tr>'
-        + '<th style="width:30px">\u2605</th>'
-        + '<th class="left" style="width:160px">What to do</th>'
-        + '<th style="width:96px">Item</th><th class="left" style="width:280px">What it is</th>'
-        + '<th class="left" style="width:150px">Quote</th><th style="width:92px">Price</th>'
-        + '<th style="width:84px">Lead (wks)</th><th class="left" style="width:210px">Notes</th>'
-        + '</tr></thead><tbody>';
+        + 'spec asks of each one">\u2913 Send ' + esc(who) + ' this section</button></div></td></tr>';
       for (var r = 0; r < sg.rows.length; r++) {
         var x = sg.rows[r];
         h += '<tr data-go="' + esc(x.key) + '" class="' + (r % 2 ? 'odd' : '')
@@ -743,9 +753,8 @@ function drawProgress() {
           + '<td>' + (x.lead == null || x.lead === '' ? '' : esc(String(x.lead))) + '</td>'
           + '<td class="left">' + esc(x.note || '') + '</td></tr>';
       }
-      h += '</tbody></table>';
     }
-    h += '</div>';
+    h += '</tbody></table></div>';
   }
   document.getElementById('wrap').innerHTML = h + '</div>';
   document.getElementById('tabSay').textContent = rows.length
