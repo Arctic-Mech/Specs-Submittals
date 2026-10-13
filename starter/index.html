@@ -315,7 +315,7 @@ var COLS = [];                   // the flat column list, built once the slot co
    columns apiece is one you scroll past rather than read. */
 var SLOT_MINI = [
   { k: 'v', h: 'Vendor', w: 140, edit: 1, left: 1 },
-  { k: 'f', h: 'Quote',  w: 170, file: 1 }
+  { k: 'f', h: 'Quote',  w: 92,  file: 1 }
 ];
 function quoteOpen(i) { return !!(ST && ST.qopen && ST.qopen[i]); }
 function layOut(n) {
@@ -387,7 +387,7 @@ function fill(state, slots) {
   var s = state && typeof state === 'object' ? state : {};
   return { slots: Math.max(2, Math.min(8, s.slots || slots)), rows: s.rows || {},
     add: s.add || {}, w: s.w || {}, open: s.open || {}, shut: s.shut || {},
-    qopen: s.qopen || {}, at: s.at || 0 };
+    qopen: {}, at: s.at || 0 };
 }
 function count() { var n = 0; for (var i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'item') n++; return n; }
 
@@ -895,7 +895,8 @@ function cellHtml(d, col, k, left, r) {
       ? '<span class="have"><a href="#" data-see="' + k + '" title="' + esc(f.name || '') + '">'
         + esc(trim(f.name || f.file || 'quote', 22)) + '</a>'
         + '<button class="x" data-drop="' + k + '" title="Take it off this line">×</button></span>'
-      : '<button class="up' + (col.mini ? ' up-mini' : '') + '" data-up="' + k + '">upload vendor quote/submittal</button>';
+      : '<button class="up' + (col.mini ? ' up-mini' : '') + '" data-up="' + k + '" title="Upload the vendor\'s quote or submittal">'
+        + (col.mini ? '\u2b06 upload' : 'upload vendor quote/submittal') + '</button>';
   }
   return '<td data-c="' + k + '" class="' + cls.join(' ') + '"'
     + (style ? ' style="' + style + '"' : '') + '>' + inner + '</td>';
@@ -1100,7 +1101,7 @@ function keep() {
   _save = setTimeout(function () {
     _mine = Date.now();
     tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
-      open: ST.open, shut: ST.shut, qopen: ST.qopen }, at: _mine });
+      open: ST.open, shut: ST.shut }, at: _mine });
   }, 350);
 }
 /* Somebody else changed it. Theirs wins unless we are in the middle of typing, in which case we
@@ -1548,7 +1549,7 @@ function askList(vendor, secKey) {
 function leave() {
   clearTimeout(_save);
   tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
-    open: ST.open, shut: ST.shut, qopen: ST.qopen }, at: Date.now(), final: true });
+    open: ST.open, shut: ST.shut }, at: Date.now(), final: true });
 }
 
 tell('starter-ready', {});
