@@ -80,6 +80,11 @@
   tr.odd td.qb{background:#faf7ee}
   tr.odd td.qt{background:#edf7f0}
   thead tr.heads th.left{text-align:left}
+  /* The Vendor column header doubles as the open/collapse control for its quote. */
+  .vtog{border:0;background:none;color:inherit;font:inherit;font-weight:600;cursor:pointer;
+    padding:0;display:inline-flex;align-items:center;gap:5px;width:100%;text-align:left}
+  .vtog:hover{color:#bfe3ff}
+  .vtog-ar{opacity:.7;font-size:10px}
   th .grip{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:4}
   thead th{position:sticky}
   .froze{position:sticky;z-index:2}
@@ -188,6 +193,13 @@
   .chip{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
   .chip.ask{background:var(--ask);color:var(--askink)}
   .chip.got{background:var(--got);color:var(--gotink)}
+  /* "Where it stands", editable right on the in-progress list. */
+  .standsel{border:1px solid rgba(0,0,0,.14);border-radius:999px;padding:1px 22px 1px 9px;
+    font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;-webkit-appearance:none;
+    appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4'/></svg>");
+    background-repeat:no-repeat;background-position:right 7px center}
+  .standsel.ask{background-color:var(--ask);color:var(--askink)}
+  .standsel.got{background-color:var(--got);color:var(--gotink)}
   #none{padding:26px 2px;color:var(--dim);font-size:13px}
   .firm{margin:0 0 26px}
   .firmhead{display:flex;align-items:center;gap:14px;padding:7px 12px;background:var(--head);
@@ -641,6 +653,26 @@ function progressRows() {
   });
   return out;
 }
+/* The "where it stands" picker shown on the in-progress list, so a quote can be moved from asked
+   to back (or taken off, or marked as the one we are going with) without opening the quote sheet. */
+function standSelect(key, slot, cur) {
+  var h = '<select class="standsel ' + (cur === ASK ? 'ask' : cur === GOT ? 'got' : '')
+    + '" data-stand="' + esc(key) + '" data-slot="' + slot + '">';
+  for (var i = 0; i < STATES.length; i++)
+    h += '<option value="' + i + '"' + (STATES[i] === cur ? ' selected' : '') + '>'
+      + esc(STATES[i] || '—') + '</option>';
+  return h + '</select>';
+}
+function setStand(key, slot, val) {
+  mark();
+  var rec = row(key);
+  while (rec.s.length <= slot) rec.s.push({});
+  var sl = rec.s[slot];
+  sl.st = STATES.indexOf(val) > 0 ? val : '';
+  if (sl.st !== WIN && rec.chose === slot) rec.chose = null;   // mirrors the quote-sheet rule
+  keep();
+  draw();
+}
 function listHtml(head, rows, cell, none) {
   if (!rows.length) return '<div id="none">' + esc(none) + '</div>';
   var h = '<table class="list"><thead><tr>';
@@ -790,8 +822,7 @@ function drawProgress() {
         h += '<tr data-go="' + esc(x.key) + '" class="' + (r % 2 ? 'odd' : '')
           + (x.star ? ' lit' : '') + '">'
           + '<td class="mid">' + (x.star ? '\u2605' : '') + '</td>'
-          + '<td class="left"><span class="chip ' + (x.todo === ASK ? 'ask' : 'got') + '">'
-          + esc(x.todo) + '</span></td>'
+          + '<td class="left">' + standSelect(x.key, x.slot, x.todo) + '</td>'
           + '<td>' + esc(x.item) + '</td><td class="left">' + esc(x.name) + '</td>'
           + '<td class="left">' + (x.file ? '<a href="#" data-see2="' + esc(x.key) + '" data-slot="'
             + x.slot + '">' + esc(x.file.name || x.file.file) + '</a>' : '') + '</td>'
@@ -837,10 +868,18 @@ function draw() {
   h += '<th class="qt gs ge" colspan="' + TAIL.length + '">GOING WITH</th></tr><tr class="heads">';
   for (var k = 0; k < COLS.length; k++) {
     var cc = COLS[k].c;
+    /* The Vendor header of each quote is also the handle for opening and collapsing that quote, so
+       you never have to scroll back up to the QUOTE row to do it — a click here does the same. */
+    var isVendHd = COLS[k].slot != null && cc.k === 'v';
+    var label = isVendHd
+      ? '<button class="vtog" data-quote="' + COLS[k].slot + '" title="'
+          + (quoteOpen(COLS[k].slot) ? 'Collapse this quote' : 'Open price, lead time, where it stands and notes')
+          + '">' + esc(cc.h) + ' <span class="vtog-ar">' + (quoteOpen(COLS[k].slot) ? '✕' : '▸') + '</span></button>'
+      : esc(cc.h);
     h += '<th class="' + (cc.left ? 'left ' : '') + (COLS[k].grp || '')
       + (k < FROZEN ? ' froze' : '') + '"'
       + (k < FROZEN ? ' style="left:' + left[k] + 'px"' : '')
-      + '>' + esc(cc.h) + '<span class="grip" data-grip="' + k + '"></span></th>';
+      + '>' + label + '<span class="grip" data-grip="' + k + '"></span></th>';
   }
   h += '</tr></thead><tbody>';
   for (var r2 = 0; r2 < ROWS.length; r2++) h += rowHtml(ROWS[r2], r2, left);
@@ -1326,6 +1365,9 @@ document.addEventListener('mousedown', function (e) {
   var see2 = e.target.closest && e.target.closest('[data-see2]');
   if (see2) { e.preventDefault(); e.stopPropagation(); seeByKey(see2.getAttribute('data-see2'),
     Number(see2.getAttribute('data-slot') || -1)); return; }
+  /* The where-it-stands picker lives inside a clickable row — let it take the click itself instead
+     of the row opening the line on the quote sheet. */
+  if (e.target.closest && e.target.closest('[data-stand]')) return;
   var go = e.target.closest && e.target.closest('[data-go]');
   if (go) { goLine(go.getAttribute('data-go')); return; }
   var star = e.target.closest && e.target.closest('[data-star]');
@@ -1386,6 +1428,12 @@ document.addEventListener('dblclick', function (e) {
 document.getElementById('pick').addEventListener('change', function () {
   if (!EDIT) return;
   var at2 = EDIT; stop(true); show(at2.r, at2.c);
+});
+/* The where-it-stands picker on the in-progress list. */
+document.addEventListener('change', function (e) {
+  var sel = e.target.closest && e.target.closest('[data-stand]');
+  if (!sel) return;
+  setStand(sel.getAttribute('data-stand'), Number(sel.getAttribute('data-slot')), STATES[Number(sel.value)] || '');
 });
 document.getElementById('edit').addEventListener('blur', function () { stop(true); });
 /* Scroll the sheet while a cell is open and the box would be left behind, so it is put away. */
