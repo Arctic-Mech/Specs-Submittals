@@ -103,6 +103,13 @@
     padding:0 7px 0 0;line-height:1}
   .fold:hover{color:var(--pick)}
   .folded{margin-left:12px;font-weight:400;font-size:11.5px;opacity:.7}
+  /* Delete-this-line, tucked at the end of what-it-is and only out when you are on the row. */
+  td.namecol{position:relative}
+  .delrow{position:absolute;right:2px;top:50%;transform:translateY(-50%);display:none;
+    border:0;border-radius:4px;background:#fee2e2;color:#b91c1c;cursor:pointer;font-size:11px;
+    line-height:1;padding:3px 6px;z-index:1}
+  tbody tr:hover .delrow{display:inline-flex}
+  .delrow:hover{background:#fecaca}
   tr.sub td{background:var(--sub);color:var(--subink);font-weight:600}
   tr.odd td{background:var(--band)}
   tr.band td.froze{background:var(--sec)}
@@ -252,7 +259,7 @@
   <div class="gap"></div>
   <button class="btn" id="bUndo" onclick="stepBack()" title="Undo (Ctrl+Z)">↶ Undo</button>
   <button class="btn" id="bRedo" onclick="stepOn()" title="Redo (Ctrl+Y)">↷ Redo</button>
-  <button class="btn" onclick="toExcel()" title="Build the same sheet as an Excel file">Excel…</button>
+  <button class="btn" onclick="toExcel()" title="A filterable Excel table of the lines that have a vendor on them — what it is, qty, notes and vendor info, the one you are going with picked out">Steps (Excel)…</button>
   <button class="btn go" onclick="leave()">✓ Done</button>
 </div>
 <div id="tabs">
@@ -445,7 +452,7 @@ function fill(state, slots) {
   var s = state && typeof state === 'object' ? state : {};
   return { slots: Math.max(2, Math.min(8, s.slots || slots)), rows: s.rows || {},
     add: s.add || {}, w: s.w || {}, open: s.open || {}, shut: s.shut || {},
-    qopen: {}, at: s.at || 0 };
+    del: s.del || {}, qopen: {}, at: s.at || 0 };
 }
 function count() { var n = 0; for (var i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'item') n++; return n; }
 
@@ -466,6 +473,8 @@ function rowsOf() {
     if (ln.blank) continue;
     var sk = (ln.sec || {}).key || '';
     if (ln.band) { out.push({ kind: 'band', line: ln, secKey: sk, lines: 0 }); continue; }
+    /* A line taken off the sheet is gone before it is counted or drawn. */
+    if (!ln.sub && ST.del && ST.del[ln.key || ('L' + i)]) continue;
     /* A section folded away takes its lines with it, so a sheet of forty sections is still a
        sheet you can read. The band it folds into says how many went with it. */
     var band = null;
@@ -966,6 +975,10 @@ function cellHtml(d, col, k, left, r) {
     inner = '<button class="opener" data-open="' + esc(d.key) + '">'
       + (ST.open && ST.open[d.key] ? '\u2296' : '\u2295') + '</button>' + inner;
   if (cc.k === 'name' && r && r.star) cls.push('starred');
+  /* A line can be taken off the sheet, whatever is in it \u2014 the \u2715 sits on the end of what-it-is and
+     shows when you are on the row. */
+  if (cc.k === 'name') { cls.push('namecol');
+    inner += '<button class="delrow" data-del="' + esc(d.key) + '" title="Delete this line">\u2715</button>'; }
   if (cc.pick) {
     var now = ((r && r.s && r.s[col.slot]) || {}).st || '';
     if (now === ASK) cls.push('ask'); else if (now === GOT) cls.push('got');
@@ -1149,7 +1162,7 @@ function at(key, fn) { for (var i = 0; i < ROWS.length; i++) if (ROWS[i].key ===
 
 /* ── undo ── */
 var BACK = [], ON = [];
-function snap() { return JSON.stringify({ rows: ST.rows, add: ST.add }); }
+function snap() { return JSON.stringify({ rows: ST.rows, add: ST.add, del: ST.del || {} }); }
 function mark() { BACK.push(snap()); if (BACK.length > 120) BACK.shift(); ON.length = 0; able(); }
 function able() {
   document.getElementById('bUndo').disabled = !BACK.length;
@@ -1169,7 +1182,7 @@ function stepOn() {
 }
 function put(json) {
   var was = JSON.parse(json);
-  ST.rows = was.rows || {}; ST.add = was.add || {};
+  ST.rows = was.rows || {}; ST.add = was.add || {}; ST.del = was.del || {};
   draw(); keep(); able();
 }
 
@@ -1186,7 +1199,7 @@ function keep() {
   _save = setTimeout(function () {
     _mine = Date.now();
     tell('starter-save', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, w: ST.w,
-      open: ST.open, shut: ST.shut }, at: _mine });
+      open: ST.open, shut: ST.shut, del: ST.del || {} }, at: _mine });
   }, 350);
 }
 /* Somebody else changed it. Theirs wins unless we are in the middle of typing, in which case we
@@ -1196,8 +1209,9 @@ function camein(state) {
   if (EDIT) return;                              // mid-edit: our next save carries the merge
   var fresh = fill(state, ST.slots);
   if (JSON.stringify(fresh.rows) === JSON.stringify(ST.rows)
-    && JSON.stringify(fresh.add) === JSON.stringify(ST.add)) return;
-  ST.rows = fresh.rows; ST.add = fresh.add;
+    && JSON.stringify(fresh.add) === JSON.stringify(ST.add)
+    && JSON.stringify(fresh.del) === JSON.stringify(ST.del || {})) return;
+  ST.rows = fresh.rows; ST.add = fresh.add; ST.del = fresh.del;
   draw();
   say('Brought in a change somebody else made');
 }
@@ -1357,6 +1371,8 @@ document.addEventListener('mousedown', function (e) {
     GRIP = { at: Number(grip.getAttribute('data-grip')), x: e.clientX, w: COLS[Number(grip.getAttribute('data-grip'))].w };
     e.preventDefault(); return;
   }
+  var del = e.target.closest && e.target.closest('[data-del]');
+  if (del) { e.preventDefault(); e.stopPropagation(); delLine(del.getAttribute('data-del')); return; }
   /* A line on either list is the line on the quote sheet — click it and you are on it. */
   var askfor = e.target.closest && e.target.closest('[data-askfor]');
   if (askfor) { e.preventDefault(); e.stopPropagation();
@@ -1490,6 +1506,24 @@ function addLine(secKey) {
   ST.add[secKey].push({ key: key, item: '', name: '', qty: 1 });
   draw(); keep();
   at(key, function (i) { show(i, 0); begin(i, 0, true, ''); });
+}
+/* Take a line off the sheet, whatever is in it. A line somebody typed in is dropped outright; a
+   line read off the spec is marked gone, so it stays off even after the book is read again — and
+   either way whatever was typed against it goes with it. */
+function delLine(key) {
+  mark();
+  var removed = false;
+  for (var sk in ST.add) {
+    var arr = ST.add[sk];
+    for (var i = 0; i < arr.length; i++) if (arr[i].key === key) { arr.splice(i, 1); removed = true; break; }
+    if (removed) break;
+  }
+  if (!removed) { if (!ST.del) ST.del = {}; ST.del[key] = 1; }
+  if (ST.rows && ST.rows[key]) delete ST.rows[key];
+  if (ST.open && ST.open[key]) delete ST.open[key];
+  CUR = null; SEL = null;
+  draw(); keep();
+  say('Line deleted');
 }
 
 /* ── the vendor's quote ── */
@@ -1651,7 +1685,7 @@ function jump(r) {
   if (f >= 0) { SEL = null; show(f, 0); }
 }
 
-function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST.rows, add: ST.add } }); }
+function toExcel() { tell('starter-export', { state: { slots: ST.slots, rows: ST.rows, add: ST.add, del: ST.del || {} } }); }
 /* What one vendor has to come back on, as a sheet to send them: their items gathered under the spec
    section each falls in, with what that section demands of it alongside. */
 function askList(vendor, secKey) {

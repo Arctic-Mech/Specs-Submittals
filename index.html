@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.61';
+const APP_VERSION = 'v8.62';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21404,7 +21404,7 @@ async function openStarterModal() {
       </div>
       <div class="modal-foot">
         <button class="btn" onclick="closePdf();exportStarterXlsx()"
-          title="The same sheet as an Excel file, carrying whatever has been typed into it already">Excel file</button>
+          title="A filterable Excel table of the lines that have a vendor on them — what it is, qty, notes and vendor info, the one you are going with picked out">Steps list (Excel)</button>
         <button class="btn primary" onclick="closePdf();openStarterPage()"
           title="Open the sheet here, where everybody is working off the same one">Open the starter</button>
       </div>
@@ -21415,29 +21415,147 @@ async function exportStarterXlsx(state) {
   const secs = visibleSections();
   if (!secs.length) { toast('Nothing to start from — clear the filters or add a section first', true); return; }
   try {
-    stickyToast('Building the starter…');
+    stickyToast('Building the steps list…');
+    /* The export reflects what has been typed on the live sheet. When it is launched from outside
+       the starter (the button on the Export menu), there is no state in hand, so the saved one is
+       read so the list still shows the vendors that are on it. */
+    if (!state) { try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) state = d.data() || {}; } catch (e) {} }
     const lines = starterWithState(await starterLines(secs, starterMode), state);
-    const items = lines.filter(l => !l.band).length;
-    if (!items) { toast('Nothing matched that choice — try "Both"', true); return; }
-    const src = (STARTER_SOURCES.find(o => o.id === starterMode) || {}).label || '';
-    const b = await buildStarterXlsx(lines, { slots: starterSlots, sourceLabel: 'From: ' + src,
-      items: items, sections: lines.filter(l => l.band).length });
-    const wb = starterFinish(b, lines, { slots: starterSlots });
+    const steps = buildStarterSteps(lines);
+    if (!steps.length) { toast('No lines have a vendor on them yet — put a vendor in a quote slot first', true); return; }
+    const wb = await buildStarterStepsXlsx(steps);
     const bytes = await wb.xlsx.writeBuffer();
     const url = URL.createObjectURL(new Blob([bytes],
       { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = sanitizeAnyName(jobFileBase() + ' submittal starter', 'submittal starter') + '.xlsx';
+    a.download = sanitizeAnyName(jobFileBase() + ' submittal steps', 'submittal steps') + '.xlsx';
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
-    toast('Starter built — ' + items + ' line' + (items === 1 ? '' : 's') + ' to get priced');
+    toast('Steps list built — ' + steps.length + ' line' + (steps.length === 1 ? '' : 's') + ' with a vendor');
   } catch (e) {
     console.error(e);
-    toast('Could not build the starter: ' + (e.message || e), true);
+    toast('Could not build the steps list: ' + (e.message || e), true);
   }
+}
+/* Flatten the sheet to one row per vendor that is actually on a line: only the lines somebody has
+   put a vendor against, each vendor on that line its own row, so the result is the list of steps —
+   who we are waiting on, for what, and where each one stands — that filters and sorts cleanly. */
+function buildStarterSteps(lines) {
+  const out = [];
+  let curSec = null;
+  for (const ln of lines) {
+    if (ln.band) { curSec = ln.sec || null; continue; }
+    if (ln.sub || ln.blank) continue;
+    const quotes = (ln.quotes || []);
+    const secObj = ln.sec || {}, bandObj = curSec || {};
+    const section = String(secObj.number || bandObj.number || secObj.key || bandObj.key || '').trim();
+    const name = [ln.name, ln.desc].filter(Boolean).join(' — ');
+    for (let i = 0; i < quotes.length; i++) {
+      const q = quotes[i] || {};
+      const vendor = String(q.v || '').trim();
+      if (!vendor) continue;
+      out.push({
+        section: section,
+        item: String(ln.tag || ln.mark || '').trim(),
+        name: name,
+        qty: (ln.qty === '' || ln.qty == null) ? '' : ln.qty,
+        note: String(ln.note || '').trim(),
+        vendor: vendor,
+        stands: q.st || '',
+        price: (q.p === '' || q.p == null) ? '' : q.p,
+        lead: (q.lead === '' || q.lead == null) ? '' : q.lead,
+        vnote: String(q.n || '').trim(),
+        win: q.st === STARTER_WIN || ln.chose === i
+      });
+    }
+  }
+  return out;
+}
+/* As a real Excel table, so the filter buttons are there the moment it opens and the whole list
+   sorts and narrows without setting anything up. The vendor we are going with on a line is picked
+   out in green. No room for files — this is the plan of what to chase, not where the quotes live. */
+async function buildStarterStepsXlsx(steps) {
+  const XJ = await ensureExcelJS();
+  const wb = new XJ.Workbook();
+  wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+  const ws = wb.addWorksheet('Steps', {
+    views: [{ state: 'frozen', ySplit: 4 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
+  });
+  const COLS = [
+    { h: 'Spec section', w: 13, k: 'section' }, { h: 'Item', w: 12, k: 'item' },
+    { h: 'What it is', w: 42, k: 'name' }, { h: 'Qty', w: 6.5, k: 'qty' },
+    { h: 'Notes', w: 26, k: 'note' }, { h: 'Vendor', w: 22, k: 'vendor' },
+    { h: 'Where it stands', w: 18, k: 'stands' }, { h: 'Price', w: 12, k: 'price' },
+    { h: 'Lead (wks)', w: 9, k: 'lead' }, { h: 'Vendor notes', w: 24, k: 'vnote' },
+    { h: 'Going with', w: 10, k: 'win' }
+  ];
+  ws.columns = COLS.map(c => ({ width: c.w }));
+  const nCols = COLS.length;
+  const won = steps.filter(s => s.win).length;
+  ws.mergeCells(1, 1, 1, nCols);
+  const t = ws.getCell(1, 1);
+  t.value = 'Arctic Mechanical — ' + (job.name || 'Job') + '  ·  Submittal steps';
+  t.font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
+  t.alignment = { vertical: 'middle' };
+  ws.getRow(1).height = 24;
+  ws.mergeCells(2, 1, 2, nCols);
+  const sub = ws.getCell(2, 1);
+  sub.value = [job.number ? 'Job ' + job.number : '',
+    steps.length + ' step' + (steps.length === 1 ? '' : 's') + ' with a vendor',
+    won ? won + ' decided (going with)' : '', 'Built ' + shortDate(today())].filter(Boolean).join('    ·    ');
+  sub.font = { size: 10, color: { argb: SCH_INK.dim } };
+  const headRow = 4;
+  const num = v => {
+    if (v === '' || v == null) return '';
+    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+    return isNaN(n) ? v : n;
+  };
+  const body = steps.map(s => [s.section, s.item, s.name, num(s.qty), s.note, s.vendor,
+    s.stands, num(s.price), num(s.lead), s.vnote, s.win ? '✓' : '']);
+  ws.addTable({
+    name: 'SubmittalSteps', ref: 'A' + headRow, headerRow: true,
+    style: { theme: 'TableStyleMedium2', showRowStripes: true },
+    columns: COLS.map(c => ({ name: c.h, filterButton: true })),
+    rows: body.length ? body : [COLS.map(() => '')]
+  });
+  /* The header, and then each row — the going-with vendor painted green so the decided ones stand
+     out whichever way the list ends up filtered. */
+  const hr = ws.getRow(headRow);
+  hr.height = 20;
+  for (let c = 1; c <= nCols; c++) {
+    const cell = hr.getCell(c);
+    cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    cell.alignment = { vertical: 'middle', horizontal: (c === 3 || c === 5 || c === 10) ? 'left' : 'center', wrapText: true };
+  }
+  const WINFILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+  const WININK = 'FF166534';
+  const dollar = '"$"#,##0';
+  for (let i = 0; i < steps.length; i++) {
+    const r = ws.getRow(headRow + 1 + i), s = steps[i];
+    r.getCell(1).alignment = { horizontal: 'center' };
+    r.getCell(2).alignment = { horizontal: 'center' };
+    r.getCell(3).alignment = { horizontal: 'left', wrapText: true };
+    r.getCell(4).alignment = { horizontal: 'center' };
+    r.getCell(5).alignment = { horizontal: 'left', wrapText: true };
+    r.getCell(7).alignment = { horizontal: 'center' };
+    r.getCell(8).numFmt = dollar; r.getCell(8).alignment = { horizontal: 'right' };
+    r.getCell(9).alignment = { horizontal: 'center' };
+    r.getCell(10).alignment = { horizontal: 'left', wrapText: true };
+    r.getCell(11).alignment = { horizontal: 'center' };
+    if (s.win) {
+      const vc = r.getCell(6), wc = r.getCell(11);
+      vc.fill = WINFILL; vc.font = { bold: true, color: { argb: WININK } };
+      wc.fill = WINFILL; wc.font = { bold: true, color: { argb: WININK } };
+    }
+  }
+  return wb;
 }
 /* ── the submittal starter, on its own page ──
    The sheet lives on the website now, so everybody is always looking at the same one. The page
@@ -21466,7 +21584,7 @@ function starterKeyer() {
    edited on a line, the lines somebody put in by hand, and the quotes against each one. So the
    Excel file is the same sheet rather than an empty one. */
 function starterWithState(lines, state) {
-  const st = state || {}, rows = st.rows || {}, add = st.add || {};
+  const st = state || {}, rows = st.rows || {}, add = st.add || {}, del = st.del || {};
   const keyOf = starterKeyer();
   const out = [];
   let atSec = null, mustOf = null, hasAdds = false;
@@ -21477,7 +21595,7 @@ function starterWithState(lines, state) {
       out.push({ sec: atSec, byHand: true, must: mustOf || { short: '', all: '' },
         makers: starterMakers(null), tag: a.item || '', mark: a.item || '',
         name: a.name || '', desc: '', covers: '', wording: '', lead: '',
-        qty: a.qty == null ? 1 : a.qty, quotes: r.s || [], chose: r.chose });
+        qty: a.qty == null ? 1 : a.qty, note: r.note || a.note || '', quotes: r.s || [], chose: r.chose });
       hasAdds = true;
     }
   };
@@ -21485,12 +21603,14 @@ function starterWithState(lines, state) {
     if (ln.band) { flush(); atSec = ln.sec || null; mustOf = null; out.push(ln); continue; }
     if (ln.sub || ln.blank) { out.push(ln); continue; }
     if (!mustOf) mustOf = ln.must || null;
-    const r = rows[keyOf(ln)] || {};
+    const lnKey = keyOf(ln);                 // always advance the keyer, even for a dropped line
+    if (del[lnKey]) continue;                // a line taken off the sheet stays off
+    const r = rows[lnKey] || {};
     const over = {};
     if (r.item != null && r.item !== '') { over.tag = r.item; over.mark = r.item; }
     if (r.name != null && r.name !== '') { over.name = r.name; over.desc = ''; }
     if (r.qty != null && r.qty !== '') over.qty = r.qty;
-    out.push(Object.assign({}, ln, over, { quotes: r.s || [], chose: r.chose }));
+    out.push(Object.assign({}, ln, over, { note: r.note || '', quotes: r.s || [], chose: r.chose }));
   }
   flush();
   return out;
