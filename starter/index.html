@@ -53,6 +53,10 @@
 
   #wrap{flex:1;overflow:auto;position:relative}
   table{border-collapse:separate;border-spacing:0;table-layout:fixed}
+  /* Dragging across the grid selects cells, not the words in them — so turn off the browser's own
+     text selection here. The edit box is a real input and selects text as normal. */
+  #grid{-webkit-user-select:none;-moz-user-select:none;user-select:none}
+  #edit{-webkit-user-select:text;user-select:text}
   th,td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);
     padding:3px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     vertical-align:middle;background:var(--bg)}
@@ -1285,6 +1289,7 @@ document.addEventListener('mousedown', function (e) {
   var tr = td.closest('tr');
   var r = Number(tr.getAttribute('data-r')), c = Number(td.getAttribute('data-c'));
   if (EDIT && EDIT.r === r && EDIT.c === c) return;
+  e.preventDefault();                 // no native text selection — we are selecting cells
   stop(true);
   if (e.shiftKey && CUR) { SEL = { r0: CUR.r, c0: CUR.c, r1: r, c1: c }; CUR = { r: r, c: c }; paint(CUR); return; }
   SEL = null; show(r, c);
