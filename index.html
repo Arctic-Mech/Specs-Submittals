@@ -1739,7 +1739,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.62';
+const APP_VERSION = 'v8.63';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21422,7 +21422,7 @@ async function exportStarterXlsx(state) {
     if (!state) { try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) state = d.data() || {}; } catch (e) {} }
     const lines = starterWithState(await starterLines(secs, starterMode), state);
     const steps = buildStarterSteps(lines);
-    if (!steps.length) { toast('No lines have a vendor on them yet — put a vendor in a quote slot first', true); return; }
+    if (!steps.rows.length) { toast('No lines have a vendor on them yet — put a vendor in a quote slot first', true); return; }
     const wb = await buildStarterStepsXlsx(steps);
     const bytes = await wb.xlsx.writeBuffer();
     const url = URL.createObjectURL(new Blob([bytes],
@@ -21434,70 +21434,79 @@ async function exportStarterXlsx(state) {
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
-    toast('Steps list built — ' + steps.length + ' line' + (steps.length === 1 ? '' : 's') + ' with a vendor');
+    toast('Steps list built — ' + steps.rows.length + ' line' + (steps.rows.length === 1 ? '' : 's') + ' with a vendor');
   } catch (e) {
     console.error(e);
     toast('Could not build the steps list: ' + (e.message || e), true);
   }
 }
-/* Flatten the sheet to one row per vendor that is actually on a line: only the lines somebody has
-   put a vendor against, each vendor on that line its own row, so the result is the list of steps —
-   who we are waiting on, for what, and where each one stands — that filters and sorts cleanly. */
+/* One row per line that has a vendor on it — the vendors are not rows of their own but columns,
+   the way the website lays the quote sheet out: a line, then Quote 1, Quote 2… beside it. Only the
+   lines somebody has put a vendor against come through, and the quotes keep the slot they were
+   typed in so Quote 1 is always Quote 1. The widest line decides how many quote columns there are. */
 function buildStarterSteps(lines) {
-  const out = [];
-  let curSec = null;
+  const rows = [];
+  let curSec = null, slots = 0;
   for (const ln of lines) {
     if (ln.band) { curSec = ln.sec || null; continue; }
     if (ln.sub || ln.blank) continue;
-    const quotes = (ln.quotes || []);
-    const secObj = ln.sec || {}, bandObj = curSec || {};
-    const section = String(secObj.number || bandObj.number || secObj.key || bandObj.key || '').trim();
-    const name = [ln.name, ln.desc].filter(Boolean).join(' — ');
+    const quotes = ln.quotes || [];
+    const qs = [];
+    let any = false;
     for (let i = 0; i < quotes.length; i++) {
       const q = quotes[i] || {};
       const vendor = String(q.v || '').trim();
-      if (!vendor) continue;
-      out.push({
-        section: section,
-        item: String(ln.tag || ln.mark || '').trim(),
-        name: name,
-        qty: (ln.qty === '' || ln.qty == null) ? '' : ln.qty,
-        note: String(ln.note || '').trim(),
-        vendor: vendor,
-        stands: q.st || '',
+      if (!vendor) { qs[i] = null; continue; }
+      any = true;
+      if (i + 1 > slots) slots = i + 1;
+      qs[i] = { vendor: vendor, stands: q.st || '',
         price: (q.p === '' || q.p == null) ? '' : q.p,
         lead: (q.lead === '' || q.lead == null) ? '' : q.lead,
         vnote: String(q.n || '').trim(),
-        win: q.st === STARTER_WIN || ln.chose === i
-      });
+        win: q.st === STARTER_WIN || ln.chose === i };
     }
+    if (!any) continue;
+    const secObj = ln.sec || {}, bandObj = curSec || {};
+    rows.push({
+      section: String(secObj.number || bandObj.number || secObj.key || bandObj.key || '').trim(),
+      item: String(ln.tag || ln.mark || '').trim(),
+      name: [ln.name, ln.desc].filter(Boolean).join(' — '),
+      qty: (ln.qty === '' || ln.qty == null) ? '' : ln.qty,
+      note: String(ln.note || '').trim(),
+      quotes: qs
+    });
   }
-  return out;
+  return { rows: rows, slots: Math.max(1, slots) };
 }
-/* As a real Excel table, so the filter buttons are there the moment it opens and the whole list
-   sorts and narrows without setting anything up. The vendor we are going with on a line is picked
-   out in green. No room for files — this is the plan of what to chase, not where the quotes live. */
-async function buildStarterStepsXlsx(steps) {
+/* As an Excel sheet laid out like the website: what is being priced on the left, then a block of
+   columns per quote — vendor, price, lead, where it stands, notes — with a filter on every column.
+   The vendor being gone with on a line is painted green. No file columns: this is the plan of what
+   to chase, not where the quotes live. */
+async function buildStarterStepsXlsx(data) {
   const XJ = await ensureExcelJS();
+  const rows = data.rows, N = data.slots;
   const wb = new XJ.Workbook();
   wb.creator = 'Arctic Mechanical'; wb.created = new Date();
   wb.calcProperties.fullCalcOnLoad = true;
+  const FIX = [
+    { h: 'Spec section', w: 13 }, { h: 'Item', w: 12 }, { h: 'What it is', w: 40 },
+    { h: 'Qty', w: 6.5 }, { h: 'Notes', w: 24 }
+  ];
+  const SLOT = [
+    { h: 'Vendor', w: 20 }, { h: 'Price', w: 11 }, { h: 'Lead (wks)', w: 8.5 },
+    { h: 'Where it stands', w: 17 }, { h: 'Notes', w: 15 }
+  ];
+  const SW = SLOT.length, nFix = FIX.length, nCols = nFix + N * SW;
+  const bannerRow = 4, headRow = 5, top = 6;
   const ws = wb.addWorksheet('Steps', {
-    views: [{ state: 'frozen', ySplit: 4 }],
+    views: [{ state: 'frozen', xSplit: nFix, ySplit: headRow }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: headRow + ':' + headRow,
       margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
   });
-  const COLS = [
-    { h: 'Spec section', w: 13, k: 'section' }, { h: 'Item', w: 12, k: 'item' },
-    { h: 'What it is', w: 42, k: 'name' }, { h: 'Qty', w: 6.5, k: 'qty' },
-    { h: 'Notes', w: 26, k: 'note' }, { h: 'Vendor', w: 22, k: 'vendor' },
-    { h: 'Where it stands', w: 18, k: 'stands' }, { h: 'Price', w: 12, k: 'price' },
-    { h: 'Lead (wks)', w: 9, k: 'lead' }, { h: 'Vendor notes', w: 24, k: 'vnote' },
-    { h: 'Going with', w: 10, k: 'win' }
-  ];
-  ws.columns = COLS.map(c => ({ width: c.w }));
-  const nCols = COLS.length;
-  const won = steps.filter(s => s.win).length;
+  ws.columns = FIX.map(c => ({ width: c.w }))
+    .concat([].concat.apply([], Array.from({ length: N }, () => SLOT.map(c => ({ width: c.w })))));
+  const won = rows.reduce((n, r) => n + (r.quotes.some(q => q && q.win) ? 1 : 0), 0);
   ws.mergeCells(1, 1, 1, nCols);
   const t = ws.getCell(1, 1);
   t.value = 'Arctic Mechanical — ' + (job.name || 'Job') + '  ·  Submittal steps';
@@ -21507,54 +21516,82 @@ async function buildStarterStepsXlsx(steps) {
   ws.mergeCells(2, 1, 2, nCols);
   const sub = ws.getCell(2, 1);
   sub.value = [job.number ? 'Job ' + job.number : '',
-    steps.length + ' step' + (steps.length === 1 ? '' : 's') + ' with a vendor',
-    won ? won + ' decided (going with)' : '', 'Built ' + shortDate(today())].filter(Boolean).join('    ·    ');
+    rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' with a vendor',
+    won ? won + ' decided (going with — in green)' : '', 'Built ' + shortDate(today())].filter(Boolean).join('    ·    ');
   sub.font = { size: 10, color: { argb: SCH_INK.dim } };
-  const headRow = 4;
+  ws.getRow(3).height = 5;
+  /* The banner, so each block of five columns reads as one quote rather than five loose ones. */
+  ws.mergeCells(bannerRow, 1, bannerRow, nFix);
+  const bl = ws.getCell(bannerRow, 1);
+  bl.value = 'WHAT IS BEING PRICED';
+  bl.font = { bold: true, size: 9.5, color: { argb: SCH_INK.title } };
+  bl.alignment = { vertical: 'middle', horizontal: 'center' };
+  bl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF1F6' } };
+  for (let i = 0; i < N; i++) {
+    const a = nFix + i * SW + 1, b = a + SW - 1;
+    ws.mergeCells(bannerRow, a, bannerRow, b);
+    const c = ws.getCell(bannerRow, a);
+    c.value = 'QUOTE ' + (i + 1);
+    c.font = { bold: true, size: 9.5, color: { argb: i % 2 ? SCH_INK.calcText : SCH_INK.title } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 ? 'FFE8EEF6' : 'FFDCE6F2' } };
+    c.border = { left: { style: 'thin', color: { argb: SCH_INK.rule } },
+      right: { style: 'thin', color: { argb: SCH_INK.rule } } };
+  }
+  ws.getRow(bannerRow).height = 15;
+  const heads = FIX.map(c => c.h)
+    .concat([].concat.apply([], Array.from({ length: N }, () => SLOT.map(c => c.h))));
+  const hr = ws.getRow(headRow);
+  heads.forEach((h, i) => {
+    const c = hr.getCell(i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+    const inFix = i < nFix;
+    c.alignment = { vertical: 'middle', horizontal: (i === 2 || i === 4 || (!inFix && (i - nFix) % SW === 0)) ? 'left' : 'center', wrapText: true };
+    c.border = { bottom: { style: 'medium', color: { argb: SCH_INK.head } } };
+  });
+  hr.height = 22;
   const num = v => {
     if (v === '' || v == null) return '';
     const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
     return isNaN(n) ? v : n;
   };
-  const body = steps.map(s => [s.section, s.item, s.name, num(s.qty), s.note, s.vendor,
-    s.stands, num(s.price), num(s.lead), s.vnote, s.win ? '✓' : '']);
-  ws.addTable({
-    name: 'SubmittalSteps', ref: 'A' + headRow, headerRow: true,
-    style: { theme: 'TableStyleMedium2', showRowStripes: true },
-    columns: COLS.map(c => ({ name: c.h, filterButton: true })),
-    rows: body.length ? body : [COLS.map(() => '')]
-  });
-  /* The header, and then each row — the going-with vendor painted green so the decided ones stand
-     out whichever way the list ends up filtered. */
-  const hr = ws.getRow(headRow);
-  hr.height = 20;
-  for (let c = 1; c <= nCols; c++) {
-    const cell = hr.getCell(c);
-    cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
-    cell.alignment = { vertical: 'middle', horizontal: (c === 3 || c === 5 || c === 10) ? 'left' : 'center', wrapText: true };
-  }
+  const dollar = '"$"#,##0';
   const WINFILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
   const WININK = 'FF166534';
-  const dollar = '"$"#,##0';
-  for (let i = 0; i < steps.length; i++) {
-    const r = ws.getRow(headRow + 1 + i), s = steps[i];
-    r.getCell(1).alignment = { horizontal: 'center' };
-    r.getCell(2).alignment = { horizontal: 'center' };
-    r.getCell(3).alignment = { horizontal: 'left', wrapText: true };
-    r.getCell(4).alignment = { horizontal: 'center' };
-    r.getCell(5).alignment = { horizontal: 'left', wrapText: true };
-    r.getCell(7).alignment = { horizontal: 'center' };
-    r.getCell(8).numFmt = dollar; r.getCell(8).alignment = { horizontal: 'right' };
-    r.getCell(9).alignment = { horizontal: 'center' };
-    r.getCell(10).alignment = { horizontal: 'left', wrapText: true };
-    r.getCell(11).alignment = { horizontal: 'center' };
-    if (s.win) {
-      const vc = r.getCell(6), wc = r.getCell(11);
-      vc.fill = WINFILL; vc.font = { bold: true, color: { argb: WININK } };
-      wc.fill = WINFILL; wc.font = { bold: true, color: { argb: WININK } };
+  let r = top;
+  for (const row of rows) {
+    const R = ws.getRow(r);
+    R.getCell(1).value = row.section; R.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    R.getCell(2).value = row.item; R.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+    R.getCell(3).value = row.name; R.getCell(3).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    R.getCell(4).value = num(row.qty); R.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    R.getCell(5).value = row.note; R.getCell(5).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    for (let i = 0; i < N; i++) {
+      const base = nFix + i * SW;
+      const q = row.quotes[i];
+      const vC = R.getCell(base + 1), pC = R.getCell(base + 2), lC = R.getCell(base + 3),
+        sC = R.getCell(base + 4), nC = R.getCell(base + 5);
+      if (q) {
+        vC.value = q.vendor;
+        pC.value = num(q.price); pC.numFmt = dollar;
+        lC.value = num(q.lead);
+        sC.value = q.stands;
+        nC.value = q.vnote;
+        if (q.win) { vC.fill = WINFILL; vC.font = { bold: true, color: { argb: WININK } }; }
+      }
+      vC.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      pC.alignment = { horizontal: 'right', vertical: 'middle' };
+      lC.alignment = { horizontal: 'center', vertical: 'middle' };
+      sC.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      nC.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      vC.border = { left: { style: 'thin', color: { argb: SCH_INK.rule } } };
     }
+    r++;
   }
+  const last = Math.max(headRow, r - 1);
+  ws.autoFilter = { from: { row: headRow, column: 1 }, to: { row: last, column: nCols } };
   return wb;
 }
 /* ── the submittal starter, on its own page ──
