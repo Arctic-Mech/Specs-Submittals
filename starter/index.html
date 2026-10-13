@@ -103,8 +103,9 @@
     padding:0 7px 0 0;line-height:1}
   .fold:hover{color:var(--pick)}
   .folded{margin-left:12px;font-weight:400;font-size:11.5px;opacity:.7}
-  /* Delete-this-line, tucked at the end of what-it-is and only out when you are on the row. */
-  td.namecol{position:relative}
+  /* Delete-this-line, tucked at the end of what-it-is and only out when you are on the row. The
+     what-it-is column is a frozen cell (position:sticky), which already anchors the button — it
+     must NOT be given position:relative, or the sticky "left" offset would shift the whole cell. */
   .delrow{position:absolute;right:2px;top:50%;transform:translateY(-50%);display:none;
     border:0;border-radius:4px;background:#fee2e2;color:#b91c1c;cursor:pointer;font-size:11px;
     line-height:1;padding:3px 6px;z-index:1}
