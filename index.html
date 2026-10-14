@@ -1801,7 +1801,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.68';
+const APP_VERSION = 'v8.69';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4634,8 +4634,8 @@ function navBackOne() {
   else if (view === 'job') { go('jobs'); renderJobs(); }
 }
 function navPop(state) {
-  // the two full-screen overlays each listen for this themselves and close on it
-  if (_estHost || _wb) return;
+  // the full-screen overlays each listen for this themselves and close on it
+  if (_estHost || _wb || _po) return;
   if (_navSkip > 0) { _navSkip--; return; }            // we asked for this one while tidying up
   // A dialog is up: Back dismisses it, the same as Escape does. The step it just consumed is put
   // straight back, so the way out from underneath is still there.
