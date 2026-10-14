@@ -180,6 +180,13 @@ input.po-fname:focus { border-color: var(--accent); background: #fff; outline: n
 .po-vhead input.po-vname:hover { border-color: #cbd5e1; }
 .po-vhead input.po-vname:focus { border-color: var(--accent); background: #fff; outline: none; }
 .po-vtotal { margin-left: auto; font-size: 13.5px; font-weight: 600; color: #15803d; }
+/* the saved quote PDF + the pull-line-items / undo controls, under the vendor header */
+.po-qbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; background: #fcfdfe; border-bottom: 1px solid #eef2f7; font-size: 12.5px; }
+.po-qfile { color: #334155; margin-right: 2px; }
+.po-qfile a { color: var(--accent); text-decoration: none; }
+.po-qfile a:hover { text-decoration: underline; }
+.po-qbar .po-undo { margin-left: auto; color: #b45309; border-color: #fcd9a8; background: #fffbeb; }
+.po-qbar .po-undo:hover { background: #fef3c7; }
 .po-vtotal .muted { color: #94a3b8; font-weight: 400; }
 .po-xv { border: 0; background: none; color: #cbd5e1; cursor: pointer; font-size: 16px; padding: 2px 6px; }
 .po-xv:hover { color: #dc2626; }
@@ -1801,7 +1808,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.69';
+const APP_VERSION = 'v8.70';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22425,6 +22432,16 @@ function poVendorHtml(vd) {
       <td style="width:28px;text-align:center"><button class="po-xl" title="Delete line" onclick="poDelLine('${V}','${L}')">✕</button></td>
     </tr>`;
   }).join('');
+  const q = vd.quote;
+  const undoHere = _po && _po.undo && _po.undo.vid === vd.id;
+  const qbar = `<div class="po-qbar">
+    ${q
+      ? `<span class="po-qfile">📎 <a href="#" onclick="poViewQuote('${V}');return false" title="Open the saved quote PDF">${esc(q.name || 'quote.pdf')}</a></span>
+         <button class="btn sm" onclick="poRemoveQuote('${V}')" title="Remove the saved quote PDF">✕</button>
+         <button class="btn sm primary" onclick="poPullLines('${V}')" title="Read the PDF and pull its line items into this vendor">⚙ Pull line items</button>`
+      : `<button class="btn sm" onclick="poUploadQuote('${V}')" title="Save this vendor's quote PDF">⬆ Upload quote PDF</button>`}
+    ${undoHere ? `<button class="btn sm po-undo" onclick="poUndoImport('${V}')" title="Undo the last pull — put the lines back the way they were">↶ Undo import</button>` : ''}
+  </div>`;
   return `<div class="po-vendor" data-v="${V}">
     <div class="po-vhead">
       <input class="po-vname" value="${esc(vd.name || '')}" placeholder="Vendor name" oninput="poSetVendorField('${V}','name',this.value)">
@@ -22433,6 +22450,7 @@ function poVendorHtml(vd) {
       <button class="btn sm po-pdf" onclick="poExportPdf('${V}')" title="Export a PDF of the ticked lines — the buy list for the field foreman">⤓ PDF</button>
       <button class="po-xv" title="Remove vendor" onclick="poDelVendor('${V}')">🗑</button>
     </div>
+    ${qbar}
     <table class="po-lines">
       <thead><tr><th></th><th>Item / description</th><th>Qty</th><th>Unit $</th><th>Line total</th><th>Notes</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -22587,6 +22605,101 @@ async function poExportPdf(vid) {
     doc.save((job.number ? job.number + '_' : '') + 'PO_' + tag + '.pdf');
     toast('PO PDF built for ' + (vd.name || 'vendor'));
   } catch (e) { console.error(e); toast('Could not build the PO PDF: ' + (e.message || e), true); }
+}
+/* ── the vendor's quote PDF ──
+   Saved against the vendor regardless — a file on the job you can open any time. On top of that, an
+   optional pass that reads the PDF and pulls its line items in, which can always be undone in case
+   it reads something wrong. */
+const PO_QUOTE_DIR = 'Purchase Orders/Quotes';
+function poUploadQuote(vid) {
+  const vd = poFindVendor(vid); if (!vd) return;
+  if (!onFirebase() && !jobFolder) { toast('Turn on cloud storage, or load the ShareFile folder, to save the quote PDF', true); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/pdf,.pdf';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    try {
+      stickyToast('Saving ' + f.name + '…');
+      const name = sanitizeFileName(((vd.name || 'vendor') + ' - ' + f.name));
+      const rec = await putFileInDir(f, PO_QUOTE_DIR, name);
+      vd.quote = { name: f.name, size: f.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId };
+      poSave(); renderPo();
+      toast('Quote saved — you can pull its line items, or leave it as a file on the vendor');
+    } catch (e) { toast(writeError(e), true); }
+  };
+  inp.click();
+}
+async function poQuoteBlob(vd) {
+  if (!vd || !vd.quote) return null;
+  if (vd.quote.fb && vd.quote.blobId) return blobGet(job.id, vd.quote.blobId);
+  if (jobFolder && vd.quote.dir && vd.quote.file) {
+    const root = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
+    return (await (await (await walkDir(root, vd.quote.dir)).getFileHandle(vd.quote.file)).getFile());
+  }
+  return null;
+}
+async function poViewQuote(vid) {
+  const vd = poFindVendor(vid); if (!vd || !vd.quote) return;
+  try {
+    const blob = await poQuoteBlob(vd);
+    if (!blob) { toast('That quote is not on this computer', true); return; }
+    const url = URL.createObjectURL(blob); window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast('Could not open it: ' + (e.message || e), true); }
+}
+function poRemoveQuote(vid) {
+  const vd = poFindVendor(vid); if (!vd || !vd.quote) return;
+  if (!confirm('Remove the saved quote PDF from this vendor? (The line items stay.)')) return;
+  if (vd.quote.fb && vd.quote.blobId) blobDel(job.id, vd.quote.blobId).then(sz => bumpStorage(-sz)).catch(() => {});
+  delete vd.quote; poSave(); renderPo();
+}
+/* Read the quote PDF and pull out its line items. Each row on a quote is a code, a description, a
+   quantity, a unit price, a unit of measure and a line total; the line total is taken as the money
+   (it already folds in per-hundred pricing and the like) and the unit worked back from it. */
+async function poParseQuote(bytes) {
+  await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const out = [];
+  const RE = /^(\S+)\s+(.+?)\s+([\d,]+)\s+([\d,]*\.\d+)\s+([A-Za-z]{1,4})\s+([\d,]*\.\d+)$/;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const tc = await pg.getTextContent();
+    for (const ln of pageItemsToLines(tc.items)) {
+      const m = RE.exec(ln.trim()); if (!m) continue;
+      const code = m[1], desc = m[2].trim();
+      if (/^(item|description|quantity|net|total|sub)$/i.test(code)) continue;
+      const q = parseFloat(m[3].replace(/,/g, '')), t = parseFloat(m[6].replace(/,/g, ''));
+      if (!isFinite(q) || !isFinite(t) || q <= 0) continue;
+      out.push({ item: (code + '  ' + desc).trim(), qty: String(q), total: poShow(t), price: poShow(round2(t / q)) });
+    }
+    pg.cleanup();
+  }
+  try { pdf.destroy(); } catch (e) {}
+  return out;
+}
+async function poPullLines(vid) {
+  const vd = poFindVendor(vid); if (!vd) return;
+  if (!vd.quote) { toast('Upload a quote PDF first', true); return; }
+  try {
+    stickyToast('Reading the quote…');
+    const blob = await poQuoteBlob(vd);
+    if (!blob) { toast('That quote is not on this computer', true); return; }
+    const parsed = await poParseQuote(new Uint8Array(await blob.arrayBuffer()));
+    if (!parsed.length) { toast('No line items could be read from that PDF — add them by hand', true); return; }
+    /* Keep a copy to put back if it read something wrong — one level of undo, on the vendor. */
+    _po.undo = { vid: vid, lines: JSON.parse(JSON.stringify(vd.lines || [])) };
+    const kept = (vd.lines || []).filter(l => l.item || l.qty || l.price || l.total || l.note);
+    vd.lines = kept.concat(parsed.map(p => ({ id: uid('pol'), item: p.item, qty: p.qty, price: p.price, total: p.total, buy: false, note: '' })));
+    poSave(); renderPo();
+    toast(parsed.length + ' line item' + (parsed.length === 1 ? '' : 's') + ' pulled in — tick what you’re buying. “Undo import” is on the vendor if it looks off.');
+  } catch (e) { console.error(e); toast('Could not read the quote: ' + (e.message || e), true); }
+}
+function poUndoImport(vid) {
+  if (!_po || !_po.undo || _po.undo.vid !== vid) return;
+  const vd = poFindVendor(vid); if (!vd) return;
+  vd.lines = _po.undo.lines;
+  _po.undo = null;
+  poSave(); renderPo();
+  toast('Import undone — lines put back');
 }
 function openExportMenu() {
   if (!job) return;
