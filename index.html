@@ -200,6 +200,20 @@ input.po-fname:focus { border-color: var(--accent); background: #fff; outline: n
 .po-track .input { padding: 4px 7px; font-size: 12.5px; }
 .po-revised { margin-top: 10px; font-size: 13px; color: var(--text-2); }
 .po-revised b { color: var(--text); }
+/* vendors side-by-side comparison grid */
+.po-cmp-wrap { overflow-x: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; }
+table.po-cmp { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.po-cmp th { background: #0f172a; color: #fff; font-weight: 600; font-size: 12px; text-align: right; padding: 9px 12px; white-space: nowrap; position: sticky; top: 0; }
+table.po-cmp th.po-cmp-item { text-align: left; }
+table.po-cmp td { padding: 7px 12px; border-bottom: 1px solid #f1f5f9; text-align: right; white-space: nowrap; color: #334155; }
+table.po-cmp td small { color: #94a3b8; }
+table.po-cmp td.po-cmp-item { text-align: left; color: #0f172a; white-space: normal; overflow-wrap: anywhere; min-width: 240px; position: sticky; left: 0; background: #fff; }
+table.po-cmp td.po-cmp-na { color: #cbd5e1; }
+table.po-cmp td.po-cmp-low { background: #f0fdf4; color: #15803d; font-weight: 700; }
+table.po-cmp tr:hover td { background: #f8fafc; }
+table.po-cmp tr:hover td.po-cmp-low { background: #e4fbea; }
+table.po-cmp tfoot td { border-top: 2px solid #e2e8f0; font-weight: 700; color: #0f172a; background: #f8fafc; }
+table.po-cmp tfoot td.po-cmp-low { background: #dcfce7; color: #15803d; }
 .po-vtotal .muted { color: #94a3b8; font-weight: 400; }
 .po-xv { border: 0; background: none; color: #cbd5e1; cursor: pointer; font-size: 16px; padding: 2px 6px; }
 .po-xv:hover { color: #dc2626; }
@@ -207,10 +221,13 @@ table.po-lines { width: 100%; border-collapse: collapse; }
 table.po-lines th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; text-align: left; padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-weight: 600; background: #f1f5f9; position: static; }
 table.po-lines td { padding: 3px 10px; border-bottom: 1px solid #f1f5f9; }
 table.po-lines tr.buy td { background: #f0fdf4; }
-table.po-lines input { width: 100%; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 7px; font: inherit; color: #0f172a; }
-table.po-lines input:hover { border-color: #e2e8f0; }
-table.po-lines input:focus { border-color: var(--accent); background: #fff; outline: none; }
+table.po-lines input, table.po-lines textarea { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 7px; font: inherit; color: #0f172a; }
+table.po-lines input:hover, table.po-lines textarea:hover { border-color: #e2e8f0; }
+table.po-lines input:focus, table.po-lines textarea:focus { border-color: var(--accent); background: #fff; outline: none; }
 table.po-lines input.num { text-align: right; }
+table.po-lines td { vertical-align: top; }
+/* the item / notes boxes grow to fit their text instead of cutting it off */
+table.po-lines textarea.po-ta { resize: none; overflow: hidden; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; }
 .po-ck { width: 18px; height: 18px; cursor: pointer; accent-color: #15803d; }
 .po-ltotal { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; color: #334155; white-space: nowrap; }
 .po-xl { border: 0; background: none; color: #cbd5e1; cursor: pointer; font-size: 13px; padding: 2px 6px; }
@@ -1821,7 +1838,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.72';
+const APP_VERSION = 'v8.73';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3628,6 +3645,7 @@ async function scanUnassignedFiles() {
         else if (e.kind === 'directory') {
           const child = rel ? rel + '/' + e.name : e.name;
           if (child === ALL_SUBMITTALS_DIR) continue;   // mirror copies aren't loose files
+          if (child === PO_QUOTE_DIR) continue;         // PO-starter quote PDFs are filed by the vendor, not loose
           await walk(e, child);
         }
       }
@@ -22288,12 +22306,13 @@ function openPoStarter() {
    again rather than straight off the PO starter. */
 function poOpenFolder(fid) {
   if (!_po || !poFindFolder(fid)) return;
-  _po.openFolder = fid;
+  _po.openFolder = fid; _po.compare = false;
   try { history.pushState({ __dingusPoFolder: true }, '', poHash() + '/' + encodeURIComponent((poFindFolder(fid).name || 'folder'))); _po.depth = 2; } catch (x) {}
   renderPo();
   const inp = document.querySelector('#poHost .po-fname'); if (inp && !poFindFolder(fid).name) inp.focus();
 }
 function poBack() {                               // the in-app "Folders" button: step out to the list
+  if (_po) _po.compare = false;
   if (_po && _po.depth > 1) { try { history.back(); return; } catch (x) {} }
   if (_po) { _po.openFolder = null; _po.depth = 1; renderPo(); }
 }
@@ -22302,7 +22321,7 @@ function wirePoPop() {
   window.addEventListener('popstate', () => {
     if (!_po) { if (/^#po\//.test(location.hash || '')) { try { history.replaceState(history.state, '', location.pathname + location.search); } catch (x) {} } return; }
     if (_po.closing) { closePoStarter(); return; }
-    if (_po.openFolder) { _po.openFolder = null; _po.depth = 1; renderPo(); }   // out of a folder, back to the list
+    if (_po.openFolder) { _po.openFolder = null; _po.compare = false; _po.depth = 1; renderPo(); }   // out of a folder, back to the list
     else closePoStarter();                                                      // off the list, out of the PO starter
   });
 }
@@ -22388,8 +22407,58 @@ function renderPo() {
       <span class="spacer"></span>
       <button class="btn" onclick="requestClosePoStarter()">✓ Done</button>
     </div>
-    <div class="po-body">${fd ? poFolderView(fd) : poListView()}</div>`;
+    <div class="po-body">${fd ? (_po.compare ? poCompareView(fd) : poFolderView(fd)) : poListView()}</div>`;
+  try { host.querySelectorAll('.po-ta').forEach(poGrow); } catch (e) {}
 }
+function poSetCompare(on) { if (!_po) return; _po.compare = !!on; renderPo(); }
+function poVendorAllTotal(vd) { return (vd.lines || []).reduce((s, l) => s + poLineTotal(l), 0); }
+const poNormItem = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+/* Vendors side by side — a column each, their items lined up on the rows whose descriptions match,
+   the lowest price in each row and the lowest vendor total picked out, so the cheapest source for
+   each thing is easy to see (like the submittal starter's quote comparison). */
+function poCompareView(fd) {
+  const vendors = fd.vendors || [];
+  const order = [], label = {}, maps = vendors.map(() => ({}));
+  vendors.forEach((vd, vi) => (vd.lines || []).forEach(l => {
+    const k = poNormItem(l.item); if (!k) return;
+    if (!(k in label)) { label[k] = l.item; order.push(k); }
+    const m = maps[vi];
+    if (m[k]) { m[k].total += poLineTotal(l); } else m[k] = { total: poLineTotal(l), qty: l.qty };
+  }));
+  const head = `<tr><th class="po-cmp-item">Item / description</th>${vendors.map(vd => `<th>${esc(vd.name || '(vendor)')}</th>`).join('')}</tr>`;
+  const bodyRows = order.map(k => {
+    const vals = vendors.map((_, vi) => (maps[vi][k] ? maps[vi][k].total : null));
+    const present = vals.filter(x => x != null && x > 0);
+    const low = present.length >= 2 ? Math.min.apply(null, present) : null;
+    const cells = vendors.map((_, vi) => {
+      const c = maps[vi][k];
+      if (!c) return '<td class="po-cmp-na">—</td>';
+      const isLow = low != null && c.total <= low + 0.005;
+      return `<td class="${isLow ? 'po-cmp-low' : ''}">${esc(fmtMoney(c.total) || '$0')}${c.qty ? `<small> · ${esc(String(c.qty))}</small>` : ''}</td>`;
+    }).join('');
+    return `<tr><td class="po-cmp-item">${esc(label[k] || '')}</td>${cells}</tr>`;
+  }).join('');
+  const totals = vendors.map(poVendorAllTotal);
+  const presentT = totals.filter(x => x > 0);
+  const lowT = presentT.length >= 2 ? Math.min.apply(null, presentT) : null;
+  const totRow = `<tr class="po-cmp-tot"><td class="po-cmp-item">Vendor total</td>${vendors.map((vd, vi) => {
+    const isLow = lowT != null && totals[vi] > 0 && totals[vi] <= lowT + 0.005;
+    return `<td class="${isLow ? 'po-cmp-low' : ''}">${esc(fmtMoney(totals[vi]) || '$0')}</td>`;
+  }).join('')}</tr>`;
+  return `
+    <div class="po-bar">
+      <button class="btn" onclick="poSetCompare(false)">← Back to vendors</button>
+      <span class="po-fico">📁</span><b style="font-size:15px">${esc(fd.name || '')}</b>
+      <span class="muted" style="font-size:12.5px;margin-left:8px">Lowest price in each row is in green. Items line up when their descriptions match.</span>
+    </div>
+    ${vendors.length ? `<div class="po-cmp-wrap"><table class="po-cmp">
+      <thead>${head}</thead>
+      <tbody>${bodyRows || `<tr><td class="po-cmp-item muted" colspan="${vendors.length + 1}">No line items yet — add or pull some on the vendors.</td></tr>`}</tbody>
+      <tfoot>${totRow}</tfoot>
+    </table></div>` : '<div class="po-fempty">No vendors in this folder to compare.</div>'}`;
+}
+/* Grow a line's item / notes box to fit what is typed, so nothing is cut off. */
+function poGrow(el) { if (!el) return; el.style.height = 'auto'; el.style.height = (el.scrollHeight) + 'px'; }
 /* The front page: nothing but the folders, each a card you open. Vendors live inside a folder. */
 function poListView() {
   const folders = _po.folders || [];
@@ -22425,6 +22494,7 @@ function poFolderView(fd) {
       <button class="btn" onclick="poBack()">← Folders</button>
       <span class="po-fico">📁</span>
       <input class="po-fname" value="${esc(fd.name || '')}" placeholder="Folder name — e.g. Plumbing, Sheet Metal" oninput="poSetFolderName('${F}',this.value)">
+      ${vendors.length >= 2 ? `<button class="btn sm" onclick="poSetCompare(true)" title="Line the vendors up side by side to compare prices">⊞ Compare</button>` : ''}
       <button class="btn sm" onclick="poAddVendor('${F}')">+ Add vendor</button>
       <button class="po-xv" title="Remove folder" onclick="poDelFolder('${F}')">🗑</button>
       <span class="po-grand" style="margin-left:auto"><span id="poft_${F}">${esc(fmtMoney(poFolderTotal(fd)) || '$0.00')}</span> <span class="muted" style="font-weight:400;font-size:12.5px">this folder</span></span>
@@ -22438,11 +22508,11 @@ function poVendorHtml(vd) {
     const L = esc(l.id);
     return `<tr class="${l.buy ? 'buy' : ''}" data-lr="${V}:${L}">
       <td style="width:34px;text-align:center"><input type="checkbox" class="po-ck" ${l.buy ? 'checked' : ''} onchange="poToggleBuy('${V}','${L}',this.checked)"></td>
-      <td><input value="${esc(l.item || '')}" placeholder="Item / description" oninput="poSet('${V}','${L}','item',this.value)"></td>
-      <td style="width:66px"><input id="poq_${V}_${L}" class="num" value="${esc(l.qty == null ? '' : l.qty)}" placeholder="Qty" oninput="poSetNum('${V}','${L}','qty',this.value)"></td>
-      <td style="width:104px"><input id="pop_${V}_${L}" class="num" value="${esc(l.price == null ? '' : l.price)}" placeholder="Unit $" oninput="poSetNum('${V}','${L}','price',this.value)"></td>
-      <td style="width:114px"><input id="pot_${V}_${L}" class="num" value="${esc(l.total == null ? '' : l.total)}" placeholder="Line total" oninput="poSetNum('${V}','${L}','total',this.value)"></td>
-      <td style="width:200px"><input value="${esc(l.note || '')}" placeholder="Notes" oninput="poSet('${V}','${L}','note',this.value)"></td>
+      <td style="width:230px"><textarea class="po-ta" rows="1" placeholder="Item / description" oninput="poSet('${V}','${L}','item',this.value);poGrow(this)">${esc(l.item || '')}</textarea></td>
+      <td style="width:58px"><input id="poq_${V}_${L}" class="num" value="${esc(l.qty == null ? '' : l.qty)}" placeholder="Qty" oninput="poSetNum('${V}','${L}','qty',this.value)"></td>
+      <td style="width:92px"><input id="pop_${V}_${L}" class="num" value="${esc(l.price == null ? '' : l.price)}" placeholder="Unit $" oninput="poSetNum('${V}','${L}','price',this.value)"></td>
+      <td style="width:104px"><input id="pot_${V}_${L}" class="num" value="${esc(l.total == null ? '' : l.total)}" placeholder="Line total" oninput="poSetNum('${V}','${L}','total',this.value)"></td>
+      <td><textarea class="po-ta" rows="1" placeholder="Notes" oninput="poSet('${V}','${L}','note',this.value);poGrow(this)">${esc(l.note || '')}</textarea></td>
       <td style="width:28px;text-align:center"><button class="po-xl" title="Delete line" onclick="poDelLine('${V}','${L}')">✕</button></td>
     </tr>`;
   }).join('');
@@ -22470,7 +22540,7 @@ function poVendorHtml(vd) {
     <div class="po-descwrap"><input class="po-desc" value="${esc(vd.desc || '')}" placeholder="PO description (optional) — shows on the exported PDF header" oninput="poSetVendorField('${V}','desc',this.value)"></div>
     ${qbar}
     <table class="po-lines">
-      <thead><tr><th style="width:34px;text-align:center"><input type="checkbox" class="po-ck" ${allBuy ? 'checked' : ''} title="Select all / none" onchange="poToggleAll('${V}',this.checked)"></th><th>Item / description</th><th>Qty</th><th>Unit $</th><th>Line total</th><th>Notes</th><th></th></tr></thead>
+      <thead><tr><th style="width:34px;text-align:center"><input type="checkbox" class="po-ck" ${allBuy ? 'checked' : ''} title="Select all / none" onchange="poToggleAll('${V}',this.checked)"></th><th style="width:230px">Item / description</th><th style="width:58px">Qty</th><th style="width:92px">Unit $</th><th style="width:104px">Line total</th><th>Notes</th><th style="width:28px"></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="po-addline"><button class="btn sm ghost" onclick="poAddLine('${V}')">+ add a line</button></div>
@@ -22582,7 +22652,9 @@ function poRecalcVendor(vid) {
 /* The file name for an exported / published PO: the job, the PO number, the vendor, and the PO
    description, so the file says what it is without opening it. */
 function poFileBase(vd) {
-  const parts = [job.number, (vd.po ? vd.po : 'PO'), vd.name, vd.desc]
+  const po = String(vd.po == null ? '' : vd.po).trim();
+  const poTag = po ? (/^po([^a-z]|$)/i.test(po) ? po : 'PO ' + po) : 'PO';   // always "PO" in front
+  const parts = [job.number, poTag, vd.name, vd.desc]
     .map(x => String(x == null ? '' : x).trim()).filter(Boolean);
   return (parts.join(' - ') || 'Purchase Order').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
 }
