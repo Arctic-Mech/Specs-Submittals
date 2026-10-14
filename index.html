@@ -1821,7 +1821,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.71';
+const APP_VERSION = 'v8.72';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22579,6 +22579,13 @@ function poRecalcVendor(vid) {
   const g = document.getElementById('poGrand');
   if (g) g.textContent = fmtMoney(poGrandTotal()) || '$0.00';
 }
+/* The file name for an exported / published PO: the job, the PO number, the vendor, and the PO
+   description, so the file says what it is without opening it. */
+function poFileBase(vd) {
+  const parts = [job.number, (vd.po ? vd.po : 'PO'), vd.name, vd.desc]
+    .map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  return (parts.join(' - ') || 'Purchase Order').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+}
 /* The PO as a one-page PDF: the ticked lines for this vendor, with its PO number and the total on
    it — the buy list to hand the field foreman. Only what was selected goes on it. Shared by the
    Export button (downloads it) and Publish (files it on the website). */
@@ -22630,8 +22637,7 @@ async function poBuildPdf(vid) {
   });
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
   doc.text('Generated ' + csvDate(today()) + ' · Arctic Sheet Metal', M, pageH - 16);
-  const tag = String(vd.po || vd.name || 'vendor').replace(/[^\w.-]+/g, '-');
-  return { doc, total, lines, vd, filename: (job.number ? job.number + '_' : '') + 'PO_' + tag + '.pdf' };
+  return { doc, total, lines, vd, filename: poFileBase(vd) + '.pdf' };
 }
 async function poExportPdf(vid) {
   stickyToast('Building the PO…');
@@ -22672,7 +22678,7 @@ async function poPublish(vid) {
     try {
       const b = await poBuildPdf(vid);
       if (b && (onFirebase() || jobFolder)) {
-        const pdfName = sanitizeFileName((it.number ? 'PO ' + it.number + ' - ' : '') + (vd.name || 'vendor') + '.pdf');
+        const pdfName = sanitizeFileName(poFileBase(vd)) + '.pdf';
         const f = new File([b.doc.output('blob')], pdfName, { type: 'application/pdf' });
         const rec = await putFileInDir(f, ledgerDocDir('pos', it), pdfName, { overwrite: true });
         it.docs = (it.docs || []).filter(d => !d.poAuto);
