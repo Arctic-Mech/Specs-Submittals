@@ -159,16 +159,21 @@ a { color: var(--accent); }
 .po-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .po-grand { margin-left: auto; font-size: 15px; font-weight: 700; color: #0f172a; }
 .po-grand b { color: #15803d; }
-/* a folder — a trade (Plumbing, Sheet Metal), its vendors nested inside */
-.po-folder { background: #eef2f7; border: 1px solid #d7dee8; border-radius: 14px; margin-bottom: 20px; overflow: hidden; }
-.po-fhead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #e2e8f0; border-bottom: 1px solid #d7dee8; }
+/* the folder picker on the front page — a card per trade (Plumbing, Sheet Metal), click to open */
+.po-folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.po-fcard { display: flex; align-items: center; gap: 12px; text-align: left; width: 100%; padding: 16px 18px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.05); transition: border-color .12s, box-shadow .12s; }
+.po-fcard:hover { border-color: var(--accent); box-shadow: 0 3px 10px rgba(31,111,235,.14); }
+.po-fcard-ico { font-size: 26px; line-height: 1; }
+.po-fcard-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.po-fcard-main b { font-size: 16px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.po-fcard-sub { font-size: 12.5px; color: #64748b; }
+.po-fcard-go { margin-left: auto; font-size: 20px; color: #94a3b8; }
 .po-fico { font-size: 17px; }
-.po-fhead input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 8px; min-width: 260px; color: #0f172a; }
-.po-fhead input.po-fname:hover { border-color: #cbd5e1; }
-.po-fhead input.po-fname:focus { border-color: var(--accent); background: #fff; outline: none; }
-.po-ftotal { margin-left: auto; font-size: 13.5px; font-weight: 700; color: #334155; }
-.po-fbody { padding: 12px 12px 4px; }
-.po-fempty { color: #64748b; font-size: 13px; padding: 10px 6px 14px; }
+input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 8px; min-width: 240px; color: #0f172a; }
+input.po-fname:hover { border-color: #cbd5e1; }
+input.po-fname:focus { border-color: var(--accent); background: #fff; outline: none; }
+.po-fbody { }
+.po-fempty { color: #64748b; font-size: 13px; padding: 16px 6px; }
 .po-vendor { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .po-vhead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
 .po-vhead input.po-vname { font-size: 15px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 8px; min-width: 220px; color: #0f172a; }
@@ -1796,7 +1801,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.67';
+const APP_VERSION = 'v8.68';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22230,7 +22235,7 @@ async function exportAskList(d) {
    from that vendor and the sheet tallies what each PO will come to. It is the decision — who gets
    what, for how much — not the PO document itself. Saved per job, live for everyone on it. */
 const poRef = jobId => FB.doc(FB.db, 'jobs', jobId, 'po', 'sheet');
-let _po = null;              // { folders, at, clientId, unsub, saveTimer, pushed }
+let _po = null;              // { folders, openFolder, depth, closing, at, clientId, unsub, saveTimer }
 let _poPopWired = false;
 /* A link of its own, so the PO starter can be bookmarked and shared, ending in the job it is for. */
 function poHash() { return '#po/' + encodeURIComponent(job.id) + '/' + encodeURIComponent((job.name || 'Job').trim() + ' - PO starter'); }
@@ -22246,24 +22251,42 @@ function openPoStarter() {
   stickyToast('Opening the PO starter…');
   FB.getDoc(poRef(job.id)).then(d => {
     const data = (d && d.exists && d.exists()) ? (d.data() || {}) : {};
-    _po = { folders: poNormalize(data), at: data.at || 0,
+    _po = { folders: poNormalize(data), openFolder: null, depth: 0, closing: false, at: data.at || 0,
       clientId: 'p' + Math.random().toString(36).slice(2) + Date.now().toString(36),
-      unsub: null, saveTimer: null, pushed: false };
+      unsub: null, saveTimer: null };
     let host = document.getElementById('poHost');
     if (!host) { host = document.createElement('div'); host.id = 'poHost'; document.body.appendChild(host); }
     renderPo();
     watchPo();
     wirePoPop();
-    try { history.pushState({ __dingusPo: true }, '', poHash()); _po.pushed = true; } catch (x) {}
+    try { history.pushState({ __dingusPo: true }, '', poHash()); _po.depth = 1; } catch (x) {}
     toast(' ');
   }).catch(e => { toast('Could not open the PO starter: ' + (e.message || e), true); });
 }
+/* Open a folder is a step into the sheet of its own, so the browser Back button steps out of it
+   again rather than straight off the PO starter. */
+function poOpenFolder(fid) {
+  if (!_po || !poFindFolder(fid)) return;
+  _po.openFolder = fid;
+  try { history.pushState({ __dingusPoFolder: true }, '', poHash() + '/' + encodeURIComponent((poFindFolder(fid).name || 'folder'))); _po.depth = 2; } catch (x) {}
+  renderPo();
+  const inp = document.querySelector('#poHost .po-fname'); if (inp && !poFindFolder(fid).name) inp.focus();
+}
+function poBack() {                               // the in-app "Folders" button: step out to the list
+  if (_po && _po.depth > 1) { try { history.back(); return; } catch (x) {} }
+  if (_po) { _po.openFolder = null; _po.depth = 1; renderPo(); }
+}
 function wirePoPop() {
   if (_poPopWired) return; _poPopWired = true;
-  window.addEventListener('popstate', () => { if (_po) { _po.pushed = false; closePoStarter(); } });
+  window.addEventListener('popstate', () => {
+    if (!_po) { if (/^#po\//.test(location.hash || '')) { try { history.replaceState(history.state, '', location.pathname + location.search); } catch (x) {} } return; }
+    if (_po.closing) { closePoStarter(); return; }
+    if (_po.openFolder) { _po.openFolder = null; _po.depth = 1; renderPo(); }   // out of a folder, back to the list
+    else closePoStarter();                                                      // off the list, out of the PO starter
+  });
 }
 function requestClosePoStarter() {
-  if (_po && _po.pushed) { _po.pushed = false; try { history.back(); return; } catch (x) {} }
+  if (_po && _po.depth > 0) { _po.closing = true; try { history.go(-_po.depth); return; } catch (x) {} }
   closePoStarter();
 }
 function closePoStarter() {
@@ -22334,9 +22357,8 @@ function poFolderTotal(fd) { return (fd.vendors || []).reduce((s, vd) => s + poV
 function poGrandTotal() { return (_po.folders || []).reduce((s, fd) => s + poFolderTotal(fd), 0); }
 function renderPo() {
   const host = document.getElementById('poHost'); if (!host || !_po) return;
-  const folders = _po.folders || [];
-  const body = folders.length ? folders.map(poFolderHtml).join('')
-    : `<div class="po-empty">Start with a folder — <b>Plumbing</b>, <b>Sheet Metal</b>, and so on. Vendors go inside a folder.</div>`;
+  const fd = _po.openFolder ? poFindFolder(_po.openFolder) : null;
+  if (_po.openFolder && !fd) { _po.openFolder = null; }          // the open folder went away
   host.innerHTML = `
     <div class="po-head">
       <h2>PO Starter</h2>
@@ -22345,31 +22367,48 @@ function renderPo() {
       <span class="spacer"></span>
       <button class="btn" onclick="requestClosePoStarter()">✓ Done</button>
     </div>
-    <div class="po-body">
-      <div class="po-bar">
-        <button class="btn primary" onclick="poAddFolder()">+ Add folder</button>
-        <span class="muted" style="font-size:12.5px">A folder per trade (Plumbing, Sheet Metal…). Add vendors inside it and tick what you're buying.</span>
-        <span class="po-grand">Selected total: <b id="poGrand">${esc(fmtMoney(poGrandTotal()) || '$0.00')}</b></span>
-      </div>
-      ${body}
-      ${folders.length ? `<div style="margin-top:4px"><button class="btn" onclick="poAddFolder()">+ Add folder</button></div>` : ''}
-    </div>`;
+    <div class="po-body">${fd ? poFolderView(fd) : poListView()}</div>`;
 }
-function poFolderHtml(fd) {
+/* The front page: nothing but the folders, each a card you open. Vendors live inside a folder. */
+function poListView() {
+  const folders = _po.folders || [];
+  return `
+    <div class="po-bar">
+      <button class="btn primary" onclick="poAddFolder()">+ Add folder</button>
+      <span class="muted" style="font-size:12.5px">A folder per trade — Plumbing, Sheet Metal… Open one to add vendors and tick what you're buying.</span>
+      <span class="po-grand">Selected total: <b id="poGrand">${esc(fmtMoney(poGrandTotal()) || '$0.00')}</b></span>
+    </div>
+    ${folders.length
+      ? `<div class="po-folders">${folders.map(poFolderCard).join('')}</div>`
+      : `<div class="po-empty">Start with a folder — <b>Plumbing</b>, <b>Sheet Metal</b>, and so on. Open it to add vendors.</div>`}`;
+}
+function poFolderCard(fd) {
+  const n = (fd.vendors || []).length, t = poFolderTotal(fd);
+  return `<button class="po-fcard" onclick="poOpenFolder('${esc(fd.id)}')">
+    <span class="po-fcard-ico">📁</span>
+    <span class="po-fcard-main">
+      <b>${esc(fd.name || '(unnamed folder)')}</b>
+      <span class="po-fcard-sub">${n} vendor${n === 1 ? '' : 's'}${t ? '  ·  ' + esc(fmtMoney(t)) + ' selected' : ''}</span>
+    </span>
+    <span class="po-fcard-go">→</span>
+  </button>`;
+}
+/* Inside a folder: a Back out to the list, the folder's vendors, and this folder's own total. */
+function poFolderView(fd) {
   const F = esc(fd.id);
   const vendors = fd.vendors || [];
   const vhtml = vendors.length ? vendors.map(poVendorHtml).join('')
     : `<div class="po-fempty">No vendors in this folder yet. <button class="btn sm ghost" onclick="poAddVendor('${F}')">+ Add a vendor</button></div>`;
-  return `<div class="po-folder" data-f="${F}">
-    <div class="po-fhead">
+  return `
+    <div class="po-bar">
+      <button class="btn" onclick="poBack()">← Folders</button>
       <span class="po-fico">📁</span>
       <input class="po-fname" value="${esc(fd.name || '')}" placeholder="Folder name — e.g. Plumbing, Sheet Metal" oninput="poSetFolderName('${F}',this.value)">
-      <span class="po-ftotal" id="poft_${F}">${esc(fmtMoney(poFolderTotal(fd)) || '$0.00')}</span>
       <button class="btn sm" onclick="poAddVendor('${F}')">+ Add vendor</button>
       <button class="po-xv" title="Remove folder" onclick="poDelFolder('${F}')">🗑</button>
+      <span class="po-grand" style="margin-left:auto"><span id="poft_${F}">${esc(fmtMoney(poFolderTotal(fd)) || '$0.00')}</span> <span class="muted" style="font-weight:400;font-size:12.5px">this folder</span></span>
     </div>
-    <div class="po-fbody">${vhtml}</div>
-  </div>`;
+    <div class="po-fbody">${vhtml}</div>`;
 }
 function poVendorHtml(vd) {
   const lines = vd.lines || [];
@@ -22410,17 +22449,19 @@ function poFindLine(vid, lid) { const vd = poFindVendor(vid); return vd && (vd.l
 function poNewLine() { return { id: uid('pol'), item: '', qty: '', price: '', total: '', buy: false, note: '' }; }
 function poAddFolder() {
   if (!_po) return;
-  _po.folders.push({ id: uid('pof'), name: '', vendors: [] });
-  renderPo(); poSave();
-  const names = document.querySelectorAll('#poHost .po-fname');
-  const last = names[names.length - 1]; if (last) last.focus();
+  const id = uid('pof');
+  _po.folders.push({ id: id, name: '', vendors: [] });
+  poSave();
+  poOpenFolder(id);                 // step straight into the new folder to name it and add vendors
 }
 function poDelFolder(fid) {
   if (!_po) return;
   const fd = poFindFolder(fid);
   if (fd && (fd.name || (fd.vendors || []).length) && !confirm('Remove this folder and every vendor in it from the PO starter?')) return;
   _po.folders = _po.folders.filter(f => f.id !== fid);
-  renderPo(); poSave();
+  poSave();
+  if (_po.openFolder === fid) poBack();            // the open folder is gone — back to the list
+  else renderPo();
 }
 function poSetFolderName(fid, value) {
   const fd = poFindFolder(fid); if (!fd) return;
@@ -22428,11 +22469,12 @@ function poSetFolderName(fid, value) {
 }
 function poAddVendor(fid) {
   const fd = poFindFolder(fid); if (!fd) return;
+  if (_po.openFolder !== fid) { poOpenFolder(fid); }   // adding from the list opens the folder first
   fd.vendors = fd.vendors || [];
   fd.vendors.push({ id: uid('pov'), name: '', lines: [poNewLine()] });
   renderPo(); poSave();
-  const box = document.querySelector('#poHost .po-folder[data-f="' + (window.CSS && CSS.escape ? CSS.escape(fid) : fid) + '"]');
-  if (box) { const names = box.querySelectorAll('.po-vname'); const last = names[names.length - 1]; if (last) last.focus(); }
+  const names = document.querySelectorAll('#poHost .po-vname');
+  const last = names[names.length - 1]; if (last) last.focus();
 }
 function poDelVendor(vid) {
   if (!_po) return;
