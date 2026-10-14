@@ -153,12 +153,23 @@ a { color: var(--accent); }
 .po-head .po-live { font-size: 12px; color: #4ade80; }
 .po-head .po-live.saving { color: #fbbf24; }
 .po-head .spacer { flex: 1; }
-.po-head .btn { color: #0f172a; }
+.po-head .btn { background: #fff; color: #0f172a; border-color: #cbd5e1; }
+.po-head .btn:hover { background: #f1f5f9; }
 .po-body { flex: 1; overflow: auto; padding: 18px 20px 80px; }
 .po-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .po-grand { margin-left: auto; font-size: 15px; font-weight: 700; color: #0f172a; }
 .po-grand b { color: #15803d; }
-.po-vendor { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+/* a folder — a trade (Plumbing, Sheet Metal), its vendors nested inside */
+.po-folder { background: #eef2f7; border: 1px solid #d7dee8; border-radius: 14px; margin-bottom: 20px; overflow: hidden; }
+.po-fhead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #e2e8f0; border-bottom: 1px solid #d7dee8; }
+.po-fico { font-size: 17px; }
+.po-fhead input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 8px; min-width: 260px; color: #0f172a; }
+.po-fhead input.po-fname:hover { border-color: #cbd5e1; }
+.po-fhead input.po-fname:focus { border-color: var(--accent); background: #fff; outline: none; }
+.po-ftotal { margin-left: auto; font-size: 13.5px; font-weight: 700; color: #334155; }
+.po-fbody { padding: 12px 12px 4px; }
+.po-fempty { color: #64748b; font-size: 13px; padding: 10px 6px 14px; }
+.po-vendor { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .po-vhead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
 .po-vhead input.po-vname { font-size: 15px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 8px; min-width: 220px; color: #0f172a; }
 .po-vhead input.po-vname:hover { border-color: #cbd5e1; }
@@ -1785,7 +1796,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.66';
+const APP_VERSION = 'v8.67';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4303,8 +4314,10 @@ function watchJobs() {
         _deepLinkDone = true;
         try {
           const m = /^#starter\/(.+)$/.exec(location.hash || '');
+          const mp = /^#po\/([^/]+)/.exec(location.hash || '');
           const want = new URLSearchParams(location.search).get('job');
-          if (m && jobs.some(x => x.id === decodeURIComponent(m[1]))) openStarterForJob(decodeURIComponent(m[1]));
+          if (mp && jobs.some(x => x.id === decodeURIComponent(mp[1]))) openPoStarterForJob(decodeURIComponent(mp[1]));
+          else if (m && jobs.some(x => x.id === decodeURIComponent(m[1]))) openStarterForJob(decodeURIComponent(m[1]));
           else if (want && view === 'jobs' && jobs.some(x => x.id === want)) openJob(want);
         } catch (e) {}
       }
@@ -22217,21 +22230,41 @@ async function exportAskList(d) {
    from that vendor and the sheet tallies what each PO will come to. It is the decision — who gets
    what, for how much — not the PO document itself. Saved per job, live for everyone on it. */
 const poRef = jobId => FB.doc(FB.db, 'jobs', jobId, 'po', 'sheet');
-let _po = null;              // { vendors, at, clientId, unsub, saveTimer }
+let _po = null;              // { folders, at, clientId, unsub, saveTimer, pushed }
+let _poPopWired = false;
+/* A link of its own, so the PO starter can be bookmarked and shared, ending in the job it is for. */
+function poHash() { return '#po/' + encodeURIComponent(job.id) + '/' + encodeURIComponent((job.name || 'Job').trim() + ' - PO starter'); }
+/* A #po/<job> link, from a cold start: open the job, then open the PO starter. */
+async function openPoStarterForJob(jobId) {
+  const j = jobs.find(x => x.id === jobId); if (!j) return;
+  if (!job || job.id !== jobId) await openJob(jobId);
+  if (!job || job.id !== jobId) return;
+  openPoStarter();
+}
 function openPoStarter() {
   if (!job) return;
   stickyToast('Opening the PO starter…');
   FB.getDoc(poRef(job.id)).then(d => {
     const data = (d && d.exists && d.exists()) ? (d.data() || {}) : {};
-    _po = { vendors: poMigrate(Array.isArray(data.vendors) ? data.vendors : []), at: data.at || 0,
+    _po = { folders: poNormalize(data), at: data.at || 0,
       clientId: 'p' + Math.random().toString(36).slice(2) + Date.now().toString(36),
-      unsub: null, saveTimer: null };
+      unsub: null, saveTimer: null, pushed: false };
     let host = document.getElementById('poHost');
     if (!host) { host = document.createElement('div'); host.id = 'poHost'; document.body.appendChild(host); }
     renderPo();
     watchPo();
+    wirePoPop();
+    try { history.pushState({ __dingusPo: true }, '', poHash()); _po.pushed = true; } catch (x) {}
     toast(' ');
   }).catch(e => { toast('Could not open the PO starter: ' + (e.message || e), true); });
+}
+function wirePoPop() {
+  if (_poPopWired) return; _poPopWired = true;
+  window.addEventListener('popstate', () => { if (_po) { _po.pushed = false; closePoStarter(); } });
+}
+function requestClosePoStarter() {
+  if (_po && _po.pushed) { _po.pushed = false; try { history.back(); return; } catch (x) {} }
+  closePoStarter();
 }
 function closePoStarter() {
   if (_po) {
@@ -22240,6 +22273,7 @@ function closePoStarter() {
   }
   _po = null;
   const host = document.getElementById('poHost'); if (host) host.remove();
+  if (/^#po\//.test(location.hash || '')) { try { history.replaceState(history.state, '', location.pathname + location.search); } catch (x) {} }
 }
 function watchPo() {
   if (!_po || !job) return;
@@ -22252,7 +22286,7 @@ function watchPo() {
       /* Never pull the rug out from under a field being typed in — our next save carries ours. */
       const host = document.getElementById('poHost');
       if (host && document.activeElement && host.contains(document.activeElement) && document.activeElement !== document.body) return;
-      _po.vendors = poMigrate(Array.isArray(v.vendors) ? v.vendors : []);
+      _po.folders = poNormalize(v);
       _po.at = v.at || 0;
       renderPo();
     }, () => {});
@@ -22261,7 +22295,7 @@ function watchPo() {
 function poSaveNow() {
   if (!_po || !job) return;
   _po.at = Date.now();
-  FB.setDoc(poRef(job.id), clean({ vendors: _po.vendors, at: _po.at, by: _po.clientId })).catch(() => {});
+  FB.setDoc(poRef(job.id), clean({ folders: _po.folders, at: _po.at, by: _po.clientId })).catch(() => {});
 }
 function poSave() {
   if (!_po) return;
@@ -22276,39 +22310,66 @@ function poLive(saving) {
 }
 const poNum = v => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : 0; };
 const poShow = n => n ? String(round2(n)) : '';
-/* Fill in a line total on older lines that only carried qty × unit, so the field shows a figure. */
-function poMigrate(vendors) {
-  for (const vd of vendors || []) for (const l of (vd.lines || [])) {
-    if ((l.total === '' || l.total == null) && (poNum(l.qty) * poNum(l.price))) l.total = poShow(poNum(l.qty) * poNum(l.price));
+/* The sheet is folders (a trade — Plumbing, Sheet Metal), each holding its vendors, each holding
+   its quote's line items. Older sheets saved a flat list of vendors; those are tucked into one
+   folder so nothing is lost. Line totals that were only ever qty × unit are filled in here too. */
+function poNormalize(data) {
+  let folders;
+  if (data && Array.isArray(data.folders)) folders = data.folders;
+  else if (data && Array.isArray(data.vendors) && data.vendors.length) folders = [{ id: uid('pof'), name: 'Vendors', vendors: data.vendors }];
+  else folders = [];
+  for (const fd of folders) {
+    fd.vendors = fd.vendors || [];
+    for (const vd of fd.vendors) {
+      vd.lines = vd.lines || [];
+      for (const l of vd.lines) if ((l.total === '' || l.total == null) && (poNum(l.qty) * poNum(l.price))) l.total = poShow(poNum(l.qty) * poNum(l.price));
+    }
   }
-  return vendors;
+  return folders;
 }
 /* The line's money is the line total — typed straight in, or worked out from qty × unit. */
 function poLineTotal(l) { return (l.total !== '' && l.total != null) ? poNum(l.total) : poNum(l.qty) * poNum(l.price); }
 function poVendorTotal(vd) { return (vd.lines || []).reduce((s, l) => s + (l.buy ? poLineTotal(l) : 0), 0); }
-function poGrandTotal() { return (_po.vendors || []).reduce((s, vd) => s + poVendorTotal(vd), 0); }
+function poFolderTotal(fd) { return (fd.vendors || []).reduce((s, vd) => s + poVendorTotal(vd), 0); }
+function poGrandTotal() { return (_po.folders || []).reduce((s, fd) => s + poFolderTotal(fd), 0); }
 function renderPo() {
   const host = document.getElementById('poHost'); if (!host || !_po) return;
-  const vendors = _po.vendors || [];
-  const body = vendors.length ? vendors.map(poVendorHtml).join('')
-    : `<div class="po-empty">No vendors yet. Add a vendor, type in that quote's line items, and tick what you're buying from them.</div>`;
+  const folders = _po.folders || [];
+  const body = folders.length ? folders.map(poFolderHtml).join('')
+    : `<div class="po-empty">Start with a folder — <b>Plumbing</b>, <b>Sheet Metal</b>, and so on. Vendors go inside a folder.</div>`;
   host.innerHTML = `
     <div class="po-head">
       <h2>PO Starter</h2>
       <span class="po-sub">${esc([job.number ? 'Job ' + job.number : '', job.name || ''].filter(Boolean).join('  ·  '))}</span>
       <span class="po-live" id="poLive">● Live</span>
       <span class="spacer"></span>
-      <button class="btn" onclick="closePoStarter()">✓ Done</button>
+      <button class="btn" onclick="requestClosePoStarter()">✓ Done</button>
     </div>
     <div class="po-body">
       <div class="po-bar">
-        <button class="btn primary" onclick="poAddVendor()">+ Add vendor</button>
-        <span class="muted" style="font-size:12.5px">Tick a line to buy it from that vendor — ticked lines turn green and add to that vendor's PO.</span>
+        <button class="btn primary" onclick="poAddFolder()">+ Add folder</button>
+        <span class="muted" style="font-size:12.5px">A folder per trade (Plumbing, Sheet Metal…). Add vendors inside it and tick what you're buying.</span>
         <span class="po-grand">Selected total: <b id="poGrand">${esc(fmtMoney(poGrandTotal()) || '$0.00')}</b></span>
       </div>
       ${body}
-      ${vendors.length ? `<div style="margin-top:4px"><button class="btn" onclick="poAddVendor()">+ Add vendor</button></div>` : ''}
+      ${folders.length ? `<div style="margin-top:4px"><button class="btn" onclick="poAddFolder()">+ Add folder</button></div>` : ''}
     </div>`;
+}
+function poFolderHtml(fd) {
+  const F = esc(fd.id);
+  const vendors = fd.vendors || [];
+  const vhtml = vendors.length ? vendors.map(poVendorHtml).join('')
+    : `<div class="po-fempty">No vendors in this folder yet. <button class="btn sm ghost" onclick="poAddVendor('${F}')">+ Add a vendor</button></div>`;
+  return `<div class="po-folder" data-f="${F}">
+    <div class="po-fhead">
+      <span class="po-fico">📁</span>
+      <input class="po-fname" value="${esc(fd.name || '')}" placeholder="Folder name — e.g. Plumbing, Sheet Metal" oninput="poSetFolderName('${F}',this.value)">
+      <span class="po-ftotal" id="poft_${F}">${esc(fmtMoney(poFolderTotal(fd)) || '$0.00')}</span>
+      <button class="btn sm" onclick="poAddVendor('${F}')">+ Add vendor</button>
+      <button class="po-xv" title="Remove folder" onclick="poDelFolder('${F}')">🗑</button>
+    </div>
+    <div class="po-fbody">${vhtml}</div>
+  </div>`;
 }
 function poVendorHtml(vd) {
   const lines = vd.lines || [];
@@ -22340,21 +22401,45 @@ function poVendorHtml(vd) {
     <div class="po-addline"><button class="btn sm ghost" onclick="poAddLine('${V}')">+ add a line</button></div>
   </div>`;
 }
-function poFindVendor(vid) { return (_po.vendors || []).find(v => v.id === vid); }
+function poFolders() { return _po && _po.folders || []; }
+function poFindFolder(fid) { return poFolders().find(f => f.id === fid); }
+function poEachVendor() { const out = []; for (const fd of poFolders()) for (const vd of (fd.vendors || [])) out.push({ fd, vd }); return out; }
+function poFindVendor(vid) { const h = poEachVendor().find(x => x.vd.id === vid); return h ? h.vd : null; }
+function poVendorFolder(vid) { const h = poEachVendor().find(x => x.vd.id === vid); return h ? h.fd : null; }
 function poFindLine(vid, lid) { const vd = poFindVendor(vid); return vd && (vd.lines || []).find(l => l.id === lid); }
 function poNewLine() { return { id: uid('pol'), item: '', qty: '', price: '', total: '', buy: false, note: '' }; }
-function poAddVendor() {
+function poAddFolder() {
   if (!_po) return;
-  _po.vendors.push({ id: uid('pov'), name: '', lines: [poNewLine()] });
+  _po.folders.push({ id: uid('pof'), name: '', vendors: [] });
   renderPo(); poSave();
-  const names = document.querySelectorAll('#poHost .po-vname');
+  const names = document.querySelectorAll('#poHost .po-fname');
   const last = names[names.length - 1]; if (last) last.focus();
+}
+function poDelFolder(fid) {
+  if (!_po) return;
+  const fd = poFindFolder(fid);
+  if (fd && (fd.name || (fd.vendors || []).length) && !confirm('Remove this folder and every vendor in it from the PO starter?')) return;
+  _po.folders = _po.folders.filter(f => f.id !== fid);
+  renderPo(); poSave();
+}
+function poSetFolderName(fid, value) {
+  const fd = poFindFolder(fid); if (!fd) return;
+  fd.name = value; poSave();
+}
+function poAddVendor(fid) {
+  const fd = poFindFolder(fid); if (!fd) return;
+  fd.vendors = fd.vendors || [];
+  fd.vendors.push({ id: uid('pov'), name: '', lines: [poNewLine()] });
+  renderPo(); poSave();
+  const box = document.querySelector('#poHost .po-folder[data-f="' + (window.CSS && CSS.escape ? CSS.escape(fid) : fid) + '"]');
+  if (box) { const names = box.querySelectorAll('.po-vname'); const last = names[names.length - 1]; if (last) last.focus(); }
 }
 function poDelVendor(vid) {
   if (!_po) return;
-  const vd = poFindVendor(vid);
+  const vd = poFindVendor(vid), fd = poVendorFolder(vid);
+  if (!fd) return;
   if (vd && (vd.name || (vd.lines || []).some(l => l.item || l.price)) && !confirm('Remove this vendor and its lines from the PO starter?')) return;
-  _po.vendors = _po.vendors.filter(v => v.id !== vid);
+  fd.vendors = (fd.vendors || []).filter(v => v.id !== vid);
   renderPo(); poSave();
 }
 function poAddLine(vid) {
@@ -22406,6 +22491,8 @@ function poRecalcVendor(vid) {
   const vd = poFindVendor(vid); if (!vd) return;
   const vt = document.getElementById('povt_' + vid);
   if (vt) vt.innerHTML = esc(fmtMoney(poVendorTotal(vd)) || '$0.00') + ' <span class="muted">buying</span>';
+  const fd = poVendorFolder(vid);
+  if (fd) { const ft = document.getElementById('poft_' + fd.id); if (ft) ft.textContent = fmtMoney(poFolderTotal(fd)) || '$0.00'; }
   const g = document.getElementById('poGrand');
   if (g) g.textContent = fmtMoney(poGrandTotal()) || '$0.00';
 }
