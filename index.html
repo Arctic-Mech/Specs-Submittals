@@ -165,13 +165,17 @@ a { color: var(--accent); }
 .po-fcard:hover { border-color: var(--accent); box-shadow: 0 3px 10px rgba(31,111,235,.14); }
 .po-fcard-ico { font-size: 26px; line-height: 1; }
 .po-fcard-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.po-fcard-main b { font-size: 16px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.po-fcard-main b { font-size: 16px; color: #0f172a; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
 .po-fcard-sub { font-size: 12.5px; color: #64748b; }
 .po-fcard-go { margin-left: auto; font-size: 20px; color: #94a3b8; }
 .po-fico { font-size: 17px; }
-input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 8px; min-width: 240px; color: #0f172a; }
+input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 8px; flex: 1 1 240px; min-width: 180px; color: #0f172a; }
 input.po-fname:hover { border-color: #cbd5e1; }
 input.po-fname:focus { border-color: var(--accent); background: #fff; outline: none; }
+/* optional PO description, under the vendor name — goes on the exported PDF header */
+.po-desc { display: block; width: 100%; box-sizing: border-box; margin: 0 14px 0; padding: 6px 10px; font-size: 12.5px; color: #334155; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; }
+.po-desc:focus { border-color: var(--accent); outline: none; }
+.po-descwrap { padding: 0 14px 10px; background: #fcfdfe; border-bottom: 1px solid #eef2f7; }
 .po-fbody { }
 .po-fempty { color: #64748b; font-size: 13px; padding: 16px 6px; }
 .po-vendor { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
@@ -187,6 +191,15 @@ input.po-fname:focus { border-color: var(--accent); background: #fff; outline: n
 .po-qfile a:hover { text-decoration: underline; }
 .po-qbar .po-undo { margin-left: auto; color: #b45309; border-color: #fcd9a8; background: #fffbeb; }
 .po-qbar .po-undo:hover { background: #fef3c7; }
+.po-head .btn.po-pub, .po-vhead .btn.po-pub { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+.po-vhead .btn.po-pub:hover { background: #dcfce7; }
+/* the published-PO change tracking inside the register drawer (theme-aware) */
+.po-track { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.po-track th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.po-track td { padding: 3px 6px; border-bottom: 1px solid var(--border); font-size: 12.5px; vertical-align: middle; }
+.po-track .input { padding: 4px 7px; font-size: 12.5px; }
+.po-revised { margin-top: 10px; font-size: 13px; color: var(--text-2); }
+.po-revised b { color: var(--text); }
 .po-vtotal .muted { color: #94a3b8; font-weight: 400; }
 .po-xv { border: 0; background: none; color: #cbd5e1; cursor: pointer; font-size: 16px; padding: 2px 6px; }
 .po-xv:hover { color: #dc2626; }
@@ -1808,7 +1821,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.70';
+const APP_VERSION = 'v8.71';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -13015,6 +13028,7 @@ function renderLedgerDrawer() {
         ${ledgerDocList(it, 'emails', lk)}
         <div class="drop" id="ledgerEmailDrop" onclick="pickLedgerEmails('${lk}','${it.id}')">Drop emails (.msg / .eml) here</div>
       </div>
+      ${(lk === 'pos' && (it.lineItems || it.changes)) ? poLedgerTrackingHtml(it) : ''}
       <div class="sec">
         <h4>Notes</h4>
         <textarea class="input autosize" rows="4" onchange="patchLedger('${lk}','${it.id}',{notes:this.value})">${esc(it.notes || '')}</textarea>
@@ -22432,6 +22446,8 @@ function poVendorHtml(vd) {
       <td style="width:28px;text-align:center"><button class="po-xl" title="Delete line" onclick="poDelLine('${V}','${L}')">✕</button></td>
     </tr>`;
   }).join('');
+  const allBuy = lines.length > 0 && lines.every(l => l.buy);
+  const published = vd.publishedId && (ledgerData.pos || []).some(p => p.id === vd.publishedId);
   const q = vd.quote;
   const undoHere = _po && _po.undo && _po.undo.vid === vd.id;
   const qbar = `<div class="po-qbar">
@@ -22447,12 +22463,14 @@ function poVendorHtml(vd) {
       <input class="po-vname" value="${esc(vd.name || '')}" placeholder="Vendor name" oninput="poSetVendorField('${V}','name',this.value)">
       <input class="po-po" value="${esc(vd.po || '')}" placeholder="PO #" title="Purchase order number" oninput="poSetVendorField('${V}','po',this.value)">
       <span class="po-vtotal" id="povt_${V}">${esc(fmtMoney(poVendorTotal(vd)) || '$0.00')} <span class="muted">buying</span></span>
+      <button class="btn sm po-pub" onclick="poPublish('${V}')" title="Publish this PO to the website's PO's register, where you track changes (adds/deducts) against it">${published ? '⇪ Re-publish' : '⇪ Publish'}</button>
       <button class="btn sm po-pdf" onclick="poExportPdf('${V}')" title="Export a PDF of the ticked lines — the buy list for the field foreman">⤓ PDF</button>
       <button class="po-xv" title="Remove vendor" onclick="poDelVendor('${V}')">🗑</button>
     </div>
+    <div class="po-descwrap"><input class="po-desc" value="${esc(vd.desc || '')}" placeholder="PO description (optional) — shows on the exported PDF header" oninput="poSetVendorField('${V}','desc',this.value)"></div>
     ${qbar}
     <table class="po-lines">
-      <thead><tr><th></th><th>Item / description</th><th>Qty</th><th>Unit $</th><th>Line total</th><th>Notes</th><th></th></tr></thead>
+      <thead><tr><th style="width:34px;text-align:center"><input type="checkbox" class="po-ck" ${allBuy ? 'checked' : ''} title="Select all / none" onchange="poToggleAll('${V}',this.checked)"></th><th>Item / description</th><th>Qty</th><th>Unit $</th><th>Line total</th><th>Notes</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="po-addline"><button class="btn sm ghost" onclick="poAddLine('${V}')">+ add a line</button></div>
@@ -22547,6 +22565,11 @@ function poToggleBuy(vid, lid, checked) {
   if (row) row.classList.toggle('buy', l.buy);
   poRecalcVendor(vid); poSave();
 }
+function poToggleAll(vid, checked) {
+  const vd = poFindVendor(vid); if (!vd) return;
+  (vd.lines || []).forEach(l => { l.buy = !!checked; });
+  renderPo(); poSave();
+}
 function poRecalcVendor(vid) {
   const vd = poFindVendor(vid); if (!vd) return;
   const vt = document.getElementById('povt_' + vid);
@@ -22556,55 +22579,158 @@ function poRecalcVendor(vid) {
   const g = document.getElementById('poGrand');
   if (g) g.textContent = fmtMoney(poGrandTotal()) || '$0.00';
 }
-/* The PO as a one-page PDF: the ticked lines for this vendor, with its PO number on it — the buy
-   list to hand the field foreman. Only what was selected goes on it. */
-async function poExportPdf(vid) {
-  const vd = poFindVendor(vid); if (!vd) return;
+/* The PO as a one-page PDF: the ticked lines for this vendor, with its PO number and the total on
+   it — the buy list to hand the field foreman. Only what was selected goes on it. Shared by the
+   Export button (downloads it) and Publish (files it on the website). */
+async function poBuildPdf(vid) {
+  const vd = poFindVendor(vid); if (!vd) return null;
   const lines = (vd.lines || []).filter(l => l.buy);
-  if (!lines.length) { toast('Tick the lines you’re buying from ' + (vd.name || 'this vendor') + ' first', true); return; }
+  if (!lines.length) { toast('Tick the lines you’re buying from ' + (vd.name || 'this vendor') + ' first', true); return null; }
+  const total = lines.reduce((s, l) => s + poLineTotal(l), 0);
+  const jspdf = await ensureJsPDF();
+  const doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 40;
+  try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 24, 46, 46); } catch (e) {}
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor.apply(doc, ARCTIC_INK);
+  doc.text('PURCHASE ORDER', M + 58, 44);
+  if (String(vd.desc || '').trim()) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(80, 86, 96);
+    doc.text(doc.splitTextToSize(String(vd.desc).trim(), 300)[0], M + 58, 60);
+  }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor.apply(doc, ARCTIC_BLUE);
+  doc.text('ARCTIC SHEET METAL', pageW - M, 34, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
+  doc.text('HVAC · Pipefitting · Plumbing · Fabrication', pageW - M, 46, { align: 'right' });
+  /* The total up at the top too, not only at the foot of the list. */
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor.apply(doc, ARCTIC_INK);
+  doc.text('TOTAL  ' + (fmtMoney(total) || '$0'), pageW - M, 68, { align: 'right' });
+  doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.4); doc.line(M, 76, pageW - M, 76);
+  doc.autoTable({
+    body: [['Vendor', vd.name || '', 'PO #', vd.po || ''],
+      ['Job Name', job.name || '', 'Job Number', job.number || ''],
+      ['Date', csvDate(today()), 'Lines', String(lines.length)]],
+    startY: 88, theme: 'plain', margin: { left: M, right: M },
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 2, textColor: ARCTIC_INK },
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 70, textColor: [110, 116, 128] }, 1: { cellWidth: 230 },
+      2: { fontStyle: 'bold', cellWidth: 70, textColor: [110, 116, 128] }, 3: { cellWidth: 'auto' } }
+  });
+  doc.autoTable({
+    startY: doc.lastAutoTable.finalY + 14, margin: { left: M, right: M },
+    head: [['Item / description', 'Qty', 'Unit $', 'Line total', 'Notes']],
+    body: lines.map(l => [l.item || '', (l.qty === '' || l.qty == null) ? '' : String(l.qty),
+      poNum(l.price) ? fmtMoney(poNum(l.price)) : '', fmtMoney(poLineTotal(l)) || '', l.note || '']),
+    foot: [[{ content: 'TOTAL', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+      { content: fmtMoney(total) || '$0', styles: { halign: 'right', fontStyle: 'bold' } }, '']],
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 4, lineColor: [226, 228, 233], lineWidth: 0.5, textColor: ARCTIC_INK, valign: 'middle' },
+    headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold' },
+    footStyles: { fillColor: [247, 248, 250], textColor: ARCTIC_INK },
+    columnStyles: { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 42 },
+      2: { halign: 'right', cellWidth: 68 }, 3: { halign: 'right', cellWidth: 78 }, 4: { cellWidth: 120 } },
+    rowPageBreak: 'avoid'
+  });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
+  doc.text('Generated ' + csvDate(today()) + ' · Arctic Sheet Metal', M, pageH - 16);
+  const tag = String(vd.po || vd.name || 'vendor').replace(/[^\w.-]+/g, '-');
+  return { doc, total, lines, vd, filename: (job.number ? job.number + '_' : '') + 'PO_' + tag + '.pdf' };
+}
+async function poExportPdf(vid) {
   stickyToast('Building the PO…');
   try {
-    const jspdf = await ensureJsPDF();
-    const doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), M = 40;
-    try { if (ARCTIC_LOGO) doc.addImage(ARCTIC_LOGO, 'PNG', M, 24, 46, 46); } catch (e) {}
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor.apply(doc, ARCTIC_INK);
-    doc.text('PURCHASE ORDER', M + 58, 44);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor.apply(doc, ARCTIC_BLUE);
-    doc.text('ARCTIC SHEET METAL', pageW - M, 34, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
-    doc.text('HVAC · Pipefitting · Plumbing · Fabrication', pageW - M, 46, { align: 'right' });
-    doc.setDrawColor.apply(doc, ARCTIC_BLUE); doc.setLineWidth(1.4); doc.line(M, 76, pageW - M, 76);
-    doc.autoTable({
-      body: [['Vendor', vd.name || '', 'PO #', vd.po || ''],
-        ['Job Name', job.name || '', 'Job Number', job.number || ''],
-        ['Date', csvDate(today()), 'Lines', String(lines.length)]],
-      startY: 88, theme: 'plain', margin: { left: M, right: M },
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2, textColor: ARCTIC_INK },
-      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 70, textColor: [110, 116, 128] }, 1: { cellWidth: 230 },
-        2: { fontStyle: 'bold', cellWidth: 70, textColor: [110, 116, 128] }, 3: { cellWidth: 'auto' } }
-    });
-    const total = lines.reduce((s, l) => s + poLineTotal(l), 0);
-    doc.autoTable({
-      startY: doc.lastAutoTable.finalY + 14, margin: { left: M, right: M },
-      head: [['Item / description', 'Qty', 'Unit $', 'Line total', 'Notes']],
-      body: lines.map(l => [l.item || '', (l.qty === '' || l.qty == null) ? '' : String(l.qty),
-        poNum(l.price) ? fmtMoney(poNum(l.price)) : '', fmtMoney(poLineTotal(l)) || '', l.note || '']),
-      foot: [[{ content: 'TOTAL', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
-        { content: fmtMoney(total) || '$0', styles: { halign: 'right', fontStyle: 'bold' } }, '']],
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 4, lineColor: [226, 228, 233], lineWidth: 0.5, textColor: ARCTIC_INK, valign: 'middle' },
-      headStyles: { fillColor: ARCTIC_BLUE, textColor: [255, 255, 255], fontStyle: 'bold' },
-      footStyles: { fillColor: [247, 248, 250], textColor: ARCTIC_INK },
-      columnStyles: { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 42 },
-        2: { halign: 'right', cellWidth: 68 }, 3: { halign: 'right', cellWidth: 78 }, 4: { cellWidth: 120 } },
-      rowPageBreak: 'avoid'
-    });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 155, 165);
-    doc.text('Generated ' + csvDate(today()) + ' · Arctic Sheet Metal', M, pageH - 16);
-    const tag = String(vd.po || vd.name || 'vendor').replace(/[^\w.-]+/g, '-');
-    doc.save((job.number ? job.number + '_' : '') + 'PO_' + tag + '.pdf');
-    toast('PO PDF built for ' + (vd.name || 'vendor'));
+    const b = await poBuildPdf(vid); if (!b) return;
+    b.doc.save(b.filename);
+    toast('PO PDF built for ' + (b.vd.name || 'vendor'));
   } catch (e) { console.error(e); toast('Could not build the PO PDF: ' + (e.message || e), true); }
+}
+/* Publish the PO onto the website's PO's register — the ticked lines become the PO's line items and
+   its amount, a copy of the PDF is filed on it, and from there you track changes to it (adds and
+   deducts, notes) over the life of the job. Publishing again updates the same PO and keeps the
+   changes you have logged against it. */
+async function poPublish(vid) {
+  const vd = poFindVendor(vid); if (!vd) return;
+  const lines = (vd.lines || []).filter(l => l.buy);
+  if (!lines.length) { toast('Tick the lines to put on the PO first', true); return; }
+  const existing = (ledgerData.pos || []).find(p => p.poOrigin && p.poOrigin.vendorId === vid);
+  if (existing && !confirm('This vendor is already published as a PO. Update it with the current selection? (Any adds/deducts you logged stay.)')) return;
+  stickyToast('Publishing the PO…');
+  try {
+    const items = lines.map(l => ({ item: l.item || '', qty: l.qty || '', price: l.price || '', total: poShow(poLineTotal(l)), note: l.note || '' }));
+    const orig = round2(lines.reduce((s, l) => s + poLineTotal(l), 0));
+    let it = existing; const isNew = !it;
+    if (!it) it = { id: uid('po'), status: 'draft', docs: [], emails: [], notes: '', changes: [], created: Date.now() };
+    it.number = vd.po || it.number || '';
+    it.vendor = vd.name || '';
+    it.poOrigin = { folderId: (poVendorFolder(vid) || {}).id, vendorId: vid };
+    it.lineItems = items;
+    it.originalAmount = orig;
+    it.changes = it.changes || [];
+    it.amount = String(round2(orig + it.changes.reduce((s, c) => s + (Number(c.amount) || 0), 0)));
+    it.description = String(vd.desc || '').trim() || (items.length + ' line item' + (items.length === 1 ? '' : 's') + ' · from PO starter');
+    if (!it.date) it.date = today();
+    it.updated = Date.now();
+    if (isNew) ledgerData.pos = [it].concat(ledgerData.pos || []);
+    /* File a copy of the PO PDF on the register entry, so the issued document lives with it. */
+    try {
+      const b = await poBuildPdf(vid);
+      if (b && (onFirebase() || jobFolder)) {
+        const pdfName = sanitizeFileName((it.number ? 'PO ' + it.number + ' - ' : '') + (vd.name || 'vendor') + '.pdf');
+        const f = new File([b.doc.output('blob')], pdfName, { type: 'application/pdf' });
+        const rec = await putFileInDir(f, ledgerDocDir('pos', it), pdfName, { overwrite: true });
+        it.docs = (it.docs || []).filter(d => !d.poAuto);
+        it.docs.push({ id: uid('doc'), name: pdfName, size: f.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, poAuto: true, added: Date.now() });
+      }
+    } catch (e) { console.error(e); }
+    vd.publishedId = it.id; poSave();
+    await saveLedger('pos', it);
+    renderPo();
+    toast('PO ' + (it.number ? '#' + it.number + ' ' : '') + (isNew ? 'published to the PO’s tab' : 'updated') + ' — open it there to log adds/deducts');
+  } catch (e) { console.error(e); toast('Could not publish: ' + (e.message || e), true); }
+}
+/* ── a published PO's change tracking, shown in its register drawer ── */
+function poLedgerRecalc(it) {
+  const orig = Number(it.originalAmount) || (it.lineItems || []).reduce((s, x) => s + poNum(x.total), 0);
+  it.amount = String(round2(orig + (it.changes || []).reduce((s, c) => s + (Number(c.amount) || 0), 0)));
+}
+function poLedgerAddChange(id) {
+  const it = ledgerById('pos', id); if (!it) return;
+  it.changes = it.changes || [];
+  it.changes.push({ id: uid('ch'), desc: '', amount: '', date: today() });
+  poLedgerRecalc(it); saveLedger('pos', it); renderLedgerDrawer(); renderLedger('pos');
+}
+function poLedgerSetChange(id, cid, field, val) {
+  const it = ledgerById('pos', id); if (!it) return;
+  const c = (it.changes || []).find(x => x.id === cid); if (!c) return;
+  c[field] = field === 'amount' ? String(val).replace(/[^0-9.\-]/g, '') : val;
+  poLedgerRecalc(it); saveLedger('pos', it);
+  if (field === 'amount') renderLedgerDrawer();
+  renderLedger('pos');
+}
+function poLedgerDelChange(id, cid) {
+  const it = ledgerById('pos', id); if (!it) return;
+  it.changes = (it.changes || []).filter(c => c.id !== cid);
+  poLedgerRecalc(it); saveLedger('pos', it); renderLedgerDrawer(); renderLedger('pos');
+}
+function poLedgerTrackingHtml(it) {
+  const items = it.lineItems || [], changes = it.changes || [];
+  const orig = Number(it.originalAmount) || items.reduce((s, x) => s + poNum(x.total), 0);
+  const adj = changes.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const revised = orig + adj;
+  const rows = items.map(x => `<tr><td>${esc(x.item || '')}</td><td style="text-align:right">${esc(x.qty || '')}</td><td style="text-align:right">${esc(fmtMoney(poNum(x.total)) || '')}</td></tr>`).join('');
+  const chRows = changes.map(c => `<tr>
+    <td><input class="input" value="${esc(c.desc || '')}" placeholder="What changed" onchange="poLedgerSetChange('${it.id}','${c.id}','desc',this.value)"></td>
+    <td style="width:120px"><input class="input" inputmode="decimal" value="${esc(c.amount == null ? '' : c.amount)}" placeholder="+add / -deduct" title="Use a minus sign for a deduct" onchange="poLedgerSetChange('${it.id}','${c.id}','amount',this.value)"></td>
+    <td style="width:30px;text-align:center"><button class="icon-btn" title="Remove" onclick="poLedgerDelChange('${it.id}','${c.id}')">🗑</button></td>
+  </tr>`).join('');
+  return `
+    <div class="sec">
+      <h4>PO line items <span class="muted" style="font-weight:400">${items.length} line${items.length === 1 ? '' : 's'} · original ${esc(fmtMoney(orig) || '$0')}</span></h4>
+      ${items.length ? `<table class="po-track"><thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Total</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="muted">No line items recorded.</div>'}
+    </div>
+    <div class="sec">
+      <h4>Changes — adds / deducts <button class="btn sm" onclick="poLedgerAddChange('${it.id}')">+ Add change</button></h4>
+      ${changes.length ? `<table class="po-track"><thead><tr><th>Change</th><th>Amount</th><th></th></tr></thead><tbody>${chRows}</tbody></table>`
+        : '<div class="muted">No changes yet — log an add or deduct against the original PO here. A deduct is a minus amount.</div>'}
+      <div class="po-revised">Original ${esc(fmtMoney(orig) || '$0')}${adj ? ' · adjustments ' + (adj >= 0 ? '+' : '') + (fmtMoney(adj) || '$0') : ''} <b>· Revised total ${esc(fmtMoney(revised) || '$0')}</b></div>
+    </div>`;
 }
 /* ── the vendor's quote PDF ──
    Saved against the vendor regardless — a file on the job you can open any time. On top of that, an
