@@ -934,7 +934,9 @@ const testCode = `
       { id:'t5', name:'Connect OSA flex', who:'Arctic', days:1, order:20 },
       { id:'t3', name:'Insulate rooftop duct', who:'Arctic', days:4, order:40, alongside:'t2' },
       { id:'t2', name:'Run rooftop duct', who:'Arctic', days:8, order:50 },
-      { id:'t1', name:'Run flex', who:'Arctic', days:1, order:60, date:'2026-10-12', note:'Night work' },
+      // Anchored a couple of days ahead of today so the scenario holds whatever day the suite runs:
+      // the 28-day order is always behind, and the near-term work (t2) is not yet late.
+      { id:'t1', name:'Run flex', who:'Arctic', days:1, order:60, date:dShift(today(), 2), note:'Night work' },
       { id:'o', name:'Order pumps', kind:'order', days:28, order:65 } ];
     var xr = planDates(currentPlan(), five);
     ck('excel: each line says what kind of thing it is, in words',
