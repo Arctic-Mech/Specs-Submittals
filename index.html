@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.75';
+const APP_VERSION = 'v8.76';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21769,7 +21769,7 @@ function starterPayload(lines) {
   for (const l of lines) {
     if (l.blank) continue;
     const sec = l.sec || {};
-    const thin = { key: sec.key || '', number: sec.number || '', title: sec.title || '' };
+    const thin = { key: sec.key || '', number: sec.number || '', title: sec.title || '', page: (sec.startPage != null ? sec.startPage : null) };
     if (l.band) { out.push({ band: true, sec: thin }); continue; }
     if (l.sub) { out.push({ sub: true, sec: thin, article: l.article || '', name: l.name || '' }); continue; }
     out.push({ sec: thin, key: keyOf(l), tag: l.tag || '', mark: l.mark || '', name: l.name || '',
@@ -21865,7 +21865,27 @@ function wireStarterMessages() {
     if (d.type === 'starter-export') { await starterToExcel(d); return; }
     if (d.type === 'starter-ask-list') { await exportAskList(d); return; }
     if (d.type === 'starter-ask-cancel') { cancelAskList(); return; }
+    if (d.type === 'starter-open-spec') { await openStarterSpec(d.secKey); return; }
   });
+}
+/* Open the spec book to a section's pages, from the link on the starter's section header. The spec
+   opens in a new tab at the section's start page, so it reads over the starter rather than behind it. */
+async function openStarterSpec(secKey) {
+  const s = findSection(secKey);
+  if (!s) { toStarter('starter-say', { text: 'That section is no longer on the job', bad: true }); return; }
+  if (s.startPage == null) { toStarter('starter-say', { text: 'No spec pages were recorded for this section', bad: true }); return; }
+  const sp = s.specId ? specById(s.specId) : (specsOf(job)[0] || null);
+  if (sp && sp.url) { try { window.open(String(sp.url) + '#page=' + s.startPage, '_blank'); } catch (e) {} return; }
+  if (!sp) { toStarter('starter-say', { text: 'The spec file is no longer on this job', bad: true }); return; }
+  toStarter('starter-say', { text: 'Opening the spec…' });
+  try {
+    const blob = await readDocBlob(sp);
+    if (!blob) { toStarter('starter-say', { text: await docReadError(sp), bad: true }); return; }
+    const url = URL.createObjectURL(blob);
+    window.open(url + '#page=' + s.startPage, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    toStarter('starter-say', { text: 'Spec opened in a new tab' });
+  } catch (e) { toStarter('starter-say', { text: 'Could not open the spec: ' + (e.message || e), bad: true }); }
 }
 async function keepStarterState(d) {
   if (!job) return;

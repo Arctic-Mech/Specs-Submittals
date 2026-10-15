@@ -109,7 +109,7 @@
   .delrow{position:absolute;right:2px;top:50%;transform:translateY(-50%);display:none;
     border:0;border-radius:4px;background:#fee2e2;color:#b91c1c;cursor:pointer;font-size:11px;
     line-height:1;padding:3px 6px;z-index:1}
-  tbody tr:hover .delrow{display:inline-flex}
+  td.namecol:hover .delrow{display:inline-flex}
   .delrow:hover{background:#fecaca}
   tr.sub td{background:var(--sub);color:var(--subink);font-weight:600}
   tr.odd td{background:var(--band)}
@@ -155,6 +155,9 @@
   .addrow{border:0;background:rgba(0,0,0,.06);border-radius:5px;color:var(--secink);
     cursor:pointer;padding:1px 8px;font-size:11.5px;font-weight:600;margin-left:10px}
   .addrow:hover{background:rgba(0,0,0,.12)}
+  .specpg{color:var(--secink);text-decoration:none;font-size:11.5px;font-weight:600;padding:1px 8px;
+    border-radius:5px;background:rgba(0,0,0,.06)}
+  .specpg:hover{background:rgba(0,0,0,.12);text-decoration:underline}
   #edit{position:absolute;z-index:9;border:2px solid var(--pick);background:#fff;
     font:inherit;padding:2px 5px;display:none;border-radius:2px}
   #pick{position:absolute;z-index:9;border:2px solid var(--pick);background:#fff;
@@ -928,7 +931,8 @@ function rowHtml(d, at, left) {
       + esc(String(sec.number || sec.key || '') + '   ' + String(sec.title || '').toUpperCase())
       + '</td><td colspan="' + (COLS.length - FROZEN) + '">'
       + (shut ? '<span class="folded">' + d.lines + ' line' + (d.lines === 1 ? '' : 's') + ' folded away</span>'
-              : '<button class="addrow" data-add="' + esc(sec.key || '') + '">+ add a line</button>')
+              : (sec.page != null ? '<a class="specpg" href="#" data-spec="' + esc(sec.key || '') + '" title="Open the spec book to this section’s pages">📄 Spec pages</a>' : '')
+                + '<button class="addrow" data-add="' + esc(sec.key || '') + '">+ add a line</button>')
       + '</td></tr>';
   }
   if (d.kind === 'sub')
@@ -1395,6 +1399,8 @@ document.addEventListener('mousedown', function (e) {
   if (fold) { e.preventDefault(); e.stopPropagation(); foldOne(fold.getAttribute('data-fold')); return; }
   var opener = e.target.closest && e.target.closest('[data-open]');
   if (opener) { e.preventDefault(); e.stopPropagation(); openOne(opener.getAttribute('data-open')); return; }
+  var spec = e.target.closest && e.target.closest('[data-spec]');
+  if (spec) { e.preventDefault(); e.stopPropagation(); tell('starter-open-spec', { secKey: spec.getAttribute('data-spec') }); say('Opening the spec…'); return; }
   var add = e.target.closest && e.target.closest('[data-add]');
   if (add) { addLine(add.getAttribute('data-add')); return; }
   var up = e.target.closest && e.target.closest('[data-up]');
