@@ -278,46 +278,59 @@
     cursor:pointer;font-size:13px;line-height:1;padding:3px 5px;border-radius:5px;opacity:0}
   .std-fcard:hover .std-fdel{opacity:1}
   .std-fdel:hover{background:var(--badbg);color:var(--bad)}
-  .std-addrow{display:flex;gap:8px;align-items:center;max-width:420px;margin:0 0 4px}
-  .std-addrow input{flex:1;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;font:inherit;color:var(--ink);background:var(--bg)}
-  .std-top{display:flex;align-items:center;gap:12px;margin:0 0 16px}
+  .std-headrow{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 4px}
+  .std-headrow .std-crumbs{margin:0}
+  .std-toolbar{display:flex;gap:8px;flex-wrap:wrap}
+  .std-top{display:flex;align-items:center;gap:12px;margin:14px 0 18px}
   .std-fname{flex:1;max-width:480px;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;
     font:inherit;font-weight:700;font-size:16px;color:var(--ink);background:var(--bg)}
   .std-sect{margin:0 0 26px}
-  .std-sect-h{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
-    border-bottom:1px solid var(--line);padding-bottom:6px;margin:0 0 12px}
-  .std-hint{color:var(--dim);font-size:12px;margin:-4px 0 14px;max-width:66em}
-  .std-prod{border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin:0 0 14px;background:var(--bg);
-    box-shadow:0 1px 2px rgba(15,23,42,.03)}
-  .std-prodhead{display:flex;align-items:center;gap:10px;margin:0 0 12px}
-  .std-pname{flex:1;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;font:inherit;
-    font-weight:700;font-size:14.5px;color:var(--ink);background:var(--bg)}
-  table.std-brands{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;
-    border:1px solid var(--line);border-radius:9px;overflow:hidden}
-  table.std-brands th{background:var(--band);color:var(--dim);font-weight:700;font-size:10.5px;
-    letter-spacing:.04em;text-transform:uppercase;padding:7px 9px;text-align:center;white-space:nowrap;
-    border-bottom:1px solid var(--line)}
-  table.std-brands th.left{text-align:left}
-  table.std-brands td{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:middle;background:var(--bg)}
-  table.std-brands td.left{text-align:left}
-  table.std-brands tr:last-child td{border-bottom:0}
-  table.std-brands tbody tr:hover td{background:var(--band)}
-  th.std-rank,td.std-rank{width:44px;text-align:center}
-  th.std-subcol{width:220px}
-  th.std-ord,td.std-ord{width:104px;text-align:center;white-space:nowrap}
-  .std-badge{display:inline-block;min-width:22px;height:22px;line-height:22px;border-radius:999px;
-    background:var(--pick);color:#fff;font-weight:700;font-size:11.5px;padding:0 6px}
-  table.std-brands input{width:100%;border:1px solid transparent;border-radius:6px;padding:5px 8px;
-    font:inherit;font-size:12.5px;color:var(--ink);background:transparent}
-  table.std-brands input:hover{border-color:var(--line)}
-  table.std-brands input:focus{outline:none;border-color:var(--pick);background:var(--bg)}
-  .std-doc{white-space:nowrap}
+  .std-sect-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    border-bottom:1px solid var(--line);padding-bottom:7px;margin:0 0 13px;flex-wrap:wrap}
+  .std-sect-h{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  .std-addside{display:flex;gap:7px;align-items:center}
+  .std-sfinput{border:1px solid var(--rule);border-radius:7px;padding:5px 10px;font:inherit;font-size:12.5px;
+    color:var(--ink);background:var(--bg);width:170px}
+  .std-emptyfolders{color:var(--dim);font-size:12px;font-style:italic;padding:2px 0 4px}
+  .std-badge{flex:0 0 auto;display:inline-block;min-width:22px;height:22px;line-height:22px;border-radius:999px;
+    text-align:center;background:var(--pick);color:#fff;font-weight:700;font-size:11.5px;padding:0 6px}
+
+  /* a product: a collapsed bar you open */
+  .std-pwrap{border:1px solid var(--line);border-radius:10px;margin:0 0 9px;background:var(--bg);overflow:hidden}
+  .std-pwrap.open{box-shadow:0 1px 3px rgba(15,23,42,.05)}
+  .std-pbar{display:flex;align-items:center;gap:10px;padding:9px 12px}
+  .std-pbar.open{border-bottom:1px solid var(--line);background:var(--band)}
+  .std-ptri{flex:0 0 auto;border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:12px;
+    width:20px;height:20px;border-radius:5px;line-height:1}
+  .std-ptri:hover{background:rgba(0,0,0,.06);color:var(--ink)}
+  .std-ptitle{flex:1;font-weight:600;font-size:13.5px;color:var(--ink);cursor:pointer;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .std-pname{flex:1;border:1px solid var(--rule);border-radius:7px;padding:6px 10px;font:inherit;
+    font-weight:700;font-size:14px;color:var(--ink);background:var(--bg);min-width:0}
+  .std-pcount{flex:0 0 auto;color:var(--dim);font-size:11.5px}
+  .std-pdel{flex:0 0 auto}
+  .std-pbody{padding:14px 16px 16px}
+  .std-notewrap{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px}
+  .std-nlabel{flex:0 0 auto;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--dim);padding-top:7px;width:44px}
+  .std-pnotes{flex:1;border:1px solid var(--rule);border-radius:7px;padding:7px 10px;font:inherit;font-size:12.5px;
+    color:var(--ink);background:var(--bg);min-height:38px;resize:vertical;line-height:1.4}
+  .std-pnotes:focus{outline:none;border-color:var(--pick)}
+
+  /* a brand inside a product, with its vendors under it */
+  .std-brand{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin:0 0 10px;background:var(--band)}
+  .std-bhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .std-bname{flex:1 1 180px;border:1px solid var(--rule);border-radius:7px;padding:6px 10px;font:inherit;
+    font-weight:600;font-size:13px;color:var(--ink);background:var(--bg);min-width:120px}
+  .std-bname:focus{outline:none;border-color:var(--pick)}
+  .std-bhead .std-doc{flex:0 0 auto;white-space:nowrap}
+  .std-bhead .std-ord{flex:0 0 auto;white-space:nowrap}
   .std-have{display:inline-flex;align-items:center;gap:2px}
   .std-see{color:var(--pick);text-decoration:none;font-size:12px;max-width:170px;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle}
   .std-see:hover{text-decoration:underline}
-  .std-up{display:inline-flex;flex-direction:column;align-items:center;gap:1px;border:1px dashed var(--rule);
-    background:var(--band);color:var(--pick);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px;
+  .std-up{display:inline-flex;align-items:center;gap:5px;border:1px dashed var(--rule);
+    background:var(--bg);color:var(--pick);border-radius:8px;padding:6px 11px;cursor:pointer;font-size:12px;
     font-weight:600;white-space:nowrap;transition:border-color .12s,background .12s}
   .std-up:hover{background:#eff6ff;border-color:var(--pick)}
   .std-up.over{border-style:solid;border-color:var(--pick);background:#dbeafe;box-shadow:0 0 0 3px rgba(29,78,216,.15)}
@@ -326,17 +339,35 @@
   .std-docx,.std-x,.std-mv{border:1px solid transparent;background:transparent;color:var(--dim);
     cursor:pointer;font-size:12px;line-height:1;padding:4px 7px;border-radius:6px}
   .std-docx:hover,.std-x:hover{background:var(--badbg);color:var(--bad)}
-  .std-prodhead .std-x{font-size:11.5px;border-color:var(--line)}
-  .std-mv{border-color:var(--line)}
-  .std-mv:hover:not(:disabled){background:var(--band);color:var(--ink)}
+  .std-mv{border-color:var(--line);background:var(--bg)}
+  .std-mv:hover:not(:disabled){color:var(--ink)}
   .std-mv:disabled{opacity:.3;cursor:default}
-  .std-docx{margin-left:4px}
-  .std-nobrand{color:var(--dim);font-style:italic;text-align:left;font-size:12px}
-  .std-addbrand{margin-top:10px;border:1px dashed var(--rule);background:transparent;color:var(--pick);
+  .std-docx{margin-left:2px}
+
+  /* vendors + contacts under a brand */
+  .std-vends{margin:11px 0 0;padding:10px 0 0;border-top:1px dashed var(--rule)}
+  .std-vlabel{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin:0 0 8px}
+  .std-vendor{border-left:2px solid var(--line);padding:0 0 0 11px;margin:0 0 10px}
+  .std-vrow{display:flex;align-items:center;gap:7px;margin:0 0 5px}
+  .std-vname{flex:1 1 200px;border:1px solid var(--rule);border-radius:7px;padding:6px 10px;font:inherit;
+    font-size:12.5px;font-weight:600;color:var(--ink);background:var(--bg);max-width:340px}
+  .std-vname:focus{outline:none;border-color:var(--pick)}
+  .std-contacts{padding-left:2px}
+  .std-contact{display:flex;align-items:center;gap:6px;margin:0 0 5px}
+  .std-cinput{flex:1 1 280px;border:1px solid var(--rule);border-radius:7px;padding:5px 9px;font:inherit;
+    font-size:12px;color:var(--ink);background:var(--bg);max-width:460px}
+  .std-cinput:focus{outline:none;border-color:var(--pick)}
+  .std-addcontact,.std-addvend{border:1px dashed var(--rule);background:transparent;color:var(--pick);
+    border-radius:7px;padding:3px 10px;cursor:pointer;font-size:11.5px;margin-top:2px}
+  .std-addcontact:hover,.std-addvend:hover{background:#eff6ff;border-color:var(--pick)}
+  .std-addvend{margin-top:4px}
+
+  .std-nobrand{color:var(--dim);font-style:italic;text-align:left;font-size:12px;margin:0 0 10px}
+  .std-addbrand{margin-top:4px;border:1px dashed var(--rule);background:transparent;color:var(--pick);
     border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12.5px}
   .std-addbrand:hover{background:#eff6ff;border-color:var(--pick)}
   .std-addprod{border:1px dashed var(--rule);background:transparent;color:var(--ink);border-radius:8px;
-    padding:9px 17px;cursor:pointer;font-size:13px;font-weight:600}
+    padding:9px 17px;cursor:pointer;font-size:13px;font-weight:600;margin-top:4px}
   .std-addprod:hover{background:var(--band);border-color:var(--pick);color:var(--pick)}
 </style>
 </head>
@@ -373,6 +404,7 @@
 </div>
 <div id="wrap"><div id="note">Waiting for the job to come through…</div></div>
 <input type="file" id="pickFile" style="display:none" accept=".pdf,.doc,.docx,.xls,.xlsx,.msg,.eml,.zip,.jpg,.jpeg,.png">
+<input type="file" id="stdXlsx" style="display:none" accept=".xlsx">
 <input id="edit"><select id="pick"></select>
 <textarea id="clip" aria-hidden="true" tabindex="-1"></textarea>
 <div id="say"></div>
@@ -405,9 +437,12 @@ var READY = false;
 /* A folder holds sub-folders AND products, so the tree goes as deep as you like (Plumbing ›
    Fixtures › …). A product lists brands in our order of preference, each with a submittal and the
    vendor(s) who carry it. */
-var STD = { folders: [] };       // root: { folders: [ { id, name, folders:[…], products:[ { id, name, brands:[ { id, name, vendors, doc } ] } ] } ] }
+/* root: { folders:[ { id, name, folders:[…], products:[
+     { id, name, notes, brands:[ { id, name, doc, vendors:[ { id, name, contacts:[str] } ] } ] } ] } ] } */
+var STD = { folders: [] };
 var STD_PATH = [];               // the folder ids from the root down to the one being looked into
 var STD_WANT = null;             // a submittal upload waiting on the file picker
+var STD_EXPAND = {};             // product id -> open (products are collapsed until you open them)
 
 /* ── the shape of the sheet ── */
 var FIX = [
@@ -504,6 +539,7 @@ window.addEventListener('message', function (ev) {
   if (d.type === 'starter-saved') { setLive(false); return; }
   if (d.type === 'starter-standards') { stdCameIn(d.standards); return; }
   if (d.type === 'standards-filed') { stdFiled(d); return; }
+  if (d.type === 'standards-imported') { stdImported(d); return; }
 });
 
 /* A load bar for the long jobs — building a vendor export with the spec book stapled on can take a
@@ -974,13 +1010,41 @@ function drawProgress() {
    1 first — each with a submittal and the vendor(s) who carry it. The Dingus owns
    the storage (always the cloud; a copy into a loaded ShareFile folder as well);
    this page is only the editor and hands every change across. */
+/* Everything typed in here, and everything brought in from Excel, is title-cased the same way the
+   quote sheet does it — first letter of each word up, words that already carry a capital left alone,
+   so HB-1, McGuire and NIBCO stand. Contacts and notes are left exactly as typed (emails, phone
+   numbers, sentences). */
+function stdCap(t) { return capWords(t); }
 function stdFill(data) {
   var d = (data && typeof data === 'object') ? data : {};
+  function vendor(v) {
+    if (typeof v === 'string') return { id: stdId('v'), name: v, contacts: [] };
+    v = v || {};
+    var c = v.contacts;
+    var contacts = Array.isArray(c) ? c.map(function (x) { return typeof x === 'string' ? x : (x && x.text) || ''; })
+      : (c ? [String(c)] : []);
+    return { id: v.id || stdId('v'), name: v.name || '', contacts: contacts };
+  }
+  function brand(b) {
+    b = b || {};
+    /* Older libraries kept "who carries it" as one line of text; split it into vendor lines. */
+    var vs = b.vendors;
+    var vendors = Array.isArray(vs) ? vs.map(vendor)
+      : (typeof vs === 'string' && vs.trim()
+          ? vs.split(/[,;]+/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (s) { return { id: stdId('v'), name: stdCap(s), contacts: [] }; })
+          : []);
+    return { id: b.id || stdId('b'), name: b.name || '', doc: b.doc || null, vendors: vendors };
+  }
+  function product(p) {
+    p = p || {};
+    return { id: p.id || stdId('p'), name: p.name || '', notes: p.notes || '',
+      brands: (Array.isArray(p.brands) ? p.brands : []).map(brand) };
+  }
   function node(n) {
     n = n || {};
     return { id: n.id, name: n.name || '',
       folders: (Array.isArray(n.folders) ? n.folders : []).map(node),
-      products: Array.isArray(n.products) ? n.products : [] };
+      products: (Array.isArray(n.products) ? n.products : []).map(product) };
   }
   return { folders: (Array.isArray(d.folders) ? d.folders : []).map(node) };
 }
@@ -1021,6 +1085,8 @@ function stdPathNames() {
 }
 function stdProduct(node, pid) { var ps = (node && node.products) || []; for (var i = 0; i < ps.length; i++) if (ps[i].id === pid) return ps[i]; return null; }
 function stdBrand(p, bid) { var bs = (p && p.brands) || []; for (var i = 0; i < bs.length; i++) if (bs[i].id === bid) return bs[i]; return null; }
+function stdVendor(b, vid) { var vs = (b && b.vendors) || []; for (var i = 0; i < vs.length; i++) if (vs[i].id === vid) return vs[i]; return null; }
+function stdBrandOf(pid, bid) { return stdBrand(stdProduct(stdCurrent(), pid), bid); }
 
 /* folders — add/open/rename/delete happen in whatever folder you are in */
 function stdOpenFolder(id) { STD_PATH = STD_PATH.concat([id]); drawStandards(); }
@@ -1028,7 +1094,7 @@ function stdGoCrumb(depth) { STD_PATH = STD_PATH.slice(0, depth); drawStandards(
 function stdUp() { STD_PATH = STD_PATH.slice(0, -1); drawStandards(); }
 function stdAddFolder() {
   var inp = document.getElementById('stdNewFolder');
-  var name = inp ? inp.value.trim() : '';
+  var name = inp ? stdCap(inp.value.trim()) : '';
   if (!name) { say('Give the folder a name first', true); if (inp) inp.focus(); return; }
   var node = stdCurrent(); (node.folders = node.folders || []).push({ id: stdId('f'), name: name, folders: [], products: [] });
   stdKeep(); drawStandards();
@@ -1043,27 +1109,36 @@ function stdDelFolder(id, ev) {
   node.folders = (node.folders || []).filter(function (x) { return x.id !== id; });
   stdKeep(); drawStandards();
 }
-/* products */
+/* products — collapsed until opened, so a folder full of them stays readable */
+function stdToggleProd(pid) { STD_EXPAND[pid] = !STD_EXPAND[pid]; drawStandards(); }
+function stdExpandAll(on) {
+  var ps = (stdCurrent() || {}).products || [];
+  for (var i = 0; i < ps.length; i++) STD_EXPAND[ps[i].id] = !!on;
+  drawStandards();
+}
 function stdAddProduct() {
   if (!STD_PATH.length) { say('Open a folder first', true); return; }
-  var node = stdCurrent(); (node.products = node.products || []).push({ id: stdId('p'), name: '', brands: [] });
+  var node = stdCurrent(), id = stdId('p');
+  (node.products = node.products || []).push({ id: id, name: '', notes: '', brands: [] });
+  STD_EXPAND[id] = true;                                 // a new product opens so you can fill it
   stdKeep(); drawStandards();
 }
 function stdRenameProduct(pid, v) { var p = stdProduct(stdCurrent(), pid); if (!p) return; p.name = v; stdKeep(); }
+function stdSetProdNotes(pid, v) { var p = stdProduct(stdCurrent(), pid); if (!p) return; p.notes = v; stdKeep(); }
 function stdDelProduct(pid) {
   var node = stdCurrent(), p = stdProduct(node, pid); if (!p) return;
   if (!confirm('Delete “' + (p.name || 'this product') + '”?')) return;
+  (p.brands || []).forEach(function (b) { if (b.doc) tell('standards-unfile', { doc: b.doc }); });
   node.products = (node.products || []).filter(function (x) { return x.id !== pid; });
   stdKeep(); drawStandards();
 }
 /* brands (ranked by their order in the list — first is our first choice) */
 function stdAddBrand(pid) {
   var p = stdProduct(stdCurrent(), pid); if (!p) return;
-  (p.brands = p.brands || []).push({ id: stdId('b'), name: '', vendors: '', doc: null });
+  (p.brands = p.brands || []).push({ id: stdId('b'), name: '', doc: null, vendors: [] });
   stdKeep(); drawStandards();
 }
-function stdRenameBrand(pid, bid, v) { var b = stdBrand(stdProduct(stdCurrent(), pid), bid); if (!b) return; b.name = v; stdKeep(); }
-function stdSetVendors(pid, bid, v) { var b = stdBrand(stdProduct(stdCurrent(), pid), bid); if (!b) return; b.vendors = v; stdKeep(); }
+function stdRenameBrand(pid, bid, v) { var b = stdBrandOf(pid, bid); if (!b) return; b.name = v; stdKeep(); }
 function stdDelBrand(pid, bid) {
   var p = stdProduct(stdCurrent(), pid), b = stdBrand(p, bid); if (!b) return;
   if (!confirm('Delete “' + (b.name || 'this brand') + '”?')) return;
@@ -1078,6 +1153,36 @@ function stdMoveBrand(pid, bid, dir) {
   if (i < 0 || j < 0 || j >= p.brands.length) return;
   var t = p.brands[i]; p.brands[i] = p.brands[j]; p.brands[j] = t;
   stdKeep(); drawStandards();
+}
+/* vendors who carry a brand — each its own line, with contact info (one or more) under it */
+function stdAddVendor(pid, bid) {
+  var b = stdBrandOf(pid, bid); if (!b) return;
+  (b.vendors = b.vendors || []).push({ id: stdId('v'), name: '', contacts: [] });
+  stdKeep(); drawStandards();
+}
+function stdRenameVendor(pid, bid, vid, v) { var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve) return; ve.name = v; stdKeep(); }
+function stdDelVendor(pid, bid, vid) {
+  var b = stdBrandOf(pid, bid); if (!b) return;
+  b.vendors = (b.vendors || []).filter(function (x) { return x.id !== vid; });
+  stdKeep(); drawStandards();
+}
+function stdAddContact(pid, bid, vid) {
+  var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve) return;
+  (ve.contacts = ve.contacts || []).push('');
+  stdKeep(); drawStandards();
+}
+function stdSetContact(pid, bid, vid, i, v) { var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve || !ve.contacts) return; ve.contacts[i] = v; stdKeep(); }
+function stdDelContact(pid, bid, vid, i) {
+  var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve || !ve.contacts) return;
+  ve.contacts.splice(i, 1); stdKeep(); drawStandards();
+}
+/* Excel: the whole library out to a sheet you can edit, and any edits back in. The Dingus builds and
+   reads the file (it has ExcelJS and the folder); this page just asks. */
+function stdExport() { tell('standards-export', {}); say('Building the Excel file…'); }
+function stdImportPick() {
+  var inp = document.getElementById('stdXlsx');
+  if (!inp) return;
+  inp.value = ''; inp.click();
 }
 /* a brand's submittal — pick one, or drop a PDF on the slot; both end up here */
 function stdPickDoc(pid, bid) {
@@ -1138,6 +1243,21 @@ document.addEventListener('dragleave', function (e) {
   if (z && !z.contains(e.relatedTarget)) z.classList.remove('over');
 });
 document.addEventListener('drop', stdOnDrop);
+/* the edited Excel coming back in */
+document.getElementById('stdXlsx').addEventListener('change', function () {
+  var f = this.files && this.files[0]; this.value = '';
+  if (!f) return;
+  if (f.size > 25 * 1024 * 1024) { say('That file is very large — is it the standards export?', true); return; }
+  var fr = new FileReader();
+  fr.onload = function () { tell('standards-import', { name: f.name, bytes: fr.result }); say('Reading ' + f.name + '…'); };
+  fr.onerror = function () { say('Could not read that file', true); };
+  fr.readAsArrayBuffer(f);
+});
+function stdImported(d) {
+  if (!d.ok) { say(d.why || 'Could not read that Excel file', true); return; }
+  /* The Dingus has saved the imported library; it will come back through starter-standards. */
+  say(d.summary || 'Library updated from Excel');
+}
 
 function drawStandards() {
   document.getElementById('find').style.display = 'none';
@@ -1158,89 +1278,136 @@ function stdCrumbs() {
   }
   return h + '</div>';
 }
-/* the folder cards + the add-folder row, shown at the root and inside every folder */
-function stdFoldersHtml(node, atRoot) {
-  var fs = node.folders || [], h = '';
-  if (fs.length) {
-    h += '<div class="std-folders">';
-    for (var i = 0; i < fs.length; i++) {
-      var f = fs[i], nf = (f.folders || []).length, np = (f.products || []).length;
-      var bits = [];
-      if (nf) bits.push(nf + ' folder' + (nf === 1 ? '' : 's'));
-      bits.push(np + ' product' + (np === 1 ? '' : 's'));
-      h += '<div class="std-fcard" onclick="stdOpenFolder(\'' + esc(f.id) + '\')" title="Open ' + esc(f.name || 'folder') + '">'
-        + '<button class="std-fdel" title="Delete this folder" onclick="stdDelFolder(\'' + esc(f.id) + '\',event)">✕</button>'
-        + '<div class="std-ficon">📁</div>'
-        + '<div class="std-fname-b">' + esc(f.name || 'Untitled') + '</div>'
-        + '<div class="std-fmeta">' + bits.join('  ·  ') + '</div></div>';
-    }
-    h += '</div>';
-  } else if (atRoot) {
-    h += '<div id="none">No folders yet. Make one below — a trade, an area, however you like to split the standards up.</div>';
+function stdToolbar() {
+  return '<div class="std-toolbar">'
+    + '<button class="btn" onclick="stdExport()" title="The whole library out to an Excel file you can edit">⬇ Export Excel</button>'
+    + '<button class="btn" onclick="stdImportPick()" title="Read an edited Excel file back in and update the library">⬆ Import Excel</button>'
+    + '</div>';
+}
+/* just the folder cards (and a muted note when there are none) — the add control sits off to the
+   side in the section header, not in a bar above the products */
+function stdFolderCards(node, emptyMsg) {
+  var fs = node.folders || [];
+  if (!fs.length) return emptyMsg ? '<div class="std-emptyfolders">' + esc(emptyMsg) + '</div>' : '';
+  var h = '<div class="std-folders">';
+  for (var i = 0; i < fs.length; i++) {
+    var f = fs[i], nf = (f.folders || []).length, np = (f.products || []).length;
+    var bits = [];
+    if (nf) bits.push(nf + ' folder' + (nf === 1 ? '' : 's'));
+    bits.push(np + ' product' + (np === 1 ? '' : 's'));
+    h += '<div class="std-fcard" onclick="stdOpenFolder(\'' + esc(f.id) + '\')" title="Open ' + esc(f.name || 'folder') + '">'
+      + '<button class="std-fdel" title="Delete this folder" onclick="stdDelFolder(\'' + esc(f.id) + '\',event)">✕</button>'
+      + '<div class="std-ficon">📁</div>'
+      + '<div class="std-fname-b">' + esc(f.name || 'Untitled') + '</div>'
+      + '<div class="std-fmeta">' + bits.join('  ·  ') + '</div></div>';
   }
-  h += '<div class="std-addrow"><input id="stdNewFolder" placeholder="' + (atRoot ? 'New folder name' : 'New sub-folder name') + '" '
-    + 'onkeydown="if(event.key===\'Enter\')stdAddFolder()"><button class="btn go" onclick="stdAddFolder()">+ '
-    + (atRoot ? 'Add folder' : 'Add sub-folder') + '</button></div>';
-  return h;
+  return h + '</div>';
+}
+/* a section header with its add control tucked to the right of the heading */
+function stdSectHead(label, atRoot) {
+  return '<div class="std-sect-head"><span class="std-sect-h">' + esc(label) + '</span>'
+    + '<span class="std-addside"><input id="stdNewFolder" class="std-sfinput" placeholder="'
+    + (atRoot ? 'New folder' : 'New sub-folder') + '" onkeydown="if(event.key===\'Enter\')stdAddFolder()">'
+    + '<button class="btn" onclick="stdAddFolder()">+ Add</button></span></div>';
 }
 function stdRootHtml() {
-  return '<div class="pad std"><h2>Arctic Standards</h2>'
+  return '<div class="pad std">'
+    + '<div class="std-headrow"><h2>Arctic Standards</h2>' + stdToolbar() + '</div>'
     + '<p class="std-intro">Our own order of preference — for a product, the brand we reach for first, '
-    + 'second, third, with its submittal and who carries it. One library, shared by every job, so what you '
-    + 'set here shows up on every Dingus job. Open a folder to work in it, and make sub-folders inside '
+    + 'second, third, with its submittal and the vendor(s) who carry it. One library, shared by every job, so '
+    + 'what you set here shows up on every Dingus job. Open a folder to work in it, and make sub-folders inside '
     + '(Plumbing › Fixtures) as deep as you like. It saves to the cloud on its own; when a job’s ShareFile '
     + 'folder is loaded, a copy of each submittal is tucked into it under “Arctic Standards” as well.</p>'
-    + stdFoldersHtml(STD, true) + '</div>';
+    + '<div class="std-sect">' + stdSectHead('Folders', true)
+    + stdFolderCards(STD, 'No folders yet — make one off to the right (a trade, an area, however you like to split the standards up).')
+    + '</div></div>';
 }
 function stdFolderHtml(node) {
-  var h = '<div class="pad std">' + stdCrumbs()
+  var h = '<div class="pad std">'
+    + '<div class="std-headrow">' + stdCrumbs() + stdToolbar() + '</div>'
     + '<div class="std-top"><button class="btn" onclick="stdUp()">← Back</button>'
     + '<input class="std-fname" value="' + esc(node.name || '') + '" placeholder="Folder name" '
-    + 'oninput="stdRenameCurrent(this.value)"></div>';
+    + 'oninput="stdRenameCurrent(this.value)" onchange="this.value=stdCap(this.value);stdRenameCurrent(this.value)"></div>';
 
-  /* sub-folders first */
-  h += '<div class="std-sect"><div class="std-sect-h">Folders</div>' + stdFoldersHtml(node, false) + '</div>';
+  /* sub-folders — the add control is off to the side, not a bar above the products */
+  h += '<div class="std-sect">' + stdSectHead('Folders', false)
+    + stdFolderCards(node, 'No sub-folders here yet.') + '</div>';
 
-  /* then the products held in this folder */
+  /* the products held in this folder — collapsed until opened */
   var ps = node.products || [];
-  h += '<div class="std-sect"><div class="std-sect-h">Products</div>'
-    + '<p class="std-hint">Put the brands in the order we prefer them — 1 first. Add the submittal for each '
-    + '(click, or drop a PDF on it) and note which vendor(s) carry it, so on a job you can match what the spec '
-    + 'allows with what we want to use.</p>';
+  h += '<div class="std-sect"><div class="std-sect-head"><span class="std-sect-h">Products</span>';
+  if (ps.length > 1) h += '<span class="std-addside"><button class="btn" onclick="stdExpandAll(true)">Expand all</button>'
+    + '<button class="btn" onclick="stdExpandAll(false)">Collapse all</button></span>';
+  h += '</div>';
   if (!ps.length) h += '<div id="none">No products in this folder yet.</div>';
   for (var i = 0; i < ps.length; i++) h += stdProductHtml(ps[i]);
   h += '<button class="std-addprod" onclick="stdAddProduct()">+ add product</button></div></div>';
   return h;
 }
 function stdProductHtml(p) {
-  var bs = p.brands || [];
-  var h = '<div class="std-prod"><div class="std-prodhead">'
-    + '<input class="std-pname" value="' + esc(p.name || '') + '" placeholder="Product — e.g. Floor cleanout, Water heater" '
-    + 'oninput="stdRenameProduct(\'' + esc(p.id) + '\',this.value)">'
-    + '<button class="std-x" title="Delete this product" onclick="stdDelProduct(\'' + esc(p.id) + '\')">✕ Remove</button></div>';
-  h += '<table class="std-brands"><thead><tr>'
-    + '<th class="std-rank">#</th><th class="left">Brand — in order of preference</th>'
-    + '<th class="left">Who carries it</th><th class="left std-subcol">Submittal</th><th class="std-ord"></th></tr></thead><tbody>';
-  if (!bs.length) h += '<tr><td colspan="5" class="std-nobrand">No brands yet — add our first choice below.</td></tr>';
-  for (var j = 0; j < bs.length; j++) {
-    var b = bs[j];
-    h += '<tr><td class="std-rank"><span class="std-badge">' + (j + 1) + '</span></td>'
-      + '<td class="left"><input class="std-bname" value="' + esc(b.name || '') + '" placeholder="Brand (e.g. Sioux Chief)" '
-      + 'oninput="stdRenameBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',this.value)"></td>'
-      + '<td class="left"><input class="std-bvend" value="' + esc(b.vendors || '') + '" placeholder="Vendor(s) — e.g. Ferguson, Consolidated" '
-      + 'oninput="stdSetVendors(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',this.value)"></td>'
-      + '<td class="left std-doc">' + (b.doc
-          ? '<span class="std-have"><a href="#" class="std-see" title="Open the submittal" onclick="stdSeeDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\');return false">📄 ' + esc(b.doc.name || b.doc.file || 'submittal') + '</a>'
-            + '<button class="std-docx" title="Remove the submittal" onclick="stdRemoveDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">✕</button></span>'
-          : '<button class="std-up" data-stddrop data-pid="' + esc(p.id) + '" data-bid="' + esc(b.id) + '" onclick="stdPickDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">⤓ Add submittal <span class="std-drophint">or drop a PDF</span></button>')
-      + '</td><td class="std-ord">'
-        + '<button class="std-mv" title="Move up" ' + (j === 0 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',-1)">↑</button>'
-        + '<button class="std-mv" title="Move down" ' + (j === bs.length - 1 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',1)">↓</button>'
-        + '<button class="std-x" title="Delete this brand" onclick="stdDelBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">✕</button>'
-      + '</td></tr>';
+  var pid = esc(p.id), bs = p.brands || [], open = !!STD_EXPAND[p.id];
+  var bits = [bs.length + ' brand' + (bs.length === 1 ? '' : 's')];
+  if ((p.notes || '').trim()) bits.push('note');
+  var h = '<div class="std-pwrap' + (open ? ' open' : '') + '">'
+    + '<div class="std-pbar' + (open ? ' open' : '') + '">'
+    + '<button class="std-ptri" onclick="stdToggleProd(\'' + pid + '\')" title="' + (open ? 'Collapse' : 'Expand') + '">' + (open ? '▾' : '▸') + '</button>';
+  if (open)
+    h += '<input class="std-pname" value="' + esc(p.name || '') + '" placeholder="Product — e.g. Floor cleanout, Water heater" '
+      + 'oninput="stdRenameProduct(\'' + pid + '\',this.value)" onchange="this.value=stdCap(this.value);stdRenameProduct(\'' + pid + '\',this.value)">';
+  else
+    h += '<span class="std-ptitle" onclick="stdToggleProd(\'' + pid + '\')">' + esc(p.name || 'Untitled product') + '</span>';
+  h += '<span class="std-pcount">' + bits.join('  ·  ') + '</span>'
+    + '<button class="std-x std-pdel" title="Delete this product" onclick="stdDelProduct(\'' + pid + '\')">✕</button></div>';
+
+  if (open) {
+    h += '<div class="std-pbody">'
+      + '<div class="std-notewrap"><label class="std-nlabel">Notes</label>'
+      + '<textarea class="std-pnotes" placeholder="Anything to remember about this product — where it applies, what to watch for…" '
+      + 'oninput="stdSetProdNotes(\'' + pid + '\',this.value)">' + esc(p.notes || '') + '</textarea></div>';
+    if (!bs.length) h += '<div class="std-nobrand">No brands yet — add our first choice below.</div>';
+    for (var j = 0; j < bs.length; j++) h += stdBrandHtml(p, bs[j], j, bs.length);
+    h += '<button class="std-addbrand" onclick="stdAddBrand(\'' + pid + '\')">+ add brand</button></div>';
   }
-  h += '</tbody></table><button class="std-addbrand" onclick="stdAddBrand(\'' + esc(p.id) + '\')">+ add brand</button></div>';
-  return h;
+  return h + '</div>';
+}
+function stdBrandHtml(p, b, j, total) {
+  var pid = esc(p.id), bid = esc(b.id);
+  var h = '<div class="std-brand"><div class="std-bhead">'
+    + '<span class="std-badge">' + (j + 1) + '</span>'
+    + '<input class="std-bname" value="' + esc(b.name || '') + '" placeholder="Brand (e.g. Sioux Chief)" '
+    + 'oninput="stdRenameBrand(\'' + pid + '\',\'' + bid + '\',this.value)" onchange="this.value=stdCap(this.value);stdRenameBrand(\'' + pid + '\',\'' + bid + '\',this.value)">'
+    + '<span class="std-doc">' + (b.doc
+        ? '<span class="std-have"><a href="#" class="std-see" title="Open the submittal" onclick="stdSeeDoc(\'' + pid + '\',\'' + bid + '\');return false">📄 ' + esc(b.doc.name || b.doc.file || 'submittal') + '</a>'
+          + '<button class="std-docx" title="Remove the submittal" onclick="stdRemoveDoc(\'' + pid + '\',\'' + bid + '\')">✕</button></span>'
+        : '<button class="std-up" data-stddrop data-pid="' + pid + '" data-bid="' + bid + '" onclick="stdPickDoc(\'' + pid + '\',\'' + bid + '\')">⤓ Submittal <span class="std-drophint">or drop a PDF</span></button>')
+    + '</span>'
+    + '<span class="std-ord">'
+      + '<button class="std-mv" title="Move up" ' + (j === 0 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + pid + '\',\'' + bid + '\',-1)">↑</button>'
+      + '<button class="std-mv" title="Move down" ' + (j === total - 1 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + pid + '\',\'' + bid + '\',1)">↓</button>'
+      + '<button class="std-x" title="Delete this brand" onclick="stdDelBrand(\'' + pid + '\',\'' + bid + '\')">✕</button>'
+    + '</span></div>';
+  /* vendors who carry this brand — each its own line, with contacts under it */
+  h += '<div class="std-vends"><div class="std-vlabel">Who carries it</div>';
+  var vs = b.vendors || [];
+  for (var v = 0; v < vs.length; v++) h += stdVendorHtml(p, b, vs[v]);
+  h += '<button class="std-addvend" onclick="stdAddVendor(\'' + pid + '\',\'' + bid + '\')">+ add vendor</button></div>';
+  return h + '</div>';
+}
+function stdVendorHtml(p, b, ve) {
+  var pid = esc(p.id), bid = esc(b.id), vid = esc(ve.id), cs = ve.contacts || [];
+  var h = '<div class="std-vendor"><div class="std-vrow">'
+    + '<input class="std-vname" value="' + esc(ve.name || '') + '" placeholder="Vendor (e.g. Ferguson)" '
+    + 'oninput="stdRenameVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',this.value)" '
+    + 'onchange="this.value=stdCap(this.value);stdRenameVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',this.value)">'
+    + '<button class="std-x" title="Remove this vendor" onclick="stdDelVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\')">✕</button></div>';
+  h += '<div class="std-contacts">';
+  for (var i = 0; i < cs.length; i++)
+    h += '<div class="std-contact"><input class="std-cinput" value="' + esc(cs[i] || '') + '" '
+      + 'placeholder="Contact — name, phone, email" '
+      + 'oninput="stdSetContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',' + i + ',this.value)">'
+      + '<button class="std-x" title="Remove this contact" onclick="stdDelContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',' + i + ')">✕</button></div>';
+  h += '<button class="std-addcontact" onclick="stdAddContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\')">+ contact</button>';
+  return h + '</div></div>';
 }
 
 function draw() {

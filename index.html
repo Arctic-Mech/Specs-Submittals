@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.80';
+const APP_VERSION = 'v8.81';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21890,6 +21890,8 @@ function wireStarterMessages() {
     if (d.type === 'standards-upload') { await fileStandardDoc(d); return; }
     if (d.type === 'standards-see') { await seeStandardDoc(d); return; }
     if (d.type === 'standards-unfile') { await unfileStandardDoc(d); return; }
+    if (d.type === 'standards-export') { await exportStandardsXlsx(); return; }
+    if (d.type === 'standards-import') { await importStandardsXlsx(d); return; }
   });
 }
 /* ── Arctic Standards ──
@@ -21969,6 +21971,201 @@ async function unfileStandardDoc(d) {
   const doc = d.doc || {};
   try { if (doc.fb && doc.blobId) await blobDel(STD_JOB, doc.blobId); } catch (e) {}
   if (jobFolder && doc.dir && doc.file) { try { await removeNamedSibling(doc.dir, doc.file); } catch (e) {} }
+}
+/* Title-case the way the quote sheet does: first letter of each word up, words that already carry a
+   capital left as they are (so HB-1, McGuire, NIBCO stand). Used on every name coming in from Excel,
+   to match what the website does on entry. */
+function stdCapName(t) {
+  return String(t == null ? '' : t).replace(
+    /[A-Za-zÀ-ɏ][A-Za-z0-9À-ɏ'’.–-]*/g,
+    w => /[A-Z]/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1));
+}
+/* Walk the library into flat rows for Excel: one row per vendor (or a bare row for a brand with no
+   vendor, or a product with no brand), each carrying the folder path it sits under. */
+function standardsRows(std) {
+  const rows = [];
+  const walk = (node, path) => {
+    for (const p of (node.products || [])) {
+      const brands = p.brands || [];
+      if (!brands.length) { rows.push({ path, p, b: null, rank: '', ve: null }); continue; }
+      brands.forEach((b, i) => {
+        const vendors = b.vendors || [];
+        if (!vendors.length) { rows.push({ path, p, b, rank: i + 1, ve: null }); return; }
+        for (const ve of vendors) rows.push({ path, p, b, rank: i + 1, ve });
+      });
+    }
+    for (const f of (node.folders || [])) walk(f, path.concat([f.name || 'Untitled']));
+  };
+  walk(std || { folders: [] }, []);
+  return rows;
+}
+async function exportStandardsXlsx() {
+  try {
+    const std = (_stHost && _stHost.std) || await loadStandards();
+    const rows = standardsRows(std);
+    const XJ = await ensureExcelJS();
+    const wb = new XJ.Workbook();
+    wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+    const COLS = [
+      { h: 'Folder', w: 26 }, { h: 'Product', w: 26 }, { h: 'Notes', w: 34 },
+      { h: 'Pref', w: 6 }, { h: 'Brand', w: 22 }, { h: 'Vendor', w: 22 },
+      { h: 'Contacts (one per line)', w: 40 }, { h: 'Submittal on file', w: 26 },
+      { h: 'Ref (do not edit)', w: 22 }
+    ];
+    const titleRow = 1, headRow = 3, top = 4;
+    const ws = wb.addWorksheet('Arctic Standards', {
+      views: [{ state: 'frozen', ySplit: headRow }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+        printTitlesRow: headRow + ':' + headRow, margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
+    });
+    ws.columns = COLS.map(c => ({ width: c.w }));
+    ws.mergeCells(titleRow, 1, titleRow, COLS.length);
+    const t = ws.getCell(titleRow, 1);
+    t.value = 'Arctic Standards — our order of preference';
+    t.font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
+    ws.getRow(titleRow).height = 22;
+    ws.mergeCells(2, 1, 2, COLS.length);
+    const sub = ws.getCell(2, 1);
+    sub.value = 'Edit and re-import. Lower Pref = preferred (1 first). One vendor per row; repeat the Folder/Product/Brand to add more. Leave “Ref” alone — it keeps a brand tied to its submittal. Built ' + shortDate(today());
+    sub.font = { size: 10, color: { argb: SCH_INK.dim } };
+    const hr = ws.getRow(headRow);
+    COLS.forEach((c, i) => {
+      const cell = hr.getCell(i + 1);
+      cell.value = c.h;
+      cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+      cell.alignment = { vertical: 'middle', horizontal: (i === 3) ? 'center' : 'left', wrapText: true };
+    });
+    hr.height = 18;
+    let r = top;
+    const notesSeen = {};      // product notes are written once, on the product's first row, so an
+                               // edit to them is unambiguous and a repeated stale copy can't win
+    for (const row of rows) {
+      const R = ws.getRow(r++);
+      const contacts = row.ve ? (row.ve.contacts || []).filter(x => String(x || '').trim()).join('\n') : '';
+      const showNotes = !notesSeen[row.p.id]; notesSeen[row.p.id] = 1;
+      const vals = [
+        row.path.join(' / '),
+        row.p.name || '',
+        showNotes ? (row.p.notes || '') : '',
+        row.rank || '',
+        row.b ? (row.b.name || '') : '',
+        row.ve ? (row.ve.name || '') : '',
+        contacts,
+        (row.b && row.b.doc) ? (row.b.doc.name || row.b.doc.file || 'yes') : '',
+        [row.p.id, (row.b && row.b.id) || ''].join('|')
+      ];
+      vals.forEach((v, i) => {
+        const c = R.getCell(i + 1);
+        c.value = v;
+        c.alignment = { vertical: 'top', horizontal: (i === 3) ? 'center' : 'left', wrapText: (i === 2 || i === 6) };
+        c.font = { size: 10, color: { argb: SCH_INK.title } };
+        c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+      });
+      /* a little room when the notes or contacts wrap to two lines */
+      const lines = Math.max(1, String(contacts).split('\n').length, Math.ceil(String(row.p.notes || '').length / 45));
+      R.height = Math.min(90, 15 + (lines - 1) * 12);
+    }
+    const last = Math.max(top, r - 1);
+    ws.autoFilter = { from: { row: headRow, column: 1 }, to: { row: last, column: COLS.length } };
+    ws.getColumn(9).hidden = true;      // the Ref column is technical; hide it but keep it
+    const bytes = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'Arctic Standards ' + shortDate(today()) + '.xlsx'; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+    toStarter('starter-say', { text: 'Excel file downloaded — ' + rows.length + ' row' + (rows.length === 1 ? '' : 's') });
+  } catch (e) {
+    console.error(e);
+    toStarter('starter-say', { text: 'Could not build the Excel file: ' + (e.message || e), bad: true });
+  }
+}
+/* Read an edited export back into the library. The sheet is the source of truth for the text and the
+   order; submittals are preserved by matching each brand's Ref (its id) back to what is stored. */
+async function importStandardsXlsx(d) {
+  const back = more => toStarter('standards-imported', Object.assign({}, more));
+  try {
+    const XJ = await ensureExcelJS();
+    const wb = new XJ.Workbook();
+    await wb.xlsx.load(d.bytes);
+    const ws = wb.getWorksheet('Arctic Standards') || wb.worksheets[0];
+    if (!ws) { back({ ok: false, why: 'No sheet found in that file' }); return; }
+    /* Find the header row (it carries “Folder” in column 1), then read below it. */
+    let headRow = 0;
+    ws.eachRow((row, n) => { if (!headRow && String(row.getCell(1).value || '').trim().toLowerCase() === 'folder') headRow = n; });
+    if (!headRow) { back({ ok: false, why: 'That does not look like the standards export (no Folder column)' }); return; }
+
+    const cur = (_stHost && _stHost.std) || await loadStandards();
+    /* Every brand that is stored now, by its id, so a row can reclaim its submittal. */
+    const docById = {};
+    (function scan(node) {
+      for (const p of (node.products || [])) for (const b of (p.brands || [])) if (b.id && b.doc) docById[b.id] = b.doc;
+      for (const f of (node.folders || [])) scan(f);
+    })(cur);
+
+    const cellStr = (row, i) => {
+      const v = row.getCell(i).value;
+      if (v == null) return '';
+      if (typeof v === 'object') return String(v.text != null ? v.text : (v.result != null ? v.result : (v.richText ? v.richText.map(x => x.text).join('') : ''))).trim();
+      return String(v).trim();
+    };
+    const root = { folders: [], products: [] };
+    const folderAt = pathNames => {
+      let node = root;
+      for (const nm of pathNames) {
+        const name = stdCapName(nm);
+        let nx = (node.folders || []).find(f => (f.name || '').toLowerCase() === name.toLowerCase());
+        if (!nx) { nx = { id: uid('f'), name: name, folders: [], products: [] }; node.folders.push(nx); }
+        node = nx;
+      }
+      return node;
+    };
+    let rowCount = 0;
+    const lastRow = ws.rowCount;
+    for (let n = headRow + 1; n <= lastRow; n++) {
+      const row = ws.getRow(n);
+      const folderPath = cellStr(row, 1), prodName = cellStr(row, 2), notes = cellStr(row, 3);
+      const pref = cellStr(row, 4), brandName = cellStr(row, 5), vendorName = cellStr(row, 6);
+      const contacts = cellStr(row, 7), ref = cellStr(row, 9);
+      if (!folderPath && !prodName && !brandName && !vendorName) continue;    // a blank row
+      rowCount++;
+      const path = folderPath.split('/').map(s => s.trim()).filter(Boolean);
+      const node = path.length ? folderAt(path) : root;   // a product with no folder lands at the root
+      const refIds = ref.split('|');
+      const refProd = refIds[0] || '', refBrand = refIds[1] || '';
+      /* product, matched within this folder by name (or the Ref product id) */
+      let p = (node.products || []).find(x => (refProd && x.id === refProd) || (prodName && (x.name || '').toLowerCase() === stdCapName(prodName).toLowerCase()));
+      if (!p) { p = { id: refProd || uid('p'), name: stdCapName(prodName), notes: notes, brands: [], _rank: {} }; (node.products = node.products || []).push(p); }
+      if (notes) p.notes = notes;
+      if (!brandName && !vendorName) continue;    // just a product line
+      /* brand, matched within the product by name (or the Ref brand id) */
+      let b = (p.brands || []).find(x => (refBrand && x.id === refBrand) || (brandName && (x.name || '').toLowerCase() === stdCapName(brandName).toLowerCase()));
+      if (!b) {
+        b = { id: refBrand || uid('b'), name: stdCapName(brandName), doc: (refBrand && docById[refBrand]) || null, vendors: [] };
+        p.brands.push(b);
+        p._rank[b.id] = Number(pref) || 999;
+      }
+      if (vendorName || contacts) {
+        b.vendors.push({ id: uid('v'), name: stdCapName(vendorName),
+          contacts: contacts.split(/\r?\n/).map(s => s.trim()).filter(Boolean) });
+      }
+    }
+    /* order each product's brands by the Pref column (1 first), then drop the helper */
+    (function rank(node) {
+      for (const p of (node.products || [])) { if (p._rank) { p.brands.sort((a, b) => (p._rank[a.id] || 999) - (p._rank[b.id] || 999)); delete p._rank; } }
+      for (const f of (node.folders || [])) rank(f);
+    })(root);
+
+    const data = { folders: root.folders, at: Date.now(), by: _stHost ? _stHost.clientId : '' };
+    if (_stHost) _stHost.std = data;
+    await FB.setDoc(stdRef(), clean(data));
+    toStarter('starter-standards', { standards: data });    // our own write won't echo, so push it
+    back({ ok: true, summary: 'Library updated from Excel — ' + rowCount + ' row' + (rowCount === 1 ? '' : 's') });
+  } catch (e) {
+    console.error(e);
+    back({ ok: false, why: (e.message || String(e)) });
+  }
 }
 /* Open the spec book to a section's pages, from the link on the starter's section header. The spec
    opens in a new tab at the section's start page, so it reads over the starter rather than behind it. */
