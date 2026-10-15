@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.77';
+const APP_VERSION = 'v8.78';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21741,8 +21741,10 @@ function starterWithState(lines, state) {
     if (!atSec) return;
     for (const a of (add[atSec.key || ''] || [])) {
       const r = rows[a.key] || {};
+      const mk = (r.makers != null && r.makers !== '') ? r.makers : (a.makers || '');
       out.push({ sec: atSec, byHand: true, must: mustOf || { short: '', all: '' },
-        makers: starterMakers(null), tag: a.item || '', mark: a.item || '',
+        makers: mk ? { short: mk, all: mk, full: mk, count: 1 } : starterMakers(null),
+        tag: a.item || '', mark: a.item || '',
         name: a.name || '', desc: '', covers: '', wording: '', lead: '',
         qty: a.qty == null ? 1 : a.qty, note: r.note || a.note || '', quotes: r.s || [], chose: r.chose });
       hasAdds = true;
@@ -21759,6 +21761,8 @@ function starterWithState(lines, state) {
     if (r.item != null && r.item !== '') { over.tag = r.item; over.mark = r.item; }
     if (r.name != null && r.name !== '') { over.name = r.name; over.desc = ''; }
     if (r.qty != null && r.qty !== '') over.qty = r.qty;
+    /* A typed-over "Who the spec will take" wins on the export too, the same as it does on the sheet. */
+    if (r.makers != null && r.makers !== '') over.makers = { short: r.makers, all: r.makers, full: r.makers, count: 1 };
     out.push(Object.assign({}, ln, over, { note: r.note || '', quotes: r.s || [], chose: r.chose }));
   }
   flush();

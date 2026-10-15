@@ -96,6 +96,9 @@
   .said b{flex:0 0 112px;color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;
     letter-spacing:.03em;padding-top:1px}
   .said span{white-space:pre-wrap;color:var(--ink);min-width:0}
+  .splitbtn{white-space:nowrap;border:1px solid var(--rule);background:#fff;color:var(--pick);
+    border-radius:6px;padding:1px 8px;margin-left:8px;cursor:pointer;font-size:11px;vertical-align:middle}
+  .splitbtn:hover{background:#eff6ff;border-color:var(--pick)}
   .opener{border:0;background:none;color:var(--dim);cursor:pointer;font-size:12px;padding:0 5px 0 0;
     line-height:1}
   .opener:hover{color:var(--pick)}
@@ -388,7 +391,7 @@ var FIX = [
   { k: 'qty',    h: 'Qty',         w: 52,  edit: 1, num: 1 },
   /* The section a line is under is the band it sits in, said once — not repeated down a column.
      What it must meet is in what the spec says, under the line, where there is room for it. */
-  { k: 'makers', h: 'Who the spec will take', w: 250, left: 1 },
+  { k: 'makers', h: 'Who the spec will take', w: 250, edit: 1, left: 1 },
   { k: 'note',   h: 'Notes',       w: 230, edit: 1, left: 1 }
 ];
 var SLOT = [
@@ -603,7 +606,10 @@ function cellText(d, col) {
       var q = pick2(r && r.qty, own && own.qty, ln.qty || '');
       return q === '' ? '' : String(q);
     }
-    if (k === 'makers') return ((ln.makers || {}).short || '');
+    /* The approved makers are read off the spec, but the read does not always get them — a rolled-up
+       article can come through blank, or with the wrong set. So this cell can be typed over: what you
+       put stands, and the spec's own list is still there under the line as "Will take". */
+    if (k === 'makers') return pick2(r && r.makers, own && own.makers, (ln.makers || {}).short || '');
     if (k === 'note') return (r && r.note) || (own && own.note) || '';
     if (k === 'star') return '';
   }
@@ -638,6 +644,16 @@ function pick2(a, b, c) {
   if (a != null && a !== '') return a;
   if (b != null && b !== '') return b;
   return c == null ? '' : c;
+}
+/* What a "Who the spec will take" cell starts with when you open it to type: anything already typed
+   over it, otherwise the spec's full list (not the trimmed "+2 more" face), so correcting it means
+   editing the real names rather than retyping them. */
+function makersSeed(d) {
+  var r = ST.rows[d.key], own = d.own;
+  if (r && r.makers != null && r.makers !== '') return r.makers;
+  if (own && own.makers != null && own.makers !== '') return own.makers;
+  var who = d.line.makers || {};
+  return who.all || who.short || '';
 }
 
 var TBL = null, CELLS = {};       // key: rowIndex + ':' + colIndex -> td
@@ -1194,8 +1210,17 @@ function rowHtml(d, at, left) {
       + '<td colspan="' + (COLS.length - FROZEN) + '"></td></tr>';
   if (d.kind === 'says') {
     var says = saysOf(d.line), bits = '';
-    for (var q = 0; q < says.length; q++)
-      bits += '<div class="said"><b>' + esc(says[q][0]) + '</b><span>' + esc(says[q][1]) + '</span></div>';
+    for (var q = 0; q < says.length; q++) {
+      /* A line the read rolled up carries what it covers here. One button turns each of those into
+         its own line, for when they are really separate things to price — supply stops, insulation
+         kits and traps under "Fixture Trim", say — not just kinds of the one thing. */
+      var extra = (says[q][0] === 'Covers')
+        ? ' <button class="splitbtn" data-split="' + esc(d.key) + '" data-sec="' + esc(d.secKey)
+          + '" title="Make each of these its own line to price, and take this rolled-up line off">'
+          + '✂ Make these separate lines</button>'
+        : '';
+      bits += '<div class="said"><b>' + esc(says[q][0]) + '</b><span>' + esc(says[q][1]) + extra + '</span></div>';
+    }
     return '<tr class="says" data-r="' + at + '"><td colspan="' + COLS.length + '">' + bits + '</td></tr>';
   }
   var r = ST.rows[d.key], out = '<tr class="' + (d.odd ? 'odd' : '') + '" data-r="' + at + '">';
@@ -1343,7 +1368,8 @@ function begin(r, c, wipe, first) {
     el.value = cellText(ROWS[r], col);
   } else {
     el = document.getElementById('edit');
-    el.value = wipe ? (first == null ? '' : first) : cellText(ROWS[r], col);
+    el.value = wipe ? (first == null ? '' : first)
+      : (col.fix != null && col.c.k === 'makers' ? makersSeed(ROWS[r]) : cellText(ROWS[r], col));
     el.style.textAlign = col.c.num ? 'right' : 'left';
   }
   el.style.display = 'block';
@@ -1653,6 +1679,8 @@ document.addEventListener('mousedown', function (e) {
   if (opener) { e.preventDefault(); e.stopPropagation(); openOne(opener.getAttribute('data-open')); return; }
   var spec = e.target.closest && e.target.closest('[data-spec]');
   if (spec) { e.preventDefault(); e.stopPropagation(); tell('starter-open-spec', { secKey: spec.getAttribute('data-spec') }); say('Opening the spec…'); return; }
+  var split = e.target.closest && e.target.closest('[data-split]');
+  if (split) { e.preventDefault(); e.stopPropagation(); splitCovers(split.getAttribute('data-split'), split.getAttribute('data-sec')); return; }
   var add = e.target.closest && e.target.closest('[data-add]');
   if (add) { addLine(add.getAttribute('data-add')); return; }
   var up = e.target.closest && e.target.closest('[data-up]');
@@ -1765,6 +1793,35 @@ function addLine(secKey) {
   ST.add[secKey].push({ key: key, item: '', name: '', qty: 1 });
   draw(); keep();
   at(key, function (i) { show(i, 0); begin(i, 0, true, ''); });
+}
+/* A rolled-up line's "Covers" turned into a line each. For the times the read folded together
+   things that really are separate to price — supply stops, insulation kits and traps under one
+   "Fixture Trim" — rather than kinds of one thing. The pieces come across as hand lines carrying the
+   article's approved makers, and the rolled-up line is taken off. */
+function splitCovers(key, secKey) {
+  var ln = null;
+  for (var i = 0; i < ROWS.length; i++)
+    if (ROWS[i].kind === 'item' && ROWS[i].key === key) { ln = ROWS[i].line; break; }
+  if (!ln || !ln.covers) { say('There is nothing rolled up on this line to split', true); return; }
+  var seen = {}, pieces = [];
+  String(ln.covers).split(';').forEach(function (p) {
+    var t = p.trim(); if (!t) return;
+    var nk = t.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (!nk || seen[nk]) return; seen[nk] = 1; pieces.push(t);
+  });
+  if (!pieces.length) { say('There is nothing rolled up on this line to split', true); return; }
+  mark();
+  if (!ST.add[secKey]) ST.add[secKey] = [];
+  /* If the rolled-up line's makers were corrected by hand, the pieces inherit that; otherwise the
+     spec's own list for the article. */
+  var mk = ((ST.rows[key] || {}).makers) || (ln.makers || {}).all || '';
+  var base = Date.now().toString(36);
+  for (var j = 0; j < pieces.length; j++)
+    ST.add[secKey].push({ key: secKey + '|+' + base + 's' + j, item: '', name: pieces[j], qty: 1, makers: mk });
+  ST.del = ST.del || {}; ST.del[key] = 1;              // the rolled-up line is replaced by its pieces
+  if (ST.open) delete ST.open[key];
+  draw(); keep();
+  say('Split into ' + pieces.length + ' separate line' + (pieces.length === 1 ? '' : 's'));
 }
 /* Take a line off the sheet, whatever is in it. A line somebody typed in is dropped outright; a
    line read off the spec is marked gone, so it stays off even after the book is read again — and
