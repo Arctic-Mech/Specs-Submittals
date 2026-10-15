@@ -281,6 +281,8 @@
   .std-headrow{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 4px}
   .std-headrow .std-crumbs{margin:0}
   .std-toolbar{display:flex;gap:8px;flex-wrap:wrap}
+  .std-undo{border-color:var(--ask);background:var(--ask);color:var(--askink)}
+  .std-undo:hover:not(:disabled){background:#fce8c3}
   .std-top{display:flex;align-items:center;gap:12px;margin:14px 0 18px}
   .std-fname{flex:1;max-width:480px;border:1px solid var(--rule);border-radius:7px;padding:7px 11px;
     font:inherit;font-weight:700;font-size:16px;color:var(--ink);background:var(--bg)}
@@ -444,6 +446,7 @@ var STD_PATH = [];               // the folder ids from the root down to the one
 var STD_WANT = null;             // a submittal upload waiting on the file picker
 var STD_EXPAND = {};             // product id -> open (products are collapsed until you open them)
 var STD_NAV = false;             // true for the one redraw that follows moving to another folder
+var STD_CAN_UNDO = false;        // an Excel import can be undone (a backup is held)
 
 /* ── the shape of the sheet ── */
 var FIX = [
@@ -541,6 +544,7 @@ window.addEventListener('message', function (ev) {
   if (d.type === 'starter-standards') { stdCameIn(d.standards); return; }
   if (d.type === 'standards-filed') { stdFiled(d); return; }
   if (d.type === 'standards-imported') { stdImported(d); return; }
+  if (d.type === 'standards-undone') { stdUndone(d); return; }
 });
 
 /* A load bar for the long jobs — building a vendor export with the spec book stapled on can take a
@@ -576,6 +580,7 @@ function open(d) {
   LINES = d.lines || [];
   CAN_FILE = !!d.canFile;
   STD = stdFill(d.standards);
+  STD_CAN_UNDO = !!d.stdUndo;
   ST = fill(d.state, d.slots || 4);
   document.getElementById('jobName').textContent =
     [JOB.number ? 'Job ' + JOB.number : '', JOB.name || ''].filter(Boolean).join('  ·  ');
@@ -1258,7 +1263,21 @@ document.getElementById('stdXlsx').addEventListener('change', function () {
 function stdImported(d) {
   if (!d.ok) { say(d.why || 'Could not read that Excel file', true); return; }
   /* The Dingus has saved the imported library; it will come back through starter-standards. */
+  if (d.canUndo) STD_CAN_UNDO = true;
+  if (VIEW === 'standards') drawStandards();
   say(d.summary || 'Library updated from Excel');
+}
+function stdUndoImport() {
+  if (!STD_CAN_UNDO) { say('There is no import to undo', true); return; }
+  if (!confirm('Undo the last Excel import and put the library back the way it was before it?')) return;
+  tell('standards-undo-import', {});
+  say('Undoing the import…');
+}
+function stdUndone(d) {
+  if (!d.ok) { say(d.why || 'Could not undo the import', true); return; }
+  STD_CAN_UNDO = false;
+  if (VIEW === 'standards') drawStandards();
+  say('Import undone — the library is back the way it was');
 }
 
 function drawStandards() {
@@ -1288,6 +1307,7 @@ function stdToolbar() {
   return '<div class="std-toolbar">'
     + '<button class="btn" onclick="stdExport()" title="The whole library out to an Excel file you can edit">⬇ Export Excel</button>'
     + '<button class="btn" onclick="stdImportPick()" title="Read an edited Excel file back in and update the library">⬆ Import Excel</button>'
+    + (STD_CAN_UNDO ? '<button class="btn std-undo" onclick="stdUndoImport()" title="Put the library back the way it was before the last import">↩ Undo import</button>' : '')
     + '</div>';
 }
 /* just the folder cards (and a muted note when there are none) — the add control sits off to the

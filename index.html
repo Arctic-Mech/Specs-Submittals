@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.82';
+const APP_VERSION = 'v8.83';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21811,7 +21811,8 @@ async function openStarterPage() {
   let state = {};
   try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) state = d.data() || {}; } catch (e) {}
   const std = await loadStandards();
-  mountStarter(lines, state, std);
+  const stdUndo = await standardsHasUndo();
+  mountStarter(lines, state, std, stdUndo);
 }
 function closeStarter() {
   if (_stHost) {
@@ -21831,7 +21832,7 @@ function wireStarterPop() {
   if (_stPopWired) return; _stPopWired = true;
   window.addEventListener('popstate', () => { if (_stHost) { _stHost.pushed = false; closeStarter(); } });
 }
-function mountStarter(lines, state, std) {
+function mountStarter(lines, state, std, stdUndo) {
   closeStarter();
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff';
@@ -21839,7 +21840,7 @@ function mountStarter(lines, state, std) {
     + esc(starterUrl()) + '?dingus=1"></iframe>';
   document.body.appendChild(host);
   const iframe = host.querySelector('iframe');
-  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, std: std || { folders: [] }, mine: 0, clientId: 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36) };
+  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, std: std || { folders: [] }, stdUndo: !!stdUndo, mine: 0, clientId: 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36) };
   wireStarterPop();
   try { history.pushState({ __dingusStarter: true }, '', '#starter/' + encodeURIComponent(job.id)); _stHost.pushed = true; } catch (x) {}
   iframe.addEventListener('load', () => { _stHost && (_stHost.win = iframe.contentWindow); });
@@ -21856,7 +21857,7 @@ function sendStarter() {
   if (!_stHost) return;
   toStarter('starter-open', { job: { name: job.name || '', number: job.number || '' },
     lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder || onFirebase(),
-    standards: _stHost.std || { folders: [] } });
+    standards: _stHost.std || { folders: [] }, stdUndo: !!_stHost.stdUndo });
 }
 /* Somebody else on the job typing into it. Their save comes back here and goes straight on. */
 function watchStarter() {
@@ -21892,6 +21893,7 @@ function wireStarterMessages() {
     if (d.type === 'standards-unfile') { await unfileStandardDoc(d); return; }
     if (d.type === 'standards-export') { await exportStandardsXlsx(); return; }
     if (d.type === 'standards-import') { await importStandardsXlsx(d); return; }
+    if (d.type === 'standards-undo-import') { await undoStandardsImport(); return; }
   });
 }
 /* ── Arctic Standards ──
@@ -21908,6 +21910,7 @@ function wireStarterMessages() {
 const STD_JOB = 'arctic-standards-library';        // the pseudo-job the company library lives under
 const STD_SHAREFILE_DIR = 'Arctic Standards';      // where mirrored cut sheets land in a job folder
 const stdRef = () => FB.doc(FB.db, 'jobs', STD_JOB, 'meta', 'standards');
+const stdPrevRef = () => FB.doc(FB.db, 'jobs', STD_JOB, 'meta', 'standards_prev');   // the library as it was before the last import
 async function loadStandards() {
   try { const d = await FB.getDoc(stdRef()); if (d && d.exists()) return d.data() || { folders: [] }; }
   catch (e) {}
@@ -22157,16 +22160,34 @@ async function importStandardsXlsx(d) {
       for (const f of (node.folders || [])) rank(f);
     })(root);
 
+    /* Keep the library exactly as it was, so an import that drops something can be undone. */
+    try { await FB.setDoc(stdPrevRef(), clean({ folders: (cur && cur.folders) || [], savedAt: Date.now() })); } catch (e) {}
     const data = { folders: root.folders, at: Date.now(), by: _stHost ? _stHost.clientId : '' };
-    if (_stHost) _stHost.std = data;
+    if (_stHost) { _stHost.std = data; _stHost.stdUndo = true; }
     await FB.setDoc(stdRef(), clean(data));
     toStarter('starter-standards', { standards: data });    // our own write won't echo, so push it
-    back({ ok: true, summary: 'Library updated from Excel — ' + rowCount + ' row' + (rowCount === 1 ? '' : 's') });
+    back({ ok: true, canUndo: true, summary: 'Library updated from Excel — ' + rowCount + ' row' + (rowCount === 1 ? '' : 's') + '. You can undo this import.' });
   } catch (e) {
     console.error(e);
     back({ ok: false, why: (e.message || String(e)) });
   }
 }
+/* Put the library back the way it was right before the last Excel import. One step: the backup is
+   consumed, so a second undo has nothing to go back to until the next import. */
+async function undoStandardsImport() {
+  try {
+    const d = await FB.getDoc(stdPrevRef());
+    if (!d || !d.exists()) { toStarter('standards-undone', { ok: false, why: 'There is no import to undo.' }); return; }
+    const prev = d.data() || {};
+    const data = { folders: prev.folders || [], at: Date.now(), by: _stHost ? _stHost.clientId : '' };
+    if (_stHost) { _stHost.std = data; _stHost.stdUndo = false; }
+    await FB.setDoc(stdRef(), clean(data));
+    try { await FB.deleteDoc(stdPrevRef()); } catch (e) {}
+    toStarter('starter-standards', { standards: data });
+    toStarter('standards-undone', { ok: true });
+  } catch (e) { toStarter('standards-undone', { ok: false, why: (e.message || String(e)) }); }
+}
+async function standardsHasUndo() { try { const d = await FB.getDoc(stdPrevRef()); return !!(d && d.exists && d.exists()); } catch (e) { return false; } }
 /* Open the spec book to a section's pages, from the link on the starter's section header. The spec
    opens in a new tab at the section's start page, so it reads over the starter rather than behind it. */
 async function openStarterSpec(secKey) {
