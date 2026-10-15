@@ -253,6 +253,63 @@
   .live{margin-left:12px;font-size:11.5px;color:#9fe6b4;white-space:nowrap}
   .live.saving{color:#ffd27a}
   #say.bad{background:var(--bad)}
+
+  /* Arctic Standards */
+  .std .std-intro{max-width:64em}
+  .std-folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin:0 0 20px}
+  .std-fcard{position:relative;border:1px solid var(--rule);border-radius:9px;background:var(--bg);
+    padding:14px 16px;cursor:pointer;min-height:66px;transition:border-color .12s,box-shadow .12s}
+  .std-fcard:hover{border-color:var(--pick);box-shadow:0 1px 6px rgba(29,78,216,.12)}
+  .std-fname-b{font-weight:700;font-size:14px;color:var(--ink);word-break:break-word;padding-right:20px}
+  .std-fmeta{color:var(--dim);font-size:12px;margin-top:4px}
+  .std-fdel{position:absolute;top:6px;right:6px;border:0;background:transparent;color:var(--dim);
+    cursor:pointer;font-size:13px;line-height:1;padding:3px 5px;border-radius:5px;opacity:0}
+  .std-fcard:hover .std-fdel{opacity:1}
+  .std-fdel:hover{background:var(--badbg);color:var(--bad)}
+  .std-addrow{display:flex;gap:8px;align-items:center;max-width:420px}
+  .std-addrow input{flex:1;border:1px solid var(--rule);border-radius:6px;padding:6px 10px;font:inherit;color:var(--ink);background:var(--bg)}
+  .std-top{display:flex;align-items:center;gap:12px;margin:0 0 10px}
+  .std-fname{flex:1;max-width:460px;border:1px solid var(--rule);border-radius:6px;padding:6px 10px;
+    font:inherit;font-weight:700;font-size:15px;color:var(--ink);background:var(--bg)}
+  .std-prod{border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 16px;background:var(--bg)}
+  .std-prodhead{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+  .std-pname{flex:1;border:1px solid var(--rule);border-radius:6px;padding:5px 9px;font:inherit;
+    font-weight:600;font-size:13.5px;color:var(--ink);background:var(--bg)}
+  table.std-brands{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;
+    border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  table.std-brands th{background:var(--head);color:var(--headink);font-weight:600;font-size:11px;
+    padding:5px 8px;text-align:center;white-space:nowrap}
+  table.std-brands th.left{text-align:left}
+  table.std-brands td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:middle;background:var(--bg)}
+  table.std-brands td.left{text-align:left}
+  table.std-brands tr:last-child td{border-bottom:0}
+  th.std-rank,td.std-rank{width:40px;text-align:center}
+  th.std-ord,td.std-ord{width:96px;text-align:center;white-space:nowrap}
+  .std-badge{display:inline-block;min-width:20px;height:20px;line-height:20px;border-radius:999px;
+    background:var(--pick);color:#fff;font-weight:700;font-size:11px;padding:0 5px}
+  table.std-brands input{width:100%;border:1px solid var(--line);border-radius:5px;padding:4px 7px;
+    font:inherit;font-size:12.5px;color:var(--ink);background:var(--bg)}
+  table.std-brands input:focus{outline:none;border-color:var(--pick)}
+  .std-doc{white-space:nowrap}
+  .std-see{color:var(--pick);text-decoration:none;font-size:12px}
+  .std-see:hover{text-decoration:underline}
+  .std-up{border:1px solid var(--rule);background:#fff;color:var(--ink);border-radius:6px;
+    padding:3px 9px;cursor:pointer;font-size:12px;white-space:nowrap}
+  .std-up:hover{background:#f1f5f9}
+  .std-docx,.std-x,.std-mv{border:1px solid transparent;background:transparent;color:var(--dim);
+    cursor:pointer;font-size:12px;line-height:1;padding:3px 6px;border-radius:5px}
+  .std-docx:hover,.std-x:hover{background:var(--badbg);color:var(--bad)}
+  .std-mv{border-color:var(--line)}
+  .std-mv:hover:not(:disabled){background:#f1f5f9;color:var(--ink)}
+  .std-mv:disabled{opacity:.3;cursor:default}
+  .std-docx{margin-left:6px}
+  .std-nobrand{color:var(--dim);font-style:italic;text-align:left;font-size:12px}
+  .std-addbrand{margin-top:8px;border:1px dashed var(--rule);background:transparent;color:var(--pick);
+    border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px}
+  .std-addbrand:hover{background:#eff6ff}
+  .std-addprod{border:1px dashed var(--rule);background:transparent;color:var(--ink);border-radius:7px;
+    padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600}
+  .std-addprod:hover{background:#f1f5f9;border-color:var(--pick);color:var(--pick)}
 </style>
 </head>
 <body>
@@ -270,6 +327,7 @@
   <button class="tab on" id="tabSheet" onclick="goTab('sheet')">Quote sheet</button>
   <button class="tab" id="tabVendors" onclick="goTab('vendors')">Vendors</button>
   <button class="tab" id="tabProgress" onclick="goTab('progress')">In progress</button>
+  <button class="tab" id="tabStandards" onclick="goTab('standards')" title="Arctic's own order of preference — which brand we reach for first, with the cut sheet and who carries it">Arctic Standards</button>
   <span class="tabsay" id="tabSay"></span>
 </div>
 <div id="find">
@@ -314,6 +372,11 @@ var ROWS = [];                   // what is drawn, a descriptor per table row
 var ST = null;                   // everything anybody typed
 var CAN_FILE = false;            // is a ShareFile folder loaded over there
 var READY = false;
+/* Arctic Standards — the company's own order of preference, one library shared by every job. The
+   Dingus keeps it (in the cloud, and mirrored to a loaded ShareFile folder); this tab is the editor. */
+var STD = { folders: [] };       // { folders: [ { id, name, products: [ { id, name, brands: [ { id, name, vendors, doc } ] } ] } ] }
+var STD_OPEN = null;             // the folder being looked into, or null for the folder list
+var STD_WANT = null;             // a cut-sheet upload waiting on the file picker
 
 /* ── the shape of the sheet ── */
 var FIX = [
@@ -408,6 +471,8 @@ window.addEventListener('message', function (ev) {
   if (d.type === 'starter-say') { progHide(); say(d.text || '', !!d.bad); return; }
   if (d.type === 'starter-progress') { if (d.done) progHide(); else progShow(d.pct || 0, d.label || ''); return; }
   if (d.type === 'starter-saved') { setLive(false); return; }
+  if (d.type === 'starter-standards') { stdCameIn(d.standards); return; }
+  if (d.type === 'standards-filed') { stdFiled(d); return; }
 });
 
 /* A load bar for the long jobs — building a vendor export with the spec book stapled on can take a
@@ -442,6 +507,7 @@ function open(d) {
   JOB = d.job || JOB;
   LINES = d.lines || [];
   CAN_FILE = !!d.canFile;
+  STD = stdFill(d.standards);
   ST = fill(d.state, d.slots || 4);
   document.getElementById('jobName').textContent =
     [JOB.number ? 'Job ' + JOB.number : '', JOB.name || ''].filter(Boolean).join('  ·  ');
@@ -585,6 +651,7 @@ function goTab(which) {
   document.getElementById('tabSheet').className = 'tab' + (which === 'sheet' ? ' on' : '');
   document.getElementById('tabVendors').className = 'tab' + (which === 'vendors' ? ' on' : '');
   document.getElementById('tabProgress').className = 'tab' + (which === 'progress' ? ' on' : '');
+  document.getElementById('tabStandards').className = 'tab' + (which === 'standards' ? ' on' : '');
   document.getElementById('find').style.display = which === 'sheet' ? '' : 'none';
   draw();
   focusClip();
@@ -851,6 +918,190 @@ function drawProgress() {
     ? groups.length + (firstFirm ? ' vendor' : ' section') + (groups.length === 1 ? '' : 's')
       + '  \u00b7  ' + waiting + ' to ask for, ' + (rows.length - waiting) + ' back' : '';
 }
+/* ── Arctic Standards ──────────────────────────────────────────────────────────
+   A company-wide library: a folder structure, and inside a folder the products we
+   hold a standard on. Under each product the brands are listed in the order we
+   prefer them — 1 first — each with a cut sheet and the vendor(s) who carry it.
+   The Dingus owns the storage (always the cloud; a copy into a loaded ShareFile
+   folder as well); this page is only the editor and hands every change across. */
+function stdFill(data) {
+  var d = (data && typeof data === 'object') ? data : {};
+  return { folders: Array.isArray(d.folders) ? d.folders : [] };
+}
+/* The Dingus (or somebody else on another machine) changed the library. Take it, and if the folder
+   we were inside has gone, step back out to the list. */
+function stdCameIn(data) {
+  STD = stdFill(data);
+  if (STD_OPEN && !stdFolder(STD_OPEN)) STD_OPEN = null;
+  if (VIEW === 'standards') drawStandards();
+}
+function stdKeep() {
+  setLive(true);
+  clearTimeout(stdKeep._t);
+  stdKeep._t = setTimeout(function () { tell('standards-save', { data: STD, at: Date.now() }); }, 350);
+}
+function stdId(p) { return p + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
+function stdFolder(id) { for (var i = 0; i < STD.folders.length; i++) if (STD.folders[i].id === id) return STD.folders[i]; return null; }
+function stdProduct(f, pid) { var ps = (f && f.products) || []; for (var i = 0; i < ps.length; i++) if (ps[i].id === pid) return ps[i]; return null; }
+function stdBrand(p, bid) { var bs = (p && p.brands) || []; for (var i = 0; i < bs.length; i++) if (bs[i].id === bid) return bs[i]; return null; }
+
+/* folders */
+function stdOpen(id) { if (!stdFolder(id)) return; STD_OPEN = id; drawStandards(); }
+function stdBack() { STD_OPEN = null; drawStandards(); }
+function stdAddFolder() {
+  var inp = document.getElementById('stdNewFolder');
+  var name = inp ? inp.value.trim() : '';
+  if (!name) { say('Give the folder a name first', true); if (inp) inp.focus(); return; }
+  STD.folders.push({ id: stdId('f'), name: name, products: [] });
+  stdKeep(); drawStandards();
+}
+function stdRenameFolder(id, v) { var f = stdFolder(id); if (!f) return; f.name = v; stdKeep(); }
+function stdDelFolder(id, ev) {
+  if (ev) { ev.stopPropagation(); }
+  var f = stdFolder(id); if (!f) return;
+  if (!confirm('Delete the folder “' + (f.name || 'Untitled') + '” and everything in it?')) return;
+  STD.folders = STD.folders.filter(function (x) { return x.id !== id; });
+  if (STD_OPEN === id) STD_OPEN = null;
+  stdKeep(); drawStandards();
+}
+/* products */
+function stdAddProduct() {
+  var f = stdFolder(STD_OPEN); if (!f) return;
+  (f.products = f.products || []).push({ id: stdId('p'), name: '', brands: [] });
+  stdKeep(); drawStandards();
+}
+function stdRenameProduct(pid, v) { var p = stdProduct(stdFolder(STD_OPEN), pid); if (!p) return; p.name = v; stdKeep(); }
+function stdDelProduct(pid) {
+  var f = stdFolder(STD_OPEN), p = stdProduct(f, pid); if (!p) return;
+  if (!confirm('Delete “' + (p.name || 'this product') + '”?')) return;
+  f.products = (f.products || []).filter(function (x) { return x.id !== pid; });
+  stdKeep(); drawStandards();
+}
+/* brands (ranked by their order in the list — first is our first choice) */
+function stdAddBrand(pid) {
+  var p = stdProduct(stdFolder(STD_OPEN), pid); if (!p) return;
+  (p.brands = p.brands || []).push({ id: stdId('b'), name: '', vendors: '', doc: null });
+  stdKeep(); drawStandards();
+}
+function stdRenameBrand(pid, bid, v) { var b = stdBrand(stdProduct(stdFolder(STD_OPEN), pid), bid); if (!b) return; b.name = v; stdKeep(); }
+function stdSetVendors(pid, bid, v) { var b = stdBrand(stdProduct(stdFolder(STD_OPEN), pid), bid); if (!b) return; b.vendors = v; stdKeep(); }
+function stdDelBrand(pid, bid) {
+  var p = stdProduct(stdFolder(STD_OPEN), pid), b = stdBrand(p, bid); if (!b) return;
+  if (!confirm('Delete “' + (b.name || 'this brand') + '”?')) return;
+  if (b.doc) tell('standards-unfile', { doc: b.doc });    // let its cut sheet go too
+  p.brands = (p.brands || []).filter(function (x) { return x.id !== bid; });
+  stdKeep(); drawStandards();
+}
+function stdMoveBrand(pid, bid, dir) {
+  var p = stdProduct(stdFolder(STD_OPEN), pid); if (!p || !p.brands) return;
+  var i = p.brands.findIndex(function (x) { return x.id === bid; });
+  var j = i + dir;
+  if (i < 0 || j < 0 || j >= p.brands.length) return;
+  var t = p.brands[i]; p.brands[i] = p.brands[j]; p.brands[j] = t;
+  stdKeep(); drawStandards();
+}
+/* a brand's cut sheet: the file picker is shared with the quote upload, so it carries a target */
+function stdPickDoc(pid, bid) {
+  STD_WANT = { fid: STD_OPEN, pid: pid, bid: bid };
+  var inp = document.getElementById('pickFile');
+  inp.value = ''; inp.click();
+}
+function stdFiled(d) {
+  if (!d.ok) { say(d.why || 'Could not save that cut sheet', true); return; }
+  var b = stdBrand(stdProduct(stdFolder(d.folderId), d.productId), d.brandId);
+  if (!b) { say('That brand is no longer here', true); return; }
+  b.doc = d.doc;
+  stdKeep(); if (VIEW === 'standards') drawStandards();
+  say('Cut sheet saved');
+}
+function stdSeeDoc(pid, bid) {
+  var b = stdBrand(stdProduct(stdFolder(STD_OPEN), pid), bid);
+  if (!b || !b.doc) return;
+  tell('standards-see', { doc: b.doc });
+}
+function stdRemoveDoc(pid, bid) {
+  var b = stdBrand(stdProduct(stdFolder(STD_OPEN), pid), bid);
+  if (!b || !b.doc) return;
+  if (!confirm('Remove this cut sheet?')) return;
+  tell('standards-unfile', { doc: b.doc });
+  b.doc = null;
+  stdKeep(); drawStandards();
+}
+function drawStandards() {
+  document.getElementById('find').style.display = 'none';
+  document.getElementById('tabSay').textContent = '';
+  var box = document.getElementById('wrap');
+  if (STD_OPEN && !stdFolder(STD_OPEN)) STD_OPEN = null;
+  box.innerHTML = STD_OPEN ? stdFolderHtml(stdFolder(STD_OPEN)) : stdListHtml();
+  box.scrollTop = 0;
+}
+function stdListHtml() {
+  var h = '<div class="pad std"><h2>Arctic Standards</h2>'
+    + '<p class="std-intro">Our own order of preference — for a product, the brand we reach for first, '
+    + 'second, third, with its cut sheet and who carries it. One library, shared by every job, so what you '
+    + 'set here shows up on every Dingus job. Open a folder to work in it. It saves to the cloud on its own; '
+    + 'when a job’s ShareFile folder is loaded, a copy of each cut sheet is tucked into it under '
+    + '“Arctic Standards” as well.</p>';
+  if (!STD.folders.length)
+    h += '<div id="none">No folders yet. Make one below — a trade, an area, however you like to split the standards up.</div>';
+  else {
+    h += '<div class="std-folders">';
+    for (var i = 0; i < STD.folders.length; i++) {
+      var f = STD.folders[i], np = (f.products || []).length;
+      h += '<div class="std-fcard" onclick="stdOpen(\'' + esc(f.id) + '\')">'
+        + '<button class="std-fdel" title="Delete this folder" onclick="stdDelFolder(\'' + esc(f.id) + '\',event)">✕</button>'
+        + '<div class="std-fname-b">' + esc(f.name || 'Untitled') + '</div>'
+        + '<div class="std-fmeta">' + np + ' product' + (np === 1 ? '' : 's') + '</div></div>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="std-addrow"><input id="stdNewFolder" placeholder="New folder name" '
+    + 'onkeydown="if(event.key===\'Enter\')stdAddFolder()"><button class="btn go" onclick="stdAddFolder()">+ Add folder</button></div>';
+  return h + '</div>';
+}
+function stdFolderHtml(f) {
+  var h = '<div class="pad std">'
+    + '<div class="std-top"><button class="btn" onclick="stdBack()">← Folders</button>'
+    + '<input class="std-fname" value="' + esc(f.name || '') + '" placeholder="Folder name" '
+    + 'oninput="stdRenameFolder(\'' + esc(f.id) + '\',this.value)"></div>'
+    + '<p class="std-intro">List the products you hold a standard on. Under each, put the brands in the order '
+    + 'we prefer them — 1 first. Add the cut sheet for each and note which vendor(s) carry it, so on a job you '
+    + 'can match what the spec allows with what we want to use.</p>';
+  var ps = f.products || [];
+  if (!ps.length) h += '<div id="none">No products yet. Add one below.</div>';
+  for (var i = 0; i < ps.length; i++) {
+    var p = ps[i], bs = p.brands || [];
+    h += '<div class="std-prod"><div class="std-prodhead">'
+      + '<input class="std-pname" value="' + esc(p.name || '') + '" placeholder="Product — e.g. Floor cleanout, Water heater" '
+      + 'oninput="stdRenameProduct(\'' + esc(p.id) + '\',this.value)">'
+      + '<button class="std-x" title="Delete this product" onclick="stdDelProduct(\'' + esc(p.id) + '\')">✕</button></div>';
+    h += '<table class="std-brands"><thead><tr>'
+      + '<th class="std-rank">#</th><th class="left">Brand — in order of preference</th>'
+      + '<th class="left">Who carries it</th><th class="left">Cut sheet</th><th class="std-ord"></th></tr></thead><tbody>';
+    if (!bs.length) h += '<tr><td colspan="5" class="std-nobrand">No brands yet — add our first choice below.</td></tr>';
+    for (var j = 0; j < bs.length; j++) {
+      var b = bs[j];
+      h += '<tr><td class="std-rank"><span class="std-badge">' + (j + 1) + '</span></td>'
+        + '<td class="left"><input class="std-bname" value="' + esc(b.name || '') + '" placeholder="Brand (e.g. Sioux Chief)" '
+        + 'oninput="stdRenameBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',this.value)"></td>'
+        + '<td class="left"><input class="std-bvend" value="' + esc(b.vendors || '') + '" placeholder="Vendor(s) — e.g. Ferguson, Consolidated" '
+        + 'oninput="stdSetVendors(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',this.value)"></td>'
+        + '<td class="left std-doc">' + (b.doc
+            ? '<a href="#" class="std-see" title="Open the cut sheet" onclick="stdSeeDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\');return false">📄 ' + esc(b.doc.name || b.doc.file || 'cut sheet') + '</a>'
+              + '<button class="std-docx" title="Remove the cut sheet" onclick="stdRemoveDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">✕</button>'
+            : '<button class="std-up" onclick="stdPickDoc(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">⤓ Cut sheet</button>')
+        + '</td><td class="std-ord">'
+          + '<button class="std-mv" title="Move up" ' + (j === 0 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',-1)">↑</button>'
+          + '<button class="std-mv" title="Move down" ' + (j === bs.length - 1 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\',1)">↓</button>'
+          + '<button class="std-x" title="Delete this brand" onclick="stdDelBrand(\'' + esc(p.id) + '\',\'' + esc(b.id) + '\')">✕</button>'
+        + '</td></tr>';
+    }
+    h += '</tbody></table><button class="std-addbrand" onclick="stdAddBrand(\'' + esc(p.id) + '\')">+ add brand</button></div>';
+  }
+  h += '<button class="std-addprod" onclick="stdAddProduct()">+ add product</button></div>';
+  return h;
+}
+
 function draw() {
   /* Where the sheet is scrolled to is not something a redraw gets to change. Opening what the
      spec says under a line rebuilds the table, and without this the line you opened jumps away
@@ -860,6 +1111,7 @@ function draw() {
   var keepAt = VIEW === 'sheet';
   if (VIEW === 'vendors') { drawVendors(); return; }
   if (VIEW === 'progress') { drawProgress(); return; }
+  if (VIEW === 'standards') { drawStandards(); return; }
   document.getElementById('tabSay').textContent = '';
   ROWS = rowsOf();
   var left = [], run = 0;
@@ -1546,7 +1798,26 @@ function askFile(tr, k) {
   inp.value = ''; inp.click();
 }
 document.getElementById('pickFile').addEventListener('change', function () {
-  var f = this.files && this.files[0], w = WANT;
+  var f = this.files && this.files[0];
+  /* The same picker fills a vendor quote slot and an Arctic Standards cut sheet — whichever asked
+     for it set its own target, so route on that. */
+  if (STD_WANT) {
+    var sw = STD_WANT; STD_WANT = null;
+    if (!f) return;
+    if (f.size > 60 * 1024 * 1024) { say('That file is over 60 MB — too big to hand across', true); return; }
+    var fo = stdFolder(sw.fid), po = stdProduct(fo, sw.pid), bo = stdBrand(po, sw.bid);
+    var fr2 = new FileReader();
+    fr2.onload = function () {
+      tell('standards-upload', { folderId: sw.fid, productId: sw.pid, brandId: sw.bid,
+        folderName: (fo && fo.name) || '', productName: (po && po.name) || '', brandName: (bo && bo.name) || '',
+        name: f.name, bytes: fr2.result });
+      say('Saving ' + f.name + '…');
+    };
+    fr2.onerror = function () { say('Could not read that file', true); };
+    fr2.readAsArrayBuffer(f);
+    return;
+  }
+  var w = WANT;
   WANT = null;
   if (!f || !w) return;
   if (f.size > 60 * 1024 * 1024) { say('That file is over 60 MB — too big to hand across', true); return; }

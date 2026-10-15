@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.76';
+const APP_VERSION = 'v8.77';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -3647,6 +3647,7 @@ async function scanUnassignedFiles() {
           const child = rel ? rel + '/' + e.name : e.name;
           if (child === ALL_SUBMITTALS_DIR) continue;   // mirror copies aren't loose files
           if (child === PO_QUOTE_DIR) continue;         // PO-starter quote PDFs are filed by the vendor, not loose
+          if (child === STD_SHAREFILE_DIR) continue;    // Arctic Standards cut sheets are the company library, not loose
           await walk(e, child);
         }
       }
@@ -21794,11 +21795,13 @@ async function openStarterPage() {
   if (!lines.filter(l => !l.band && !l.sub).length) { toast('Nothing matched that choice — try “Both”', true); return; }
   let state = {};
   try { const d = await FB.getDoc(starterRef(job.id)); if (d && d.exists()) state = d.data() || {}; } catch (e) {}
-  mountStarter(lines, state);
+  const std = await loadStandards();
+  mountStarter(lines, state, std);
 }
 function closeStarter() {
   if (_stHost) {
     if (_stHost.unsub) { try { _stHost.unsub(); } catch (x) {} }
+    if (_stHost.unsubStd) { try { _stHost.unsubStd(); } catch (x) {} }
     if (_stHost.el) { try { _stHost.el.remove(); } catch (x) {} }
   }
   _stHost = null;
@@ -21813,7 +21816,7 @@ function wireStarterPop() {
   if (_stPopWired) return; _stPopWired = true;
   window.addEventListener('popstate', () => { if (_stHost) { _stHost.pushed = false; closeStarter(); } });
 }
-function mountStarter(lines, state) {
+function mountStarter(lines, state, std) {
   closeStarter();
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff';
@@ -21821,12 +21824,13 @@ function mountStarter(lines, state) {
     + esc(starterUrl()) + '?dingus=1"></iframe>';
   document.body.appendChild(host);
   const iframe = host.querySelector('iframe');
-  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, mine: 0, clientId: 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36) };
+  _stHost = { el: host, win: null, lines: lines, pay: starterPayload(lines), state: state || {}, std: std || { folders: [] }, mine: 0, clientId: 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36) };
   wireStarterPop();
   try { history.pushState({ __dingusStarter: true }, '', '#starter/' + encodeURIComponent(job.id)); _stHost.pushed = true; } catch (x) {}
   iframe.addEventListener('load', () => { _stHost && (_stHost.win = iframe.contentWindow); });
   wireStarterMessages();
   watchStarter();
+  watchStandards();
 }
 function toStarter(type, more) {
   if (!_stHost || !_stHost.win) return;
@@ -21836,7 +21840,8 @@ function toStarter(type, more) {
 function sendStarter() {
   if (!_stHost) return;
   toStarter('starter-open', { job: { name: job.name || '', number: job.number || '' },
-    lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder || onFirebase() });
+    lines: _stHost.pay, slots: starterSlots, state: _stHost.state || {}, canFile: !!jobFolder || onFirebase(),
+    standards: _stHost.std || { folders: [] } });
 }
 /* Somebody else on the job typing into it. Their save comes back here and goes straight on. */
 function watchStarter() {
@@ -21866,7 +21871,83 @@ function wireStarterMessages() {
     if (d.type === 'starter-ask-list') { await exportAskList(d); return; }
     if (d.type === 'starter-ask-cancel') { cancelAskList(); return; }
     if (d.type === 'starter-open-spec') { await openStarterSpec(d.secKey); return; }
+    if (d.type === 'standards-save') { await keepStandards(d); return; }
+    if (d.type === 'standards-upload') { await fileStandardDoc(d); return; }
+    if (d.type === 'standards-see') { await seeStandardDoc(d); return; }
+    if (d.type === 'standards-unfile') { await unfileStandardDoc(d); return; }
   });
+}
+/* ── Arctic Standards ──
+   The company's own order of preference — for a product, which brand we reach for first, second,
+   third, with the cut sheet for each and who carries it. It is one library shared by every job (it
+   is Arctic's standard, not a job's), so it lives at a fixed place in Firestore rather than under a
+   job, and the cut sheets go to a company blob store the same way. When a job's ShareFile folder is
+   loaded, a copy of each cut sheet is mirrored into it under "Arctic Standards" too, so the folder
+   carries the standards alongside the job. The data is always saved to Firestore, whatever storage
+   the job itself uses. */
+const STD_JOB = '__arctic_standards__';            // the pseudo-job the company library lives under
+const STD_SHAREFILE_DIR = 'Arctic Standards';      // where mirrored cut sheets land in a job folder
+const stdRef = () => FB.doc(FB.db, 'jobs', STD_JOB, 'meta', 'standards');
+async function loadStandards() {
+  try { const d = await FB.getDoc(stdRef()); if (d && d.exists()) return d.data() || { folders: [] }; }
+  catch (e) {}
+  return { folders: [] };
+}
+function watchStandards() {
+  if (!_stHost) return;
+  try {
+    _stHost.unsubStd = FB.onSnapshot(stdRef(), d => {
+      if (!_stHost) return;
+      const v = (d && d.exists && d.exists()) ? (d.data() || { folders: [] }) : { folders: [] };
+      _stHost.std = v;
+      if (v.by && _stHost.clientId && v.by === _stHost.clientId) return;   // our own write echoing back
+      toStarter('starter-standards', { standards: v });
+    }, () => {});
+  } catch (x) {}
+}
+async function keepStandards(d) {
+  const data = Object.assign({}, d.data || { folders: [] }, { at: d.at || Date.now(), by: _stHost ? _stHost.clientId : '' });
+  if (_stHost) _stHost.std = data;
+  try { await FB.setDoc(stdRef(), clean(data)); toStarter('starter-saved', { at: data.at }); }
+  catch (e) { toStarter('starter-say', { text: 'Could not save the standards: ' + (e.message || e), bad: true }); }
+}
+/* Save one brand's cut sheet. It always goes to the company blob store in Firestore; if the current
+   job has a ShareFile folder loaded, a copy is mirrored into it under Arctic Standards too. */
+async function fileStandardDoc(d) {
+  const back = more => toStarter('standards-filed', Object.assign({ folderId: d.folderId, productId: d.productId, brandId: d.brandId }, more));
+  try {
+    const name = sanitizeFileName(d.name || 'cut sheet.pdf');
+    const put = await blobPut(STD_JOB, new File([d.bytes], name), name);
+    const rec = { name: d.name || name, size: (d.bytes && d.bytes.byteLength) || 0, fb: true, blobId: put.blobId };
+    if (jobFolder) {
+      try {
+        const relDir = [STD_SHAREFILE_DIR, sanitizeAnyName(d.folderName, 'Folder'), sanitizeAnyName(d.productName, 'Product')].join('/');
+        const r2 = await putToFolder(new File([d.bytes], name), relDir, name);
+        rec.dir = r2.dir; rec.file = r2.file;
+      } catch (e) {}   // the Firestore copy is the one that matters; a folder mirror is a bonus
+    }
+    back({ ok: true, doc: rec });
+  } catch (e) { back({ ok: false, why: writeError(e) }); }
+}
+async function seeStandardDoc(d) {
+  try {
+    const doc = d.doc || {};
+    let blob = null;
+    if (doc.fb && doc.blobId) blob = await blobGet(STD_JOB, doc.blobId);
+    else if (jobFolder && doc.dir && doc.file) {
+      const filesRoot = await jobFolder.getDirectoryHandle(DOCS_DIR, { create: true });
+      blob = await (await (await walkDir(filesRoot, doc.dir)).getFileHandle(doc.file)).getFile();
+    }
+    if (!blob) { toast('That cut sheet is not on this computer', true); return; }
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast('Could not open it: ' + (e.message || e), true); }
+}
+async function unfileStandardDoc(d) {
+  const doc = d.doc || {};
+  try { if (doc.fb && doc.blobId) await blobDel(STD_JOB, doc.blobId); } catch (e) {}
+  if (jobFolder && doc.dir && doc.file) { try { await removeNamedSibling(doc.dir, doc.file); } catch (e) {} }
 }
 /* Open the spec book to a section's pages, from the link on the starter's section header. The spec
    opens in a new tab at the section's start page, so it reads over the starter rather than behind it. */
