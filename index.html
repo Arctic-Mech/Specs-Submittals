@@ -189,6 +189,7 @@ input.po-fname:focus { border-color: var(--accent); background: #fff; outline: n
 .po-qfile { color: #334155; margin-right: 2px; }
 .po-qfile a { color: var(--accent); text-decoration: none; }
 .po-qfile a:hover { text-decoration: underline; }
+.po-pulled { font-size: 12px; font-weight: 600; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 4px 9px; }
 .po-qbar .po-undo { margin-left: auto; color: #b45309; border-color: #fcd9a8; background: #fffbeb; }
 .po-qbar .po-undo:hover { background: #fef3c7; }
 .po-head .btn.po-pub, .po-vhead .btn.po-pub { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
@@ -1838,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.73';
+const APP_VERSION = 'v8.74';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22399,6 +22400,9 @@ function renderPo() {
   const host = document.getElementById('poHost'); if (!host || !_po) return;
   const fd = _po.openFolder ? poFindFolder(_po.openFolder) : null;
   if (_po.openFolder && !fd) { _po.openFolder = null; }          // the open folder went away
+  /* Hold the scroll where it is — deleting a line or ticking a box must not jump the sheet. */
+  const oldBody = host.querySelector('.po-body');
+  const keepY = oldBody ? oldBody.scrollTop : 0, keepX = oldBody ? oldBody.scrollLeft : 0;
   host.innerHTML = `
     <div class="po-head">
       <h2>PO Starter</h2>
@@ -22409,6 +22413,8 @@ function renderPo() {
     </div>
     <div class="po-body">${fd ? (_po.compare ? poCompareView(fd) : poFolderView(fd)) : poListView()}</div>`;
   try { host.querySelectorAll('.po-ta').forEach(poGrow); } catch (e) {}
+  const newBody = host.querySelector('.po-body');
+  if (newBody && (keepY || keepX)) { newBody.scrollTop = keepY; newBody.scrollLeft = keepX; }
 }
 function poSetCompare(on) { if (!_po) return; _po.compare = !!on; renderPo(); }
 function poVendorAllTotal(vd) { return (vd.lines || []).reduce((s, l) => s + poLineTotal(l), 0); }
@@ -22524,7 +22530,9 @@ function poVendorHtml(vd) {
     ${q
       ? `<span class="po-qfile">📎 <a href="#" onclick="poViewQuote('${V}');return false" title="Open the saved quote PDF">${esc(q.name || 'quote.pdf')}</a></span>
          <button class="btn sm" onclick="poRemoveQuote('${V}')" title="Remove the saved quote PDF">✕</button>
-         <button class="btn sm primary" onclick="poPullLines('${V}')" title="Read the PDF and pull its line items into this vendor">⚙ Pull line items</button>`
+         ${q.pulled
+           ? `<span class="po-pulled" title="Line items have been pulled from this quote. Undo, or remove and re-upload, to pull again.">✓ Lines pulled</span>`
+           : `<button class="btn sm primary" onclick="poPullLines('${V}')" title="Read the PDF and pull its line items into this vendor">⚙ Pull line items</button>`}`
       : `<button class="btn sm" onclick="poUploadQuote('${V}')" title="Save this vendor's quote PDF">⬆ Upload quote PDF</button>`}
     ${undoHere ? `<button class="btn sm po-undo" onclick="poUndoImport('${V}')" title="Undo the last pull — put the lines back the way they were">↶ Undo import</button>` : ''}
   </div>`;
@@ -22883,6 +22891,7 @@ async function poParseQuote(bytes) {
 async function poPullLines(vid) {
   const vd = poFindVendor(vid); if (!vd) return;
   if (!vd.quote) { toast('Upload a quote PDF first', true); return; }
+  if (vd.quote.pulled) { toast('These line items are already pulled in — Undo first, or remove and re-upload the quote, to pull again', true); return; }
   try {
     stickyToast('Reading the quote…');
     const blob = await poQuoteBlob(vd);
@@ -22893,6 +22902,7 @@ async function poPullLines(vid) {
     _po.undo = { vid: vid, lines: JSON.parse(JSON.stringify(vd.lines || [])) };
     const kept = (vd.lines || []).filter(l => l.item || l.qty || l.price || l.total || l.note);
     vd.lines = kept.concat(parsed.map(p => ({ id: uid('pol'), item: p.item, qty: p.qty, price: p.price, total: p.total, buy: false, note: '' })));
+    vd.quote.pulled = true;       // pulled once; don't pull the same quote again by accident
     poSave(); renderPo();
     toast(parsed.length + ' line item' + (parsed.length === 1 ? '' : 's') + ' pulled in — tick what you’re buying. “Undo import” is on the vendor if it looks off.');
   } catch (e) { console.error(e); toast('Could not read the quote: ' + (e.message || e), true); }
@@ -22901,6 +22911,7 @@ function poUndoImport(vid) {
   if (!_po || !_po.undo || _po.undo.vid !== vid) return;
   const vd = poFindVendor(vid); if (!vd) return;
   vd.lines = _po.undo.lines;
+  if (vd.quote) delete vd.quote.pulled;   // allow pulling again after an undo
   _po.undo = null;
   poSave(); renderPo();
   toast('Import undone — lines put back');
