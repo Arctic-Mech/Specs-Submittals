@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.78';
+const APP_VERSION = 'v8.79';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21889,7 +21889,10 @@ function wireStarterMessages() {
    loaded, a copy of each cut sheet is mirrored into it under "Arctic Standards" too, so the folder
    carries the standards alongside the job. The data is always saved to Firestore, whatever storage
    the job itself uses. */
-const STD_JOB = '__arctic_standards__';            // the pseudo-job the company library lives under
+/* Not "__arctic_standards__": Firestore reserves any id that both starts and ends with two
+   underscores, and rejects the write. A plain id, which cannot collide with a real job id (those
+   are "job_…"), keeps the company library in its own place. */
+const STD_JOB = 'arctic-standards-library';        // the pseudo-job the company library lives under
 const STD_SHAREFILE_DIR = 'Arctic Standards';      // where mirrored cut sheets land in a job folder
 const stdRef = () => FB.doc(FB.db, 'jobs', STD_JOB, 'meta', 'standards');
 async function loadStandards() {
