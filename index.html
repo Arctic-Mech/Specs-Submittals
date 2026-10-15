@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.74';
+const APP_VERSION = 'v8.75';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22731,30 +22731,59 @@ async function poExportPdf(vid) {
    its amount, a copy of the PDF is filed on it, and from there you track changes to it (adds and
    deducts, notes) over the life of the job. Publishing again updates the same PO and keeps the
    changes you have logged against it. */
+/* What changed between the PO as last published and the current selection — added lines and removed
+   lines — so a re-publish records the difference instead of quietly folding it into the original. */
+function poDiffLines(prev, cur) {
+  const key = x => poNormItem(x.item) + '|' + poShow(poNum(x.total)) + '|' + String(x.qty == null ? '' : x.qty);
+  const tally = arr => { const m = {}, meta = {}; for (const x of (arr || [])) { const k = key(x); m[k] = (m[k] || 0) + 1; if (!meta[k]) meta[k] = x; } return { m, meta }; };
+  const P = tally(prev), C = tally(cur), added = [], removed = [];
+  const keys = {}; Object.keys(P.m).forEach(k => keys[k] = 1); Object.keys(C.m).forEach(k => keys[k] = 1);
+  for (const k in keys) {
+    const d = (C.m[k] || 0) - (P.m[k] || 0);
+    if (d > 0) for (let i = 0; i < d; i++) added.push(C.meta[k]);
+    else if (d < 0) for (let i = 0; i < -d; i++) removed.push(P.meta[k]);
+  }
+  return { added, removed };
+}
 async function poPublish(vid) {
   const vd = poFindVendor(vid); if (!vd) return;
   const lines = (vd.lines || []).filter(l => l.buy);
   if (!lines.length) { toast('Tick the lines to put on the PO first', true); return; }
   const existing = (ledgerData.pos || []).find(p => p.poOrigin && p.poOrigin.vendorId === vid);
-  if (existing && !confirm('This vendor is already published as a PO. Update it with the current selection? (Any adds/deducts you logged stay.)')) return;
+  if (existing && !confirm('This PO is already published. Record what changed since it was published as adds/deducts on it?')) return;
   stickyToast('Publishing the PO…');
   try {
     const items = lines.map(l => ({ item: l.item || '', qty: l.qty || '', price: l.price || '', total: poShow(poLineTotal(l)), note: l.note || '' }));
-    const orig = round2(lines.reduce((s, l) => s + poLineTotal(l), 0));
+    const newTotal = round2(lines.reduce((s, l) => s + poLineTotal(l), 0));
     let it = existing; const isNew = !it;
     if (!it) it = { id: uid('po'), status: 'draft', docs: [], emails: [], notes: '', changes: [], created: Date.now() };
     it.number = vd.po || it.number || '';
     it.vendor = vd.name || '';
     it.poOrigin = { folderId: (poVendorFolder(vid) || {}).id, vendorId: vid };
-    it.lineItems = items;
-    it.originalAmount = orig;
     it.changes = it.changes || [];
-    it.amount = String(round2(orig + it.changes.reduce((s, c) => s + (Number(c.amount) || 0), 0)));
+    let diffCount = 0;
+    if (isNew) {
+      it.lineItems = items;                 // the issued PO — frozen from here on
+      it.originalAmount = newTotal;
+      it.lastPublished = items;
+    } else {
+      /* The original stays put; the difference since the last publish is logged as changes. */
+      const prev = it.lastPublished || it.lineItems || [];
+      const diff = poDiffLines(prev, items);
+      const stamp = shortDate(today());
+      diff.added.forEach(a => it.changes.push({ id: uid('ch'), desc: 'Added ' + stamp + ': ' + (a.item || 'line'), amount: poShow(poNum(a.total)), date: today(), auto: true }));
+      diff.removed.forEach(r => it.changes.push({ id: uid('ch'), desc: 'Removed ' + stamp + ': ' + (r.item || 'line'), amount: '-' + poShow(poNum(r.total)), date: today(), auto: true }));
+      diffCount = diff.added.length + diff.removed.length;
+      it.lastPublished = items;
+      if (!it.lineItems) it.lineItems = items;
+      if (it.originalAmount == null) it.originalAmount = newTotal;
+    }
+    poLedgerRecalc(it);
     it.description = String(vd.desc || '').trim() || (items.length + ' line item' + (items.length === 1 ? '' : 's') + ' · from PO starter');
     if (!it.date) it.date = today();
     it.updated = Date.now();
     if (isNew) ledgerData.pos = [it].concat(ledgerData.pos || []);
-    /* File a copy of the PO PDF on the register entry, so the issued document lives with it. */
+    /* File a copy of the current PO PDF on the register entry. */
     try {
       const b = await poBuildPdf(vid);
       if (b && (onFirebase() || jobFolder)) {
@@ -22768,7 +22797,9 @@ async function poPublish(vid) {
     vd.publishedId = it.id; poSave();
     await saveLedger('pos', it);
     renderPo();
-    toast('PO ' + (it.number ? '#' + it.number + ' ' : '') + (isNew ? 'published to the PO’s tab' : 'updated') + ' — open it there to log adds/deducts');
+    toast(isNew
+      ? ('PO ' + (it.number ? '#' + it.number + ' ' : '') + 'published to the PO’s tab')
+      : (diffCount ? (diffCount + ' change' + (diffCount === 1 ? '' : 's') + ' recorded on the PO — see adds/deducts under the PO’s tab') : 'PO re-published — no line changes to record'));
   } catch (e) { console.error(e); toast('Could not publish: ' + (e.message || e), true); }
 }
 /* ── a published PO's change tracking, shown in its register drawer ── */
