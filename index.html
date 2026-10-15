@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.79';
+const APP_VERSION = 'v8.80';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -20624,14 +20624,22 @@ function starterByArticle(items) {
       continue;
     }
     const g = Object.assign({}, a.kids[0], { name: a.name || (a.kids[0] || {}).name || '', makers: [] });
-    const parts = [];
+    const parts = [], pieces = [];
     for (const k of a.kids) {
-      if (a.name && k.name && k.name !== a.name) parts.push(k.name);
+      if (a.name && k.name && k.name !== a.name) {
+        parts.push(k.name);
+        /* Each covered sub-product kept whole, so splitting the rolled-up line later rebuilds real
+           lines — the name, its own marks, its own approved makers and the spec's own wording —
+           not just the name. */
+        pieces.push({ name: k.name, tag: marksLabel(k) || k.tag || '',
+          makers: starterMakers(k).all || '', wording: String(k.spec || '').trim(),
+          lead: k.leadWeeks || '' });
+      }
       for (const m of (k.makers || []))
         if (!g.makers.some(x => String(x.name).toLowerCase() === String(m.name).toLowerCase())) g.makers.push(m);
       if (k.anyOther) g.anyOther = true;
     }
-    if (parts.length) g.covers = parts.join(';  ');
+    if (parts.length) { g.covers = parts.join(';  '); g.pieces = pieces; }
     /* Every product the article rolled up, so that going with a vendor can put the maker on all
        of them and not only on the first one the read happened to find. */
     g.pids = a.kids.map(k => k.id).filter(Boolean);
@@ -21745,7 +21753,7 @@ function starterWithState(lines, state) {
       out.push({ sec: atSec, byHand: true, must: mustOf || { short: '', all: '' },
         makers: mk ? { short: mk, all: mk, full: mk, count: 1 } : starterMakers(null),
         tag: a.item || '', mark: a.item || '',
-        name: a.name || '', desc: '', covers: '', wording: '', lead: '',
+        name: a.name || '', desc: '', covers: '', wording: a.wording || '', lead: a.lead || '',
         qty: a.qty == null ? 1 : a.qty, note: r.note || a.note || '', quotes: r.s || [], chose: r.chose });
       hasAdds = true;
     }
@@ -21783,6 +21791,9 @@ function starterPayload(lines) {
       makers: l.makers || null, must: l.must || null,
       /* What the book said, which opens under the line rather than being squeezed into it. */
       wording: l.wording || '', underArticle: l.underArticle || '', lead: l.lead || '',
+      /* The covered sub-products, kept whole so the line can be split into real lines later. */
+      pieces: (l.pieces || []).map(pc => ({ name: pc.name || '', tag: pc.tag || '',
+        makers: pc.makers || '', wording: pc.wording || '', lead: pc.lead || '' })),
       fromIncludes: !!l.fromIncludes,
       dupTag: !!l.dupTag, dupWith: l.dupWith || '' });
   }
@@ -21918,17 +21929,20 @@ async function keepStandards(d) {
   try { await FB.setDoc(stdRef(), clean(data)); toStarter('starter-saved', { at: data.at }); }
   catch (e) { toStarter('starter-say', { text: 'Could not save the standards: ' + (e.message || e), bad: true }); }
 }
-/* Save one brand's cut sheet. It always goes to the company blob store in Firestore; if the current
-   job has a ShareFile folder loaded, a copy is mirrored into it under Arctic Standards too. */
+/* Save one brand's submittal. It always goes to the company blob store in Firestore; if the current
+   job has a ShareFile folder loaded, a copy is mirrored into it under Arctic Standards too, following
+   the same folder path (Arctic Standards/Plumbing/Fixtures/<product>). */
 async function fileStandardDoc(d) {
-  const back = more => toStarter('standards-filed', Object.assign({ folderId: d.folderId, productId: d.productId, brandId: d.brandId }, more));
+  const back = more => toStarter('standards-filed', Object.assign({ path: d.path || [], productId: d.productId, brandId: d.brandId }, more));
   try {
-    const name = sanitizeFileName(d.name || 'cut sheet.pdf');
+    const name = sanitizeFileName(d.name || 'submittal.pdf');
     const put = await blobPut(STD_JOB, new File([d.bytes], name), name);
     const rec = { name: d.name || name, size: (d.bytes && d.bytes.byteLength) || 0, fb: true, blobId: put.blobId };
     if (jobFolder) {
       try {
-        const relDir = [STD_SHAREFILE_DIR, sanitizeAnyName(d.folderName, 'Folder'), sanitizeAnyName(d.productName, 'Product')].join('/');
+        const relDir = [STD_SHAREFILE_DIR]
+          .concat((d.pathNames || []).map(x => sanitizeAnyName(x, 'Folder')))
+          .concat([sanitizeAnyName(d.productName, 'Product')]).join('/');
         const r2 = await putToFolder(new File([d.bytes], name), relDir, name);
         rec.dir = r2.dir; rec.file = r2.file;
       } catch (e) {}   // the Firestore copy is the one that matters; a folder mirror is a bonus
