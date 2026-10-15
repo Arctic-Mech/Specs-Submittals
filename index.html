@@ -1839,7 +1839,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.84';
+const APP_VERSION = 'v8.85';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -21983,16 +21983,24 @@ function stdCapName(t) {
     /[A-Za-zÀ-ɏ][A-Za-z0-9À-ɏ'’.–-]*/g,
     w => /[A-Z]/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1));
 }
-/* The products under a top-level folder, in reading order, each with the sub-folder path it sits in
-   (relative to that top folder — blank for a product sitting directly in it). */
-function standardsProducts(topFolder) {
-  const out = [];
+/* The blocks that go side by side inside a top folder's tab: one per folder under it (labelled by
+   its path, so empty folders survive the round trip), plus one for products sitting directly in the
+   top folder (labelled with the top folder's own name). */
+function standardsBlocks(topFolder) {
+  const blocks = [];
+  /* products sitting directly in the top folder get their own block, labelled with its name */
+  if ((topFolder.products || []).length) blocks.push({ label: topFolder.name || 'General', direct: true, products: topFolder.products });
   const walk = (node, rel) => {
-    for (const p of (node.products || [])) out.push({ subPath: rel.join(' / '), p });
-    for (const f of (node.folders || [])) walk(f, rel.concat([f.name || 'Untitled']));
+    for (const f of (node.folders || [])) {
+      const path = rel.concat([f.name || 'Untitled']);
+      blocks.push({ label: path.join(' / '), products: f.products || [] });
+      walk(f, path);
+    }
   };
   walk(topFolder, []);
-  return out;
+  /* an empty top folder still needs one block so its tab carries a header and survives a round trip */
+  if (!blocks.length) blocks.push({ label: topFolder.name || 'General', direct: true, products: [] });
+  return blocks;
 }
 /* A legal, unique Excel sheet name (31 chars, no : \ / ? * [ ]). */
 function stdSheetName(name, used) {
@@ -22015,94 +22023,89 @@ async function exportStandardsXlsx() {
     wb.creator = 'Arctic Mechanical'; wb.created = new Date();
     const tops = (std.folders || []).length ? std.folders : [{ id: '', name: 'Arctic Standards', folders: [], products: [] }];
     const used = {};
-    let totalRows = 0;
+    const STRIDE = 6;              // Category | Brands | Vendors | Notes | Contact | Ref(hidden)
+    const SPARE_FILL = 'FFFAFBFD';
 
     for (const tf of tops) {
-      const prods = standardsProducts(tf);
-      let maxV = 1;
-      prods.forEach(x => (x.p.brands || []).forEach(b => { maxV = Math.max(maxV, (b.vendors || []).length); }));
-      const nV = Math.max(4, Math.min(10, maxV + 1));
-      /* columns: the fixed left block, then Vendor/Contacts pairs, then the hidden Ref */
-      const COLS = [{ h: 'Sub-folder', w: 18 }, { h: 'Product', w: 24 }, { h: 'Notes', w: 30 },
-        { h: 'Pref', w: 5 }, { h: 'Brand', w: 20 }, { h: 'Submittal on file', w: 20 }];
-      const FIXED = COLS.length;
-      const contactCols = {};
-      for (let v = 1; v <= nV; v++) { COLS.push({ h: 'Vendor ' + v, w: 18 }); COLS.push({ h: 'Contacts ' + v, w: 26 }); contactCols[COLS.length] = 1; }
-      COLS.push({ h: 'Ref', w: 18 });
-      const refCol = COLS.length, notesCol = 3;
-
-      const titleRow = 1, headRow = 3, top = 4;
+      const blocks = standardsBlocks(tf);
+      const titleRow = 1, instrRow = 2, headRow = 3, dataTop = 4;
       const ws = wb.addWorksheet(stdSheetName(tf.name, used), {
-        views: [{ state: 'frozen', xSplit: FIXED, ySplit: headRow }],
-        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-          printTitlesRow: headRow + ':' + headRow, margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
+        views: [{ state: 'frozen', ySplit: headRow }],
+        pageSetup: { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0,
+          margins: { left: .3, right: .3, top: .45, bottom: .45, header: .25, footer: .25 } }
       });
-      ws.columns = COLS.map(c => ({ width: c.w }));
-      ws.mergeCells(titleRow, 1, titleRow, COLS.length);
+      /* lay the column widths for every block */
+      const widths = [];
+      blocks.forEach(() => { widths.push(16, 16, 20, 22, 18, 16); });   // label, brand, vendors, notes, contact, ref
+      ws.columns = widths.map(w => ({ width: w }));
+      const totalCols = Math.max(STRIDE, blocks.length * STRIDE);
+
+      ws.mergeCells(titleRow, 1, titleRow, totalCols);
       const t = ws.getCell(titleRow, 1);
       t.value = 'Arctic Standards — ' + (tf.name || 'Folder');
       t.font = { bold: true, size: 14, color: { argb: SCH_INK.title } };
       ws.getRow(titleRow).height = 22;
-      ws.mergeCells(2, 1, 2, COLS.length);
-      const sub = ws.getCell(2, 1);
-      sub.value = 'Each tab is a top folder. Brands run down (Pref 1 = first choice); a brand’s vendors run across in the Vendor/Contacts columns — put several contacts on their own lines in one cell. Blank rows are there to fill in. Leave Ref alone (it keeps a brand tied to its saved submittal). Built ' + shortDate(today());
+      ws.mergeCells(instrRow, 1, instrRow, totalCols);
+      const sub = ws.getCell(instrRow, 1);
+      sub.value = 'Each tab is a top folder. The category blocks run side by side. Under a category, each product is a set of ranked brand rows (1 = first choice); a blank row separates products. Fill the blank rows to add brands or products. Leave the hidden Ref column alone (it keeps a brand tied to its saved submittal). Built ' + shortDate(today());
       sub.font = { size: 10, color: { argb: SCH_INK.dim } };
-      const hr = ws.getRow(headRow);
-      COLS.forEach((c, i) => {
-        const cell = hr.getCell(i + 1);
-        cell.value = c.h;
-        cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
-        cell.alignment = { vertical: 'middle', horizontal: (i === 3) ? 'center' : 'left', wrapText: true };
+
+      /* build each block's rows, then lay them side by side */
+      const blockRows = blocks.map(block => {
+        const rows = [];
+        for (const p of (block.products || [])) {
+          const brands = (p.brands && p.brands.length) ? p.brands : [null];
+          brands.forEach((b, bi) => {
+            rows.push({ label: (p.name || '') + (b ? ' ' + (bi + 1) : ''), brand: b ? (b.name || '') : '',
+              vendors: b ? (b.vendors || '') : '', notes: b ? (b.notes || '') : '', contact: b ? (b.contact || '') : '',
+              ref: [p.id, (b && b.id) || ''].join('|') });
+          });
+          /* two blank rows after each product: the first is contiguous with it (type a brand here to
+             add one — number it to set its rank), the second keeps the next product separate */
+          rows.push({ blank: true });
+          rows.push({ blank: true });
+        }
+        for (let k = 0; k < 8; k++) rows.push({ blank: true });   // room to add more products below
+        return rows;
       });
-      hr.height = 26;
+      const maxH = Math.max(1, ...blockRows.map(rr => rr.length));
 
-      let r = top;
-      const putRow = (vals, opts) => {
-        const R = ws.getRow(r++);
-        let maxLines = 1;
-        vals.forEach((v, i) => {
-          const c = R.getCell(i + 1);
-          c.value = v;
-          const wrap = (i + 1 === notesCol) || contactCols[i + 1];
-          c.alignment = { vertical: 'top', horizontal: (i === 3) ? 'center' : 'left', wrapText: wrap };
-          c.font = { size: 10, color: { argb: SCH_INK.title } };
-          c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
-          if ((opts && opts.spare)) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
-          if (wrap) maxLines = Math.max(maxLines, String(v || '').split('\n').length);
+      blocks.forEach((block, bi) => {
+        const co = bi * STRIDE;            // 0-based column offset for this block
+        const refColN = co + 6;
+        /* header row: the category name, then the column names */
+        const labelCell = ws.getCell(headRow, co + 1);
+        labelCell.value = block.label;
+        labelCell.font = { bold: true, size: 11, color: { argb: SCH_INK.secText } };
+        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.sec } };
+        labelCell.alignment = { vertical: 'middle' };
+        ['Brands', 'Vendors', 'Notes', 'Contact', 'Ref'].forEach((h, k) => {
+          const cell = ws.getCell(headRow, co + 2 + k);
+          cell.value = h;
+          cell.font = { bold: true, size: 10, color: { argb: SCH_INK.headText } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SCH_INK.head } };
+          cell.alignment = { vertical: 'middle', wrapText: true };
         });
-        R.height = Math.min(110, 15 + (maxLines - 1) * 12);
-        return R;
-      };
+        ws.getColumn(refColN).hidden = true;       // the Ref column is technical; keep but hide
 
-      for (const { subPath, p } of prods) {
-        const brands = (p.brands && p.brands.length) ? p.brands : [null];
-        brands.forEach((b, bi) => {
-          const vals = [subPath, p.name || '', bi === 0 ? (p.notes || '') : '',
-            b ? (bi + 1) : '', b ? (b.name || '') : '',
-            (b && b.doc) ? (b.doc.name || b.doc.file || 'yes') : ''];
-          const vends = (b && b.vendors) || [];
-          for (let i = 0; i < nV; i++) {
-            const ve = vends[i];
-            vals.push(ve ? (ve.name || '') : '');
-            vals.push(ve ? (ve.contacts || []).filter(x => String(x || '').trim()).join('\n') : '');
+        const rows = blockRows[bi];
+        for (let ri = 0; ri < maxH; ri++) {
+          const data = rows[ri] || { blank: true };
+          const R = ws.getRow(dataTop + ri);
+          const vals = data.blank ? ['', '', '', '', '', '']
+            : [data.label || '', data.brand || '', data.vendors || '', data.notes || '', data.contact || '', data.ref || ''];
+          for (let k = 0; k < STRIDE; k++) {
+            const c = ws.getCell(dataTop + ri, co + 1 + k);
+            c.value = vals[k];
+            c.font = { size: 10, color: { argb: SCH_INK.title } };
+            c.alignment = { vertical: 'middle', wrapText: false };
+            c.border = { bottom: { style: 'hair', color: { argb: SCH_INK.line } } };
+            if (k === 0) c.border.left = { style: 'thin', color: { argb: SCH_INK.rule } };
+            if (data.spare && !data.blank) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SPARE_FILL } };
           }
-          vals.push([p.id, (b && b.id) || ''].join('|'));
-          putRow(vals);
-          totalRows++;
-        });
-        /* a spare row to add another brand to this product without inserting */
-        const spare = [subPath, p.name || '', '', '', '', ''];
-        for (let i = 0; i < nV; i++) { spare.push(''); spare.push(''); }
-        spare.push([p.id, ''].join('|'));
-        putRow(spare, { spare: true });
-      }
-      /* a few blank rows for brand-new products / sub-folders */
-      for (let k = 0; k < 4; k++) { const blank = []; for (let i = 0; i < COLS.length; i++) blank.push(''); putRow(blank, { spare: true }); }
-
-      const last = Math.max(top, r - 1);
-      ws.autoFilter = { from: { row: headRow, column: 1 }, to: { row: last, column: refCol } };
-      ws.getColumn(refCol).hidden = true;      // the Ref column is technical; hide it but keep it
+        }
+      });
+      ws.getRow(headRow).height = 20;
     }
 
     const bytes = await wb.xlsx.writeBuffer();
@@ -22128,9 +22131,9 @@ async function importStandardsXlsx(d) {
     await wb.xlsx.load(d.bytes);
 
     const cur = (_stHost && _stHost.std) || await loadStandards();
-    const docById = {};
+    const docById = {}, prodNotesById = {};
     (function scan(node) {
-      for (const p of (node.products || [])) for (const b of (p.brands || [])) if (b.id && b.doc) docById[b.id] = b.doc;
+      for (const p of (node.products || [])) { if (p.id && p.notes) prodNotesById[p.id] = p.notes; for (const b of (p.brands || [])) if (b.id && b.doc) docById[b.id] = b.doc; }
       for (const f of (node.folders || [])) scan(f);
     })(cur);
 
@@ -22155,61 +22158,79 @@ async function importStandardsXlsx(d) {
     let rowCount = 0, sheetsRead = 0;
 
     for (const ws of wb.worksheets) {
-      /* find the header row and map columns by their names */
-      let headRow = 0, map = null;
+      /* find the header row — the one that carries one or more "Brands" cells — then read each block
+         from the "Brands" column leftward (the category name) and rightward. */
+      let headRow = 0;
       ws.eachRow((row, n) => {
         if (headRow) return;
-        const m = { vendor: [], contact: [] };
-        let hasProd = false, hasBrand = false;
-        row.eachCell({ includeEmpty: false }, (cell, c) => {
+        let hasBrands = false;
+        row.eachCell({ includeEmpty: false }, cell => {
           const label = String(cell.value == null ? '' : (typeof cell.value === 'object' ? (cell.value.text || cell.value.result || '') : cell.value)).trim().toLowerCase();
-          if (label === 'sub-folder' || label === 'subfolder' || label === 'folder') m.sub = c;
-          else if (label === 'product') { m.prod = c; hasProd = true; }
-          else if (label === 'notes') m.notes = c;
-          else if (label === 'pref') m.pref = c;
-          else if (label === 'brand') { m.brand = c; hasBrand = true; }
-          else if (/^vendor/.test(label)) m.vendor.push(c);
-          else if (/^contact/.test(label)) m.contact.push(c);
-          else if (/^ref/.test(label)) m.ref = c;
+          if (label === 'brands' || label === 'brand') hasBrands = true;
         });
-        if (hasProd && hasBrand) { headRow = n; map = m; }
+        if (hasBrands) headRow = n;
       });
       if (!headRow) continue;    // not a standards tab
 
+      /* each "Brands" header starts a block: [category][Brands][Vendors][Notes][Contact][Ref] */
+      const hr = ws.getRow(headRow), blocks = [];
+      hr.eachCell({ includeEmpty: false }, (cell, c) => {
+        const label = String(cell.value == null ? '' : (typeof cell.value === 'object' ? (cell.value.text || cell.value.result || '') : cell.value)).trim().toLowerCase();
+        if (label === 'brands' || label === 'brand') {
+          blocks.push({ labelCol: c - 1, brandCol: c, vendorCol: c + 1, noteCol: c + 2, contactCol: c + 3,
+            refCol: /^ref/.test(String(cellStr(hr, c + 4)).toLowerCase()) ? c + 4 : 0,
+            blockLabel: cellStr(hr, c - 1) });
+        }
+      });
+      if (!blocks.length) continue;
+
       const topFolder = folderAt(root, [ws.name]);   // the tab is a top folder, kept even if empty
       sheetsRead++;
+      const topName = (ws.name || '').trim().toLowerCase();
       const lastRow = ws.rowCount;
-      for (let n = headRow + 1; n <= lastRow; n++) {
-        const row = ws.getRow(n);
-        const subPath = cellStr(row, map.sub), prodName = cellStr(row, map.prod), notes = cellStr(row, map.notes);
-        const pref = cellStr(row, map.pref), brandName = cellStr(row, map.brand), ref = cellStr(row, map.ref);
-        const vends = [];
-        for (let i = 0; i < map.vendor.length; i++) {
-          const vn = cellStr(row, map.vendor[i]);
-          const vc = cellStr(row, map.contact[i]);
-          if (vn || vc) vends.push({ name: vn, contacts: vc });
+
+      for (const bl of blocks) {
+        const lbl = String(bl.blockLabel || '').trim();
+        /* a block labelled with the top folder's own name (or blank) holds products directly in it */
+        const folder = (!lbl || lbl.toLowerCase() === topName) ? topFolder
+          : folderAt(topFolder, lbl.split('/').map(s => s.trim()).filter(Boolean));
+        let current = null, order = 0;
+        for (let n = headRow + 1; n <= lastRow; n++) {
+          const row = ws.getRow(n);
+          const label = cellStr(row, bl.labelCol), brand = cellStr(row, bl.brandCol);
+          const vendors = cellStr(row, bl.vendorCol), notes = cellStr(row, bl.noteCol), contact = cellStr(row, bl.contactCol);
+          const ref = bl.refCol ? cellStr(row, bl.refCol) : '';
+          if (!label && !brand && !vendors && !notes && !contact && !ref) { current = null; continue; }   // blank = product break
+          rowCount++;
+          const pname = label.replace(/\s*\d+\s*$/, '').trim();
+          const rankM = label.match(/(\d+)\s*$/);
+          const refIds = ref.split('|'); const refProd = refIds[0] || '', refBrand = refIds[1] || '';
+          let p = null;
+          if (refProd) p = (folder.products || []).find(x => x.id === refProd);
+          if (!p && pname) p = (folder.products || []).find(x => (x.name || '').toLowerCase() === stdCapName(pname).toLowerCase());
+          if (!p && !pname && current) p = current;
+          if (!p) {
+            if (!pname && !refProd) continue;
+            p = { id: refProd || uid('p'), name: stdCapName(pname), notes: (refProd && prodNotesById[refProd]) || '', brands: [], _rank: {} };
+            (folder.products = folder.products || []).push(p);
+          }
+          current = p;
+          if (!brand && !vendors && !notes && !contact) continue;   // product-only / spare row
+          let b = null;
+          if (refBrand) b = (p.brands || []).find(x => x.id === refBrand);
+          if (!b && brand) b = (p.brands || []).find(x => (x.name || '').toLowerCase() === stdCapName(brand).toLowerCase());
+          if (!b) {
+            b = { id: refBrand || uid('b'), name: stdCapName(brand), doc: (refBrand && docById[refBrand]) || null, vendors: '', notes: '', contact: '' };
+            p.brands.push(b);
+            p._rank[b.id] = rankM ? Number(rankM[1]) : (1000 + (order++));
+          }
+          b.vendors = stdCapName(vendors);
+          b.notes = notes;                 // notes left as typed
+          b.contact = stdCapName(contact);
         }
-        if (!prodName && !brandName && !vends.length && !subPath) continue;   // a truly blank row
-        rowCount++;
-        const path = String(subPath || '').split('/').map(s => s.trim()).filter(Boolean);
-        const node = folderAt(topFolder, path);
-        const refIds = ref.split('|'); const refProd = refIds[0] || '', refBrand = refIds[1] || '';
-        if (!prodName && !refProd) continue;      // nothing to hang it on
-        let p = (node.products || []).find(x => (refProd && x.id === refProd) || (prodName && (x.name || '').toLowerCase() === stdCapName(prodName).toLowerCase()));
-        if (!p) { p = { id: refProd || uid('p'), name: stdCapName(prodName), notes: notes, brands: [], _rank: {} }; (node.products = node.products || []).push(p); }
-        if (notes) p.notes = notes;
-        if (!brandName && !vends.length) continue;   // a product-only or spare row
-        let b = (p.brands || []).find(x => (refBrand && x.id === refBrand) || (brandName && (x.name || '').toLowerCase() === stdCapName(brandName).toLowerCase()));
-        if (!b) {
-          b = { id: refBrand || uid('b'), name: stdCapName(brandName), doc: (refBrand && docById[refBrand]) || null, vendors: [] };
-          p.brands.push(b);
-          p._rank[b.id] = Number(pref) || 999;
-        }
-        for (const ve of vends) b.vendors.push({ id: uid('v'), name: stdCapName(ve.name),
-          contacts: ve.contacts.split(/\r?\n/).map(s => s.trim()).filter(Boolean) });
       }
     }
-    if (!sheetsRead) { back({ ok: false, why: 'No standards tabs found in that file (a tab needs Product and Brand columns)' }); return; }
+    if (!sheetsRead) { back({ ok: false, why: 'No standards tabs found in that file (a tab needs a "Brands" column)' }); return; }
 
     (function rank(node) {
       for (const p of (node.products || [])) { if (p._rank) { p.brands.sort((a, b) => (p._rank[a.id] || 999) - (p._rank[b.id] || 999)); delete p._rank; } }

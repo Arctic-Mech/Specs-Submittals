@@ -346,23 +346,13 @@
   .std-mv:disabled{opacity:.3;cursor:default}
   .std-docx{margin-left:2px}
 
-  /* vendors + contacts under a brand */
-  .std-vends{margin:11px 0 0;padding:10px 0 0;border-top:1px dashed var(--rule)}
-  .std-vlabel{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin:0 0 8px}
-  .std-vendor{border-left:2px solid var(--line);padding:0 0 0 11px;margin:0 0 10px}
-  .std-vrow{display:flex;align-items:center;gap:7px;margin:0 0 5px}
-  .std-vname{flex:1 1 200px;border:1px solid var(--rule);border-radius:7px;padding:6px 10px;font:inherit;
-    font-size:12.5px;font-weight:600;color:var(--ink);background:var(--bg);max-width:340px}
-  .std-vname:focus{outline:none;border-color:var(--pick)}
-  .std-contacts{padding-left:2px}
-  .std-contact{display:flex;align-items:center;gap:6px;margin:0 0 5px}
-  .std-cinput{flex:1 1 280px;border:1px solid var(--rule);border-radius:7px;padding:5px 9px;font:inherit;
-    font-size:12px;color:var(--ink);background:var(--bg);max-width:460px}
-  .std-cinput:focus{outline:none;border-color:var(--pick)}
-  .std-addcontact,.std-addvend{border:1px dashed var(--rule);background:transparent;color:var(--pick);
-    border-radius:7px;padding:3px 10px;cursor:pointer;font-size:11.5px;margin-top:2px}
-  .std-addcontact:hover,.std-addvend:hover{background:#eff6ff;border-color:var(--pick)}
-  .std-addvend{margin-top:4px}
+  /* a brand's vendors / notes / contact — three plain text lines */
+  .std-bfields{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;
+    margin:9px 0 0;padding:9px 0 0;border-top:1px dashed var(--rule)}
+  .std-flabel{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
+  .std-bfields input{width:100%;border:1px solid var(--rule);border-radius:7px;padding:5px 9px;font:inherit;
+    font-size:12.5px;color:var(--ink);background:var(--bg)}
+  .std-bfields input:focus{outline:none;border-color:var(--pick)}
 
   .std-nobrand{color:var(--dim);font-style:italic;text-align:left;font-size:12px;margin:0 0 10px}
   .std-addbrand{margin-top:4px;border:1px dashed var(--rule);background:transparent;color:var(--pick);
@@ -1024,23 +1014,22 @@ function drawProgress() {
 function stdCap(t) { return capWords(t); }
 function stdFill(data) {
   var d = (data && typeof data === 'object') ? data : {};
-  function vendor(v) {
-    if (typeof v === 'string') return { id: stdId('v'), name: v, contacts: [] };
-    v = v || {};
-    var c = v.contacts;
-    var contacts = Array.isArray(c) ? c.map(function (x) { return typeof x === 'string' ? x : (x && x.text) || ''; })
-      : (c ? [String(c)] : []);
-    return { id: v.id || stdId('v'), name: v.name || '', contacts: contacts };
-  }
+  /* A brand carries the vendors who stock it (one cell, comma-separated), a notes line and a contact
+     line. Older libraries kept vendors as structured lines each with their own contacts — fold those
+     back into the two text lines so nothing is lost. */
   function brand(b) {
     b = b || {};
-    /* Older libraries kept "who carries it" as one line of text; split it into vendor lines. */
-    var vs = b.vendors;
-    var vendors = Array.isArray(vs) ? vs.map(vendor)
-      : (typeof vs === 'string' && vs.trim()
-          ? vs.split(/[,;]+/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (s) { return { id: stdId('v'), name: stdCap(s), contacts: [] }; })
-          : []);
-    return { id: b.id || stdId('b'), name: b.name || '', doc: b.doc || null, vendors: vendors };
+    var vs = b.vendors, vendorsStr, contactStr = (b.contact != null ? String(b.contact) : '');
+    if (Array.isArray(vs)) {
+      vendorsStr = vs.map(function (v) { return typeof v === 'string' ? v : ((v && v.name) || ''); }).filter(Boolean).join(', ');
+      if (!contactStr) {
+        var cs = [];
+        vs.forEach(function (v) { if (v && Array.isArray(v.contacts)) v.contacts.forEach(function (c) { if (String(c).trim()) cs.push(String(c).trim()); }); });
+        contactStr = cs.join(', ');
+      }
+    } else { vendorsStr = (typeof vs === 'string') ? vs : ''; }
+    return { id: b.id || stdId('b'), name: b.name || '', doc: b.doc || null,
+      vendors: vendorsStr, notes: b.notes || '', contact: contactStr };
   }
   function product(p) {
     p = p || {};
@@ -1092,7 +1081,6 @@ function stdPathNames() {
 }
 function stdProduct(node, pid) { var ps = (node && node.products) || []; for (var i = 0; i < ps.length; i++) if (ps[i].id === pid) return ps[i]; return null; }
 function stdBrand(p, bid) { var bs = (p && p.brands) || []; for (var i = 0; i < bs.length; i++) if (bs[i].id === bid) return bs[i]; return null; }
-function stdVendor(b, vid) { var vs = (b && b.vendors) || []; for (var i = 0; i < vs.length; i++) if (vs[i].id === vid) return vs[i]; return null; }
 function stdBrandOf(pid, bid) { return stdBrand(stdProduct(stdCurrent(), pid), bid); }
 
 /* folders — add/open/rename/delete happen in whatever folder you are in */
@@ -1139,13 +1127,17 @@ function stdDelProduct(pid) {
   node.products = (node.products || []).filter(function (x) { return x.id !== pid; });
   stdKeep(); drawStandards();
 }
-/* brands (ranked by their order in the list — first is our first choice) */
+/* brands (ranked by their order in the list — first is our first choice). Each brand carries who
+   stocks it (vendors, comma-separated), a notes line and a contact line. */
 function stdAddBrand(pid) {
   var p = stdProduct(stdCurrent(), pid); if (!p) return;
-  (p.brands = p.brands || []).push({ id: stdId('b'), name: '', doc: null, vendors: [] });
+  (p.brands = p.brands || []).push({ id: stdId('b'), name: '', doc: null, vendors: '', notes: '', contact: '' });
   stdKeep(); drawStandards();
 }
 function stdRenameBrand(pid, bid, v) { var b = stdBrandOf(pid, bid); if (!b) return; b.name = v; stdKeep(); }
+function stdSetBrandVendors(pid, bid, v) { var b = stdBrandOf(pid, bid); if (!b) return; b.vendors = v; stdKeep(); }
+function stdSetBrandNotes(pid, bid, v) { var b = stdBrandOf(pid, bid); if (!b) return; b.notes = v; stdKeep(); }
+function stdSetBrandContact(pid, bid, v) { var b = stdBrandOf(pid, bid); if (!b) return; b.contact = v; stdKeep(); }
 function stdDelBrand(pid, bid) {
   var p = stdProduct(stdCurrent(), pid), b = stdBrand(p, bid); if (!b) return;
   if (!confirm('Delete “' + (b.name || 'this brand') + '”?')) return;
@@ -1160,28 +1152,6 @@ function stdMoveBrand(pid, bid, dir) {
   if (i < 0 || j < 0 || j >= p.brands.length) return;
   var t = p.brands[i]; p.brands[i] = p.brands[j]; p.brands[j] = t;
   stdKeep(); drawStandards();
-}
-/* vendors who carry a brand — each its own line, with contact info (one or more) under it */
-function stdAddVendor(pid, bid) {
-  var b = stdBrandOf(pid, bid); if (!b) return;
-  (b.vendors = b.vendors || []).push({ id: stdId('v'), name: '', contacts: [] });
-  stdKeep(); drawStandards();
-}
-function stdRenameVendor(pid, bid, vid, v) { var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve) return; ve.name = v; stdKeep(); }
-function stdDelVendor(pid, bid, vid) {
-  var b = stdBrandOf(pid, bid); if (!b) return;
-  b.vendors = (b.vendors || []).filter(function (x) { return x.id !== vid; });
-  stdKeep(); drawStandards();
-}
-function stdAddContact(pid, bid, vid) {
-  var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve) return;
-  (ve.contacts = ve.contacts || []).push('');
-  stdKeep(); drawStandards();
-}
-function stdSetContact(pid, bid, vid, i, v) { var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve || !ve.contacts) return; ve.contacts[i] = v; stdKeep(); }
-function stdDelContact(pid, bid, vid, i) {
-  var ve = stdVendor(stdBrandOf(pid, bid), vid); if (!ve || !ve.contacts) return;
-  ve.contacts.splice(i, 1); stdKeep(); drawStandards();
 }
 /* Excel: the whole library out to a sheet you can edit, and any edits back in. The Dingus builds and
    reads the file (it has ExcelJS and the folder); this page just asks. */
@@ -1412,28 +1382,19 @@ function stdBrandHtml(p, b, j, total) {
       + '<button class="std-mv" title="Move down" ' + (j === total - 1 ? 'disabled' : '') + ' onclick="stdMoveBrand(\'' + pid + '\',\'' + bid + '\',1)">↓</button>'
       + '<button class="std-x" title="Delete this brand" onclick="stdDelBrand(\'' + pid + '\',\'' + bid + '\')">✕</button>'
     + '</span></div>';
-  /* vendors who carry this brand — each its own line, with contacts under it */
-  h += '<div class="std-vends"><div class="std-vlabel">Who carries it</div>';
-  var vs = b.vendors || [];
-  for (var v = 0; v < vs.length; v++) h += stdVendorHtml(p, b, vs[v]);
-  h += '<button class="std-addvend" onclick="stdAddVendor(\'' + pid + '\',\'' + bid + '\')">+ add vendor</button></div>';
+  /* who stocks this brand, plus a notes line and a contact line — all plain text */
+  h += '<div class="std-bfields">'
+    + '<label class="std-flabel">Vendors</label>'
+    + '<input class="std-bvend" value="' + esc(b.vendors || '') + '" placeholder="Who stocks it — e.g. ACI, Gensco" '
+    + 'oninput="stdSetBrandVendors(\'' + pid + '\',\'' + bid + '\',this.value)" onchange="this.value=stdCap(this.value);stdSetBrandVendors(\'' + pid + '\',\'' + bid + '\',this.value)">'
+    + '<label class="std-flabel">Notes</label>'
+    + '<input class="std-bnote" value="' + esc(b.notes || '') + '" placeholder="e.g. use in hospitals, cheaper…" '
+    + 'oninput="stdSetBrandNotes(\'' + pid + '\',\'' + bid + '\',this.value)">'
+    + '<label class="std-flabel">Contact</label>'
+    + '<input class="std-bcontact" value="' + esc(b.contact || '') + '" placeholder="Name, phone, email" '
+    + 'oninput="stdSetBrandContact(\'' + pid + '\',\'' + bid + '\',this.value)" onchange="this.value=stdCap(this.value);stdSetBrandContact(\'' + pid + '\',\'' + bid + '\',this.value)">'
+    + '</div>';
   return h + '</div>';
-}
-function stdVendorHtml(p, b, ve) {
-  var pid = esc(p.id), bid = esc(b.id), vid = esc(ve.id), cs = ve.contacts || [];
-  var h = '<div class="std-vendor"><div class="std-vrow">'
-    + '<input class="std-vname" value="' + esc(ve.name || '') + '" placeholder="Vendor (e.g. Ferguson)" '
-    + 'oninput="stdRenameVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',this.value)" '
-    + 'onchange="this.value=stdCap(this.value);stdRenameVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',this.value)">'
-    + '<button class="std-x" title="Remove this vendor" onclick="stdDelVendor(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\')">✕</button></div>';
-  h += '<div class="std-contacts">';
-  for (var i = 0; i < cs.length; i++)
-    h += '<div class="std-contact"><input class="std-cinput" value="' + esc(cs[i] || '') + '" '
-      + 'placeholder="Contact — name, phone, email" '
-      + 'oninput="stdSetContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',' + i + ',this.value)">'
-      + '<button class="std-x" title="Remove this contact" onclick="stdDelContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\',' + i + ')">✕</button></div>';
-  h += '<button class="std-addcontact" onclick="stdAddContact(\'' + pid + '\',\'' + bid + '\',\'' + vid + '\')">+ contact</button>';
-  return h + '</div></div>';
 }
 
 function draw() {
