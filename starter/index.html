@@ -443,6 +443,7 @@ var STD = { folders: [] };
 var STD_PATH = [];               // the folder ids from the root down to the one being looked into
 var STD_WANT = null;             // a submittal upload waiting on the file picker
 var STD_EXPAND = {};             // product id -> open (products are collapsed until you open them)
+var STD_NAV = false;             // true for the one redraw that follows moving to another folder
 
 /* ── the shape of the sheet ── */
 var FIX = [
@@ -739,6 +740,7 @@ function goTab(which) {
   document.getElementById('tabProgress').className = 'tab' + (which === 'progress' ? ' on' : '');
   document.getElementById('tabStandards').className = 'tab' + (which === 'standards' ? ' on' : '');
   document.getElementById('find').style.display = which === 'sheet' ? '' : 'none';
+  if (which === 'standards') STD_NAV = true;    // a fresh entry into the tab starts at the top
   draw();
   focusClip();
 }
@@ -1089,9 +1091,9 @@ function stdVendor(b, vid) { var vs = (b && b.vendors) || []; for (var i = 0; i 
 function stdBrandOf(pid, bid) { return stdBrand(stdProduct(stdCurrent(), pid), bid); }
 
 /* folders — add/open/rename/delete happen in whatever folder you are in */
-function stdOpenFolder(id) { STD_PATH = STD_PATH.concat([id]); drawStandards(); }
-function stdGoCrumb(depth) { STD_PATH = STD_PATH.slice(0, depth); drawStandards(); }
-function stdUp() { STD_PATH = STD_PATH.slice(0, -1); drawStandards(); }
+function stdOpenFolder(id) { STD_PATH = STD_PATH.concat([id]); STD_NAV = true; drawStandards(); }
+function stdGoCrumb(depth) { STD_PATH = STD_PATH.slice(0, depth); STD_NAV = true; drawStandards(); }
+function stdUp() { STD_PATH = STD_PATH.slice(0, -1); STD_NAV = true; drawStandards(); }
 function stdAddFolder() {
   var inp = document.getElementById('stdNewFolder');
   var name = inp ? stdCap(inp.value.trim()) : '';
@@ -1264,8 +1266,12 @@ function drawStandards() {
   document.getElementById('tabSay').textContent = '';
   while (STD_PATH.length && !stdNodeAt(STD_PATH)) STD_PATH.pop();
   var box = document.getElementById('wrap');
+  /* Keep your place. Only jump to the top when you have actually moved to a different folder — an
+     edit in place (add a vendor, a contact, open a product) leaves the scroll where it was. */
+  var keepY = box ? box.scrollTop : 0;
   box.innerHTML = STD_PATH.length ? stdFolderHtml(stdCurrent()) : stdRootHtml();
-  box.scrollTop = 0;
+  box.scrollTop = STD_NAV ? 0 : keepY;
+  STD_NAV = false;
 }
 /* the trail back up: Arctic Standards › Plumbing › Fixtures */
 function stdCrumbs() {
@@ -1473,7 +1479,10 @@ function draw() {
   runFind(true);
   able();
   if (keepAt) { var b2 = document.getElementById('wrap'); b2.scrollTop = wasY; b2.scrollLeft = wasX; }
-  if (CUR) show(CUR.r, CUR.c, true);
+  /* Re-light the active cell where it is — do NOT scroll to it. Scrolling the active cell into view
+     on every redraw yanks you back up the moment anything rebuilds the table (a teammate's change,
+     opening "what the spec says", toggling a quote) if you had clicked a cell and scrolled away. */
+  if (CUR) paint(CUR);
   focusClip();
 }
 function froze(k, left) { return k < FROZEN ? ' class="froze" style="left:' + left[k] + 'px"' : ''; }
