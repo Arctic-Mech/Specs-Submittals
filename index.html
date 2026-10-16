@@ -240,8 +240,29 @@ table.po-cmp tfoot td.po-cmp-low { background: #dcfce7; color: #15803d; }
 .po-vq-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; }
 .po-vlines { display: flex; flex-direction: column; gap: 14px; }
 .po-vfolder { border: 1px solid #e2e8f0; border-radius: 11px; overflow: hidden; }
-.po-vfolder-h { display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: #f8fafc; border-bottom: 1px solid #eef1f5; font-size: 14px; color: #0f172a; }
+.po-vfolder-h { display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: #f8fafc; font-size: 14px; color: #0f172a; cursor: pointer; }
+.po-vfolder.open .po-vfolder-h { border-bottom: 1px solid #eef1f5; }
+.po-vfolder-h:hover { background: #f1f5f9; }
+.po-vtri { color: #94a3b8; font-size: 12px; width: 14px; }
 .po-vfolder .po-lines { padding: 2px 6px 8px; }
+/* publish chooser modal */
+.po-modal { position: absolute; inset: 0; background: rgba(15,23,42,.42); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; z-index: 50; overflow: auto; }
+.po-modal-card { background: #fff; border-radius: 14px; width: 100%; max-width: 560px; box-shadow: 0 20px 60px rgba(15,23,42,.3); padding: 20px 22px; }
+.po-modal-h { font-size: 17px; font-weight: 700; color: #0f172a; }
+.po-modal-sub { font-size: 12.5px; color: #64748b; margin: 4px 0 14px; }
+.po-pub-rows { display: flex; flex-direction: column; gap: 2px; border: 1px solid #e2e8f0; border-radius: 9px; padding: 6px 4px; margin: 0 0 10px; }
+.po-pub-row { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 7px; cursor: pointer; }
+.po-pub-row:hover { background: #f8fafc; }
+.po-pub-fld { font-weight: 600; color: #0f172a; }
+.po-pub-tot { font-size: 13px; color: #334155; margin: 0 0 12px; }
+.po-pub-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin: 0 0 14px; }
+.po-pub-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; font-weight: 600; }
+.po-pub-grid input { border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 9px; font: inherit; color: #0f172a; text-transform: none; letter-spacing: normal; }
+.po-pub-target { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px; }
+.po-pub-opt { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: #0f172a; flex-wrap: wrap; }
+.po-pub-opt.dis { color: #94a3b8; }
+.po-pub-opt select { border: 1px solid #cbd5e1; border-radius: 7px; padding: 5px 8px; font: inherit; max-width: 280px; }
+.po-modal-foot { display: flex; justify-content: flex-end; gap: 8px; }
 table.po-lines { width: 100%; border-collapse: collapse; }
 table.po-lines th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; text-align: left; padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-weight: 600; background: #f1f5f9; position: static; }
 table.po-lines td { padding: 3px 10px; border-bottom: 1px solid #f1f5f9; }
@@ -1863,7 +1884,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.87';
+const APP_VERSION = 'v8.88';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22860,8 +22881,10 @@ function renderPo() {
       <span class="spacer"></span>
       <button class="btn" onclick="requestClosePoStarter()">✓ Done</button>
     </div>
-    <div class="po-body">${body}</div>`;
+    <div class="po-body">${body}</div>
+    ${_po.pub ? poPubDialogHtml() : ''}`;
   try { host.querySelectorAll('.po-ta').forEach(poGrow); } catch (e) {}
+  if (_po.pub) { try { poPubRefreshTotal(); } catch (e) {} }
   const newBody = host.querySelector('.po-body');
   if (newBody && (keepY || keepX)) { newBody.scrollTop = keepY; newBody.scrollLeft = keepX; }
 }
@@ -22959,21 +22982,20 @@ function poTabBar() {
 function poVendorTabView(norm) {
   const g = poVendorGroup(norm);
   if (!g.entries.length) { _po.vtab = null; return poListView(); }
-  const name = g.name, m = poVmeta(name);
+  const name = g.name;
   const total = poGroupSelectedTotal(g), buys = poGroupBuyLines(g);
-  const pub = poGroupPublished(g);
+  const pubs = {}; g.entries.forEach(({ vd }) => { const p = poOfVid(vd.id); if (p) pubs[p.id] = p; });
+  const pubList = Object.keys(pubs).map(id => pubs[id]);
   let h = `
     <div class="po-vbar">
       <span class="po-vbadge">👤</span>
       <b class="po-vbig">${esc(name || '(vendor)')}</b>
-      <input class="po-po" value="${esc(m.po || '')}" placeholder="PO #" title="Purchase order number for this vendor" oninput="poSetVmetaField('${poJsAttr(g.norm)}','po',this.value)">
-      <span class="po-grand" style="margin-left:auto"><span>${esc(fmtMoney(total) || '$0.00')}</span> <span class="muted" style="font-weight:400;font-size:12.5px">· ${buys.length} line${buys.length === 1 ? '' : 's'} buying</span></span>
+      <span class="po-grand" style="margin-left:auto"><span>${esc(fmtMoney(total) || '$0.00')}</span> <span class="muted" style="font-weight:400;font-size:12.5px">· ${buys.length} line${buys.length === 1 ? '' : 's'} buying across ${g.entries.length} folder${g.entries.length === 1 ? '' : 's'}</span></span>
     </div>
-    <div class="po-descwrap"><input class="po-desc" value="${esc(m.desc || '')}" placeholder="PO description (optional) — shows on the exported PDF header" oninput="poSetVmetaField('${poJsAttr(g.norm)}','desc',this.value)"></div>
     <div class="po-vactions">
-      <button class="btn primary po-pub" onclick="poCombinePublish('${poJsAttr(g.norm)}')" title="Combine everything you're buying from ${esc(name)} — across every folder — into one PO on the register">${pub ? '⇪ Re-publish combined PO' : '⇪ Combine into one PO'}</button>
+      <button class="btn primary po-pub" onclick="poOpenPubDialog('${poJsAttr(g.norm)}', [])" title="Publish ${esc(name)}'s lines — pick which folders go on the PO, as a new PO or added to one you have">⇪ Publish…</button>
       <button class="btn po-pdf" onclick="poExportPdfName('${poJsAttr(g.norm)}')" title="A PDF of everything ticked from this vendor">⤓ PDF</button>
-      ${pub ? `<span class="po-pubbadge" title="This vendor's combined PO is on the PO's register — close the PO starter to see it">✓ On the PO register${pub.number ? ' · PO ' + esc(pub.number) : ''}</span>` : ''}
+      ${pubList.map(p => `<span class="po-pubbadge" title="On the PO register — close the PO starter to open it">✓ On PO ${esc(p.number || '—')}</span>`).join('')}
     </div>`;
   const quotes = g.entries.filter(x => x.vd.quote);
   if (quotes.length) {
@@ -22983,15 +23005,22 @@ function poVendorTabView(norm) {
   h += `<div class="po-vlines">`;
   for (const { fd, vd } of g.entries) {
     const lines = vd.lines || [], nb = lines.filter(l => l.buy).length;
-    h += `<div class="po-vfolder">
-      <div class="po-vfolder-h"><span class="po-fico">📁</span><b>${esc(fd.name || '(folder)')}</b>
-        <span class="muted" style="font-size:12px">· ${nb}/${lines.length} line${lines.length === 1 ? '' : 's'} selected · ${esc(fmtMoney(poVendorTotal(vd)) || '$0')} buying</span>
-        <button class="btn sm ghost" style="margin-left:auto" onclick="poOpenFolder('${esc(fd.id)}')">Open folder →</button></div>
-      ${poLinesTableHtml(vd)}
+    const open = !!(_po.vexp && _po.vexp[vd.id]);
+    const p = poOfVid(vd.id);
+    h += `<div class="po-vfolder${open ? ' open' : ''}">
+      <div class="po-vfolder-h" onclick="poToggleVFolder('${esc(vd.id)}')">
+        <span class="po-vtri">${open ? '▾' : '▸'}</span><span class="po-fico">📁</span><b>${esc(fd.name || '(folder)')}</b>
+        <span class="muted" style="font-size:12px">· ${nb}/${lines.length} selected · ${esc(fmtMoney(poVendorTotal(vd)) || '$0')} buying${p ? ' · on PO ' + esc(p.number || '—') : ''}</span>
+        <span style="margin-left:auto"></span>
+        <button class="btn sm" onclick="event.stopPropagation();poPublish('${esc(vd.id)}')" title="Publish just this folder's lines — its own PO, or added to one">⇪ Publish</button>
+        <button class="btn sm ghost" onclick="event.stopPropagation();poOpenFolder('${esc(fd.id)}')">Open →</button>
+      </div>
+      ${open ? poLinesTableHtml(vd) : ''}
     </div>`;
   }
   return h + `</div>`;
 }
+function poToggleVFolder(vid) { if (!_po) return; _po.vexp = _po.vexp || {}; _po.vexp[vid] = !_po.vexp[vid]; renderPo(); }
 function poSetVmetaField(norm, field, value) { if (!_po) return; _po.vmeta = _po.vmeta || {}; const k = poNorm(norm); if (!_po.vmeta[k]) _po.vmeta[k] = { po: '', desc: '' }; _po.vmeta[k][field] = value; poSave(); }
 function poSetVmetaFor(vid, field, value) { const vd = poFindVendor(vid); if (!vd) return; poVmeta(vd.name)[field] = value; poSave(); }
 /* Inside a folder: a Back out to the list, the folder's vendors, and this folder's own total. */
@@ -23113,8 +23142,7 @@ function poGroupBuyLines(g) {    // every ticked line across the group, tagged w
 }
 function poGroupSelectedTotal(g) { return poGroupBuyLines(g).reduce((s, x) => s + poLineTotal(x.l), 0); }
 function poGroupPublished(g) {
-  return (ledgerData.pos || []).find(p => p.poOrigin && (p.poOrigin.vendorName === g.norm
-    || (p.poOrigin.vendorId && g.vendorIds.indexOf(p.poOrigin.vendorId) >= 0)));
+  return (ledgerData.pos || []).find(p => p.poOrigin && (p.poOrigin.vendorIds || []).some(id => g.vendorIds.indexOf(id) >= 0));
 }
 function poAddFolder() {
   if (!_po) return;
@@ -23307,75 +23335,163 @@ function poDiffLines(prev, cur) {
   }
   return { added, removed };
 }
-/* Publishing a single vendor entry publishes the whole vendor — one PO per vendor, combining
-   everything ticked from them across every folder. */
-async function poPublish(vid) { const vd = poFindVendor(vid); if (!vd) return; return poCombinePublish(poNorm(vd.name)); }
-/* Combine everything ticked from a vendor (across all folders) into one PO on the register. Re-runs
-   update the same PO and log the difference since last time as adds/deducts, so the folder views, the
-   vendor tab and the register all hold the same, current PO. Any older per-folder PO for one of the
-   vendor's entries is folded into this single one. */
-async function poCombinePublish(norm) {
-  const g = poVendorGroup(norm);
-  if (!g.entries.length) { toast('That vendor is no longer here', true); return; }
-  const name = g.name, m = poVmeta(name);
-  const buys = poGroupBuyLines(g).map(x => x.l);
-  if (!buys.length) { toast('Tick the lines to put on ' + (name || 'this vendor') + '’s PO first', true); return; }
-  const existing = poGroupPublished(g);
-  if (existing && !confirm('This vendor’s PO is already published. Record what changed since it was published as adds/deducts on it?')) return;
-  stickyToast('Building the combined PO…');
+/* ── publishing, your choice ──
+   A PO on the register covers a set of vendor entries (poOrigin.vendorIds). You pick, at publish
+   time, which folders go on it and whether it is a brand-new PO or added to one that already exists —
+   so you can keep POs separate or combine them however you like. An entry belongs to one PO at a time;
+   moving it to another reconciles the one it left. */
+function poById(id) { return (ledgerData.pos || []).find(p => p.id === id); }
+function poOfVid(vid) { return (ledgerData.pos || []).find(p => p.poOrigin && (p.poOrigin.vendorIds || []).indexOf(vid) >= 0); }
+function poMembers(po) { const ids = (po.poOrigin && po.poOrigin.vendorIds) || []; const out = []; for (const id of ids) { const h = poEachVendor().find(x => x.vd.id === id); if (h) out.push(h); } return out; }
+function poGatherBuys(po) { const out = []; for (const { vd } of poMembers(po)) for (const l of (vd.lines || [])) if (l.buy) out.push(l); return out; }
+function poPoNames(po) { const s = {}; poMembers(po).forEach(x => { if (x.vd.name) s[x.vd.name] = 1; }); return Object.keys(s); }
+function poFileBaseForPo(it) { return poFileBaseFrom(poPoNames(it).join(', ') || it.vendor, it.number, it.description); }
+async function poBuildPdfForPo(it) {
+  const buys = poGatherBuys(it);
+  if (!buys.length) return null;
+  return poBuildPdfSpec({ name: poPoNames(it).join(', ') || it.vendor || '', po: it.number, desc: it.description, lines: buys, filename: poFileBaseForPo(it) });
+}
+/* Re-figure a PO's items from its current members, logging the difference as adds/deducts. */
+function poRecordItems(it, label) {
+  const buys = poGatherBuys(it);
+  const items = buys.map(l => ({ item: l.item || '', qty: l.qty || '', price: l.price || '', total: poShow(poLineTotal(l)), note: l.note || '' }));
+  const newTotal = round2(buys.reduce((s, l) => s + poLineTotal(l), 0));
+  let diffCount = 0;
+  if (it.lineItems == null) { it.lineItems = items; it.originalAmount = newTotal; it.lastPublished = items; }
+  else {
+    const prev = it.lastPublished || it.lineItems || [];
+    const diff = poDiffLines(prev, items);
+    const stamp = shortDate(today());
+    diff.added.forEach(a => it.changes.push({ id: uid('ch'), desc: 'Added ' + stamp + (label ? ' (' + label + ')' : '') + ': ' + (a.item || 'line'), amount: poShow(poNum(a.total)), date: today(), auto: true }));
+    diff.removed.forEach(r => it.changes.push({ id: uid('ch'), desc: 'Removed ' + stamp + (label ? ' (' + label + ')' : '') + ': ' + (r.item || 'line'), amount: '-' + poShow(poNum(r.total)), date: today(), auto: true }));
+    diffCount = diff.added.length + diff.removed.length;
+    it.lastPublished = items;
+    if (it.originalAmount == null) it.originalAmount = newTotal;
+  }
+  poLedgerRecalc(it);
+  return diffCount;
+}
+/* Publish: put the chosen vendor entries' ticked lines onto a PO — a new one, or an existing one. */
+async function poDoPublish(opts) {
+  const vids = (opts.vids || []).filter(Boolean);
+  if (!vids.length) { toast('Pick at least one folder to publish', true); return; }
+  stickyToast('Publishing…');
   try {
-    const items = buys.map(l => ({ item: l.item || '', qty: l.qty || '', price: l.price || '', total: poShow(poLineTotal(l)), note: l.note || '' }));
-    const newTotal = round2(buys.reduce((s, l) => s + poLineTotal(l), 0));
-    let it = existing; const isNew = !it;
-    if (!it) it = { id: uid('po'), status: 'draft', docs: [], emails: [], notes: '', changes: [], created: Date.now() };
-    it.number = m.po || it.number || '';
-    it.vendor = name || '';
-    it.poOrigin = { vendorName: norm, vendorIds: g.vendorIds };
-    it.changes = it.changes || [];
-    let diffCount = 0;
-    if (isNew) {
-      it.lineItems = items; it.originalAmount = newTotal; it.lastPublished = items;
-    } else {
-      const prev = it.lastPublished || it.lineItems || [];
-      const diff = poDiffLines(prev, items);
-      const stamp = shortDate(today());
-      diff.added.forEach(a => it.changes.push({ id: uid('ch'), desc: 'Added ' + stamp + ': ' + (a.item || 'line'), amount: poShow(poNum(a.total)), date: today(), auto: true }));
-      diff.removed.forEach(r => it.changes.push({ id: uid('ch'), desc: 'Removed ' + stamp + ': ' + (r.item || 'line'), amount: '-' + poShow(poNum(r.total)), date: today(), auto: true }));
-      diffCount = diff.added.length + diff.removed.length;
-      it.lastPublished = items;
-      if (!it.lineItems) it.lineItems = items;
-      if (it.originalAmount == null) it.originalAmount = newTotal;
+    let it = opts.poId ? poById(opts.poId) : null;
+    const isNew = !it;
+    /* an entry belongs to one PO — pull the chosen ones out of any other PO first */
+    for (const p of (ledgerData.pos || [])) {
+      if (p === it || !p.poOrigin || !p.poOrigin.vendorIds) continue;
+      const before = p.poOrigin.vendorIds.length;
+      p.poOrigin.vendorIds = p.poOrigin.vendorIds.filter(id => vids.indexOf(id) < 0);
+      if (p.poOrigin.vendorIds.length !== before) {
+        if (!p.poOrigin.vendorIds.length) { ledgerData.pos = (ledgerData.pos || []).filter(x => x !== p); try { await FB.deleteDoc(ledgerRef('pos', p.id)); } catch (e) {} }
+        else { it && 0; poRecordItems(p, 'moved out'); p.updated = Date.now(); await saveLedger('pos', p); }
+      }
     }
-    poLedgerRecalc(it);
-    it.description = String(m.desc || '').trim() || (items.length + ' line item' + (items.length === 1 ? '' : 's') + ' · from PO starter');
+    if (!it) it = { id: uid('po'), status: 'draft', docs: [], emails: [], notes: '', changes: [], created: Date.now(), poOrigin: { vendorIds: [] } };
+    it.poOrigin = it.poOrigin || { vendorIds: [] };
+    const set = {}; (it.poOrigin.vendorIds || []).forEach(id => set[id] = 1); vids.forEach(id => set[id] = 1);
+    it.poOrigin.vendorIds = Object.keys(set);
+    if (!poGatherBuys(it).length) { toast('No ticked lines on the chosen folders', true); return; }
+    if (opts.number != null && opts.number !== '') it.number = opts.number;
+    const diffCount = poRecordItems(it, isNew ? '' : 'update');
+    it.vendor = poPoNames(it).join(', ') || it.vendor || '';
+    if (opts.desc != null && opts.desc !== '') it.description = opts.desc;
+    if (!it.description) it.description = (it.lineItems || []).length + ' line item' + ((it.lineItems || []).length === 1 ? '' : 's') + ' · from PO starter';
     if (!it.date) it.date = today();
     it.updated = Date.now();
     if (isNew) ledgerData.pos = [it].concat(ledgerData.pos || []);
-    /* Fold any older per-folder POs for this vendor's entries into this one. */
-    const absorbed = (ledgerData.pos || []).filter(p => p !== it && p.poOrigin && p.poOrigin.vendorId && g.vendorIds.indexOf(p.poOrigin.vendorId) >= 0);
-    if (absorbed.length) {
-      ledgerData.pos = (ledgerData.pos || []).filter(p => absorbed.indexOf(p) < 0);
-      for (const p of absorbed) { try { await FB.deleteDoc(ledgerRef('pos', p.id)); } catch (e) {} }
-    }
-    /* File a copy of the current PO PDF on the register entry. */
     try {
-      const b = await poBuildPdfForName(norm);
+      const b = await poBuildPdfForPo(it);
       if (b && (onFirebase() || jobFolder)) {
-        const pdfName = sanitizeFileName(poFileBaseName(norm)) + '.pdf';
+        const pdfName = sanitizeFileName(poFileBaseForPo(it)) + '.pdf';
         const f = new File([b.doc.output('blob')], pdfName, { type: 'application/pdf' });
         const rec = await putFileInDir(f, ledgerDocDir('pos', it), pdfName, { overwrite: true });
         it.docs = (it.docs || []).filter(d => !d.poAuto);
         it.docs.push({ id: uid('doc'), name: pdfName, size: f.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, poAuto: true, added: Date.now() });
       }
     } catch (e) { console.error(e); }
-    for (const { vd } of g.entries) vd.publishedId = it.id;
+    for (const { vd } of poMembers(it)) vd.publishedId = it.id;
     poSave();
     await saveLedger('pos', it);
     renderPo();
-    toast(isNew
-      ? ('PO ' + (it.number ? '#' + it.number + ' ' : '') + 'published to the PO’s tab')
-      : (diffCount ? (diffCount + ' change' + (diffCount === 1 ? '' : 's') + ' recorded on the PO — see adds/deducts under the PO’s tab') : 'PO re-published — no line changes to record'));
+    toast(isNew ? ('PO ' + (it.number ? '#' + it.number + ' ' : '') + 'published to the PO’s tab')
+      : (diffCount ? (diffCount + ' change' + (diffCount === 1 ? '' : 's') + ' recorded on the PO') : 'PO updated on the register'));
   } catch (e) { console.error(e); toast('Could not publish: ' + (e.message || e), true); }
+}
+/* The publish chooser: which of this vendor's folders go on the PO, and whether it is new or added
+   to an existing one. Opened from a folder's vendor (that folder pre-ticked) or the vendor tab (all). */
+function poPublish(vid) { const vd = poFindVendor(vid); if (!vd) return; poOpenPubDialog(poNorm(vd.name), [vid]); }
+function poOpenPubDialog(norm, preVids) {
+  if (!_po) return;
+  const g = poVendorGroup(norm);
+  if (!g.entries.length) { toast('That vendor is no longer here', true); return; }
+  const pre = preVids && preVids.length ? preVids : g.vendorIds;
+  const vids = {}; g.entries.forEach(({ vd }) => { vids[vd.id] = pre.indexOf(vd.id) >= 0; });
+  const m = poVmeta(g.name);
+  let target = 'new', po = m.po || '', desc = m.desc || '';
+  for (const { vd } of g.entries) { const p = poOfVid(vd.id); if (p) { target = p.id; po = p.number || po; desc = p.description || desc; break; } }
+  _po.pub = { norm: norm, name: g.name, vids: vids, target: target, po: po, desc: desc };
+  renderPo();
+}
+function poPubCancel() { if (_po) { _po.pub = null; renderPo(); } }
+function poPubToggle(vid, on) { if (_po && _po.pub) { _po.pub.vids[vid] = !!on; poPubRefreshTotal(); } }
+function poPubField(field, val) { if (_po && _po.pub) _po.pub[field] = val; }
+function poPubTarget(val) {
+  if (!_po || !_po.pub) return;
+  const n = document.getElementById('poPubNum'), d = document.getElementById('poPubDesc');
+  if (n) _po.pub.po = n.value; if (d) _po.pub.desc = d.value;    // keep what was typed across the redraw
+  _po.pub.target = val; renderPo();
+}
+function poPubSelectedBuys() {
+  const p = _po.pub, g = poVendorGroup(p.norm), out = [];
+  for (const { vd } of g.entries) if (p.vids[vd.id]) for (const l of (vd.lines || [])) if (l.buy) out.push(l);
+  return out;
+}
+function poPubRefreshTotal() {
+  const el = document.getElementById('poPubTot'); if (!el) return;
+  const buys = poPubSelectedBuys();
+  el.textContent = (buys.length + ' line' + (buys.length === 1 ? '' : 's') + ' · ' + (fmtMoney(buys.reduce((s, l) => s + poLineTotal(l), 0)) || '$0'));
+}
+async function poPubConfirm() {
+  const p = _po.pub; if (!p) return;
+  const vids = Object.keys(p.vids).filter(id => p.vids[id]);
+  if (!vids.length) { toast('Tick at least one folder to include', true); return; }
+  const po = (document.getElementById('poPubNum') || {}).value; const desc = (document.getElementById('poPubDesc') || {}).value;
+  poVmeta(p.name).po = po || ''; poVmeta(p.name).desc = desc || '';
+  const poId = p.target === 'new' ? null : p.target;
+  _po.pub = null;
+  await poDoPublish({ poId: poId, vids: vids, number: po, desc: desc, name: p.name });
+}
+function poPubDialogHtml() {
+  const p = _po.pub; if (!p) return '';
+  const g = poVendorGroup(p.norm);
+  const rows = g.entries.map(({ fd, vd }) => {
+    const nb = (vd.lines || []).filter(l => l.buy).length, bt = poVendorTotal(vd);
+    const inOther = poOfVid(vd.id);
+    return `<label class="po-pub-row"><input type="checkbox" ${p.vids[vd.id] ? 'checked' : ''} onchange="poPubToggle('${esc(vd.id)}',this.checked)">
+      <span class="po-pub-fld">📁 ${esc(fd.name || '(folder)')}</span>
+      <span class="muted" style="font-size:12px">${nb} line${nb === 1 ? '' : 's'} buying · ${esc(fmtMoney(bt) || '$0')}${inOther ? ' · now on PO ' + esc(inOther.number || '—') : ''}</span></label>`;
+  }).join('');
+  const others = (ledgerData.pos || []);
+  const opts = others.map(po => `<option value="${esc(po.id)}" ${p.target === po.id ? 'selected' : ''}>PO ${esc(po.number || '—')} · ${esc(po.vendor || 'PO')} · ${esc(fmtMoney(Number(po.amount) || 0) || '$0')}</option>`).join('');
+  return `<div class="po-modal" onclick="if(event.target===this)poPubCancel()"><div class="po-modal-card">
+    <div class="po-modal-h">Publish — ${esc(p.name || 'vendor')}</div>
+    <div class="po-modal-sub">Choose which folders go on the PO, and whether it is a new PO or added to one you already have.</div>
+    <div class="po-pub-rows">${rows}</div>
+    <div class="po-pub-tot"><b id="poPubTot"></b> to publish</div>
+    <div class="po-pub-grid">
+      <label>PO #<input id="poPubNum" value="${esc(p.po || '')}" placeholder="PO number"></label>
+      <label>Description<input id="poPubDesc" value="${esc(p.desc || '')}" placeholder="Optional — shows on the PDF"></label>
+    </div>
+    <div class="po-pub-target">
+      <label class="po-pub-opt"><input type="radio" name="poPubT" ${p.target === 'new' ? 'checked' : ''} onchange="poPubTarget('new')"> Publish as a new PO</label>
+      <label class="po-pub-opt${others.length ? '' : ' dis'}"><input type="radio" name="poPubT" ${p.target !== 'new' ? 'checked' : ''} ${others.length ? '' : 'disabled'} onchange="poPubTarget(document.getElementById('poPubExist').value)"> Add to an existing PO:
+        <select id="poPubExist" ${others.length ? '' : 'disabled'} onchange="poPubTarget(this.value)">${opts || '<option>— none yet —</option>'}</select></label>
+    </div>
+    <div class="po-modal-foot"><button class="btn" onclick="poPubCancel()">Cancel</button><button class="btn primary" onclick="poPubConfirm()">⇪ Publish</button></div>
+  </div></div>`;
 }
 /* ── a published PO's change tracking, shown in its register drawer ── */
 function poLedgerRecalc(it) {
