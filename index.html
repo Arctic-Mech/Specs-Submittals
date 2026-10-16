@@ -153,8 +153,19 @@ a { color: var(--accent); }
 .po-head .po-live { font-size: 12px; color: #4ade80; }
 .po-head .po-live.saving { color: #fbbf24; }
 .po-head .spacer { flex: 1; }
-.po-head .btn { background: #fff; color: #0f172a; border-color: #cbd5e1; }
-.po-head .btn:hover { background: #f1f5f9; }
+/* The PO overlay is light whatever the app theme — white cards, dark text. A .btn defaults to
+   var(--surface) + inherited text colour, so in dark mode its surface goes dark under the dark text
+   the overlay sets on its containers (e.g. .po-vfolder-h), leaving a black-on-black button. Pin
+   every button inside the overlay to the light scheme; .primary and the green publish variants are
+   re-asserted just below so they keep their colour. */
+#poHost .btn { background: #fff; color: #0f172a; border-color: #cbd5e1; }
+#poHost .btn:hover { background: #f1f5f9; }
+#poHost .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#poHost .btn.primary:hover { filter: brightness(1.08); }
+#poHost .btn.ghost { background: transparent; border-color: transparent; color: #475569; }
+#poHost .btn.ghost:hover { background: #eef2f7; color: #0f172a; }
+#poHost .btn.danger { background: #fff; color: #dc2626; border-color: #cbd5e1; }
+#poHost .btn.danger:hover { background: #fef2f2; border-color: #dc2626; }
 .po-body { flex: 1; overflow: auto; padding: 18px 20px 80px; }
 .po-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .po-grand { margin-left: auto; font-size: 15px; font-weight: 700; color: #0f172a; }
@@ -196,8 +207,8 @@ input.po-fname:focus { border-color: var(--accent); background: #fff; outline: n
 .po-pulled { font-size: 12px; font-weight: 600; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 4px 9px; }
 .po-qbar .po-undo { margin-left: auto; color: #b45309; border-color: #fcd9a8; background: #fffbeb; }
 .po-qbar .po-undo:hover { background: #fef3c7; }
-.po-head .btn.po-pub, .po-vhead .btn.po-pub { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
-.po-vhead .btn.po-pub:hover { background: #dcfce7; }
+#poHost .po-head .btn.po-pub, #poHost .po-vhead .btn.po-pub { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+#poHost .po-vhead .btn.po-pub:hover { background: #dcfce7; }
 /* the published-PO change tracking inside the register drawer (theme-aware) */
 .po-track { width: 100%; border-collapse: collapse; margin-top: 6px; }
 .po-track th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); font-weight: 600; }
@@ -1884,7 +1895,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.88';
+const APP_VERSION = 'v8.89';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
