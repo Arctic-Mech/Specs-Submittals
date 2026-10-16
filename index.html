@@ -168,6 +168,10 @@ a { color: var(--accent); }
 .po-fcard-main b { font-size: 16px; color: #0f172a; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
 .po-fcard-sub { font-size: 12.5px; color: #64748b; }
 .po-fcard-go { margin-left: auto; font-size: 20px; color: #94a3b8; }
+.po-fcard-del { margin-left: auto; border: 0; background: none; color: #cbd5e1; cursor: pointer; font-size: 15px; padding: 2px 6px; opacity: 0; transition: opacity .12s, color .12s; }
+.po-fcard:hover .po-fcard-del { opacity: 1; }
+.po-fcard-del:hover { color: #dc2626; }
+.po-fcard-del + .po-fcard-go { margin-left: 0; }
 .po-fico { font-size: 17px; }
 input.po-fname { font-size: 15.5px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 8px; flex: 1 1 240px; min-width: 180px; color: #0f172a; }
 input.po-fname:hover { border-color: #cbd5e1; }
@@ -1839,7 +1843,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.85';
+const APP_VERSION = 'v8.86';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -22895,15 +22899,17 @@ function poListView() {
       : `<div class="po-empty">Start with a folder — <b>Plumbing</b>, <b>Sheet Metal</b>, and so on. Open it to add vendors.</div>`}`;
 }
 function poFolderCard(fd) {
+  const F = esc(fd.id);
   const n = (fd.vendors || []).length, t = poFolderTotal(fd);
-  return `<button class="po-fcard" onclick="poOpenFolder('${esc(fd.id)}')">
+  return `<div class="po-fcard" onclick="poOpenFolder('${F}')" role="button" tabindex="0">
     <span class="po-fcard-ico">📁</span>
     <span class="po-fcard-main">
       <b>${esc(fd.name || '(unnamed folder)')}</b>
       <span class="po-fcard-sub">${n} vendor${n === 1 ? '' : 's'}${t ? '  ·  ' + esc(fmtMoney(t)) + ' selected' : ''}</span>
     </span>
+    <button class="po-fcard-del" title="Delete this folder" onclick="event.stopPropagation();poDelFolder('${F}')">🗑</button>
     <span class="po-fcard-go">→</span>
-  </button>`;
+  </div>`;
 }
 /* Inside a folder: a Back out to the list, the folder's vendors, and this folder's own total. */
 function poFolderView(fd) {
