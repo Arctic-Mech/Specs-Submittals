@@ -1837,6 +1837,29 @@ const testCode = `
   ck('autosize: one that has left the page is not chased for ever', !gone.style.height);
 }
 
+// ══ PO form: striking the quote lines that were not bought ═════════════════
+{
+  var vdq = { lines: [
+    { item: 'A100  4in PVC pipe', qty: '10', total: '250', buy: true },
+    { item: 'B200  Floor drain', qty: '2', total: '120', buy: false },
+    { item: 'C300  Water heater', qty: '1', total: '1800', buy: true } ] };
+  var bk = poBoughtKeys(vdq);
+  ck('po quote: the bought item codes are recorded as keys',
+    bk.codes[poNormCode('A100')] === 1 && bk.codes[poNormCode('C300')] === 1 && !bk.codes[poNormCode('B200')]);
+  ck('po quote: a line that was bought is not struck',
+    poStrikeLine('A100 4in PVC pipe 10 25.00 EA 250.00', bk) === false);
+  ck('po quote: a line that was NOT bought is struck',
+    poStrikeLine('B200 Floor drain 2 60.00 EA 120.00', bk) === true);
+  ck('po quote: a second bought line is not struck',
+    poStrikeLine('C300 Water heater 1 1800.00 EA 1800.00', bk) === false);
+  ck('po quote: a header row is never struck',
+    poStrikeLine('Item Description Qty Price UoM Total', bk) === false);
+  ck('po quote: ordinary prose on the quote is left alone',
+    poStrikeLine('ACME SUPPLY Quotation', bk) === false);
+  ck('po quote: an unbought line still matches a bought one by qty and total',
+    poStrikeLine('Z999 Relabeled water heater 1 1800.00 EA 1800.00', bk) === false);
+}
+
 })();
 `;
 
