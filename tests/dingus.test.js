@@ -1860,27 +1860,20 @@ const testCode = `
     poStrikeLine('Z999 Relabeled water heater 1 1800.00 EA 1800.00', bk) === false);
 }
 
-// ══ PO form: one row per quote with its total (no line items) ══════════════
+// ══ PO form: how a bought line maps onto a form row ════════════════════════
 {
-  var entries = [
-    { fd: { name: 'Plumbing' }, vd: { name: 'ACME Supply', lines: [
-      { total: '250', buy: true }, { total: '120', buy: false }, { total: '1800', buy: true } ] } },
-    { fd: { name: 'Sheet Metal' }, vd: { name: 'ACME Supply', lines: [
-      { total: '300', buy: true } ] } },
-    { fd: { name: 'HVAC' }, vd: { name: 'ACME Supply', lines: [
-      { total: '99', buy: false } ] } } ];
-  var qr = poQuoteRowsFrom(entries);
-  ck('po totals: a row per quote that has something bought (the empty one is dropped)',
-    qr.rows.length === 2);
-  ck('po totals: each row is the quote folder with its bought total',
-    qr.rows[0].label === 'Plumbing' && qr.rows[0].amount === 2050 &&
-    qr.rows[1].label === 'Sheet Metal' && qr.rows[1].amount === 300);
-  ck('po totals: the grand total is the sum across quotes', qr.total === 2350);
-  var multi = poQuoteRowsFrom([
-    { fd: { name: 'Plumbing' }, vd: { name: 'Ferguson', lines: [ { total: '500', buy: true } ] } },
-    { fd: { name: 'Plumbing' }, vd: { name: 'Consolidated', lines: [ { total: '400', buy: true } ] } } ]);
-  ck('po totals: when more than one vendor is on the PO, the vendor is named on each row',
-    multi.rows[0].label === 'Ferguson — Plumbing' && multi.rows[1].label === 'Consolidated — Plumbing');
+  // a lump-sum scope entered as quantity 1 with the amount in the unit price
+  var a = poFormLine({ item: 'Plumbing Underground', qty: '1', price: '31400.33', total: '31400.33' });
+  ck('po line: a quantity-1 lump keeps its unit price and total',
+    a.qty === 1 && a.unit === 31400.33 && a.total === 31400.33 && a.desc === 'Plumbing Underground');
+  // a real quantity line keeps qty and per-unit price
+  var b = poFormLine({ item: 'Duct', qty: '10', price: '25', total: '250' });
+  ck('po line: a real quantity line keeps quantity and unit price', b.qty === 10 && b.unit === 25 && b.total === 250);
+  // only a total given → quantity 1, that total becomes the unit price
+  var c = poFormLine({ item: 'Lump', total: '900' });
+  ck('po line: a line with only a total is quantity 1 at that price', c.qty === 1 && c.unit === 900 && c.total === 900);
+  ck('po line: plain-number formatting keeps cents but no currency symbol',
+    poPlainNum(31400.33) === '31400.33' && poPlainNum(5299.6) === '5299.60' && poPlainNum(100) === '100');
 }
 
 })();

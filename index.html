@@ -1895,7 +1895,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.92';
+const APP_VERSION = 'v8.93';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -23005,7 +23005,8 @@ function poVendorTabView(norm) {
     </div>
     <div class="po-vactions">
       <button class="btn primary po-pub" onclick="poOpenPubDialog('${poJsAttr(g.norm)}', [])" title="Publish ${esc(name)}'s lines — pick which folders go on the PO, as a new PO or added to one you have">⇪ Publish…</button>
-      <button class="btn po-pdf" onclick="poExportPdfName('${poJsAttr(g.norm)}')" title="A PDF of everything ticked from this vendor">⤓ PDF</button>
+      <button class="btn po-pdf" onclick="poExportXlsxName('${poJsAttr(g.norm)}')" title="Fill out Arctic's Excel PO sheet and download it as an .xlsx — open it and Save As PDF">⤓ Excel</button>
+      <button class="btn po-pdf" onclick="poExportPdfName('${poJsAttr(g.norm)}')" title="A PDF of the PO form plus the marked-up vendor quote">⤓ PDF</button>
       ${pubList.map(p => `<span class="po-pubbadge" title="On the PO register — close the PO starter to open it">✓ On PO ${esc(p.number || '—')}</span>`).join('')}
     </div>`;
   const quotes = g.entries.filter(x => x.vd.quote);
@@ -23098,7 +23099,8 @@ function poVendorHtml(vd) {
       <input class="po-po" value="${esc(m.po || '')}" placeholder="PO #" title="Purchase order number for this vendor (one PO per vendor across all folders)" oninput="poSetVmetaFor('${V}','po',this.value)">
       <span class="po-vtotal" id="povt_${V}">${esc(fmtMoney(poVendorTotal(vd)) || '$0.00')} <span class="muted">buying</span></span>
       <button class="btn sm po-pub" onclick="poPublish('${V}')" title="Publish this vendor's PO — everything ticked from them across all folders — to the PO's register">${published ? '⇪ Re-publish' : '⇪ Publish'}</button>
-      <button class="btn sm po-pdf" onclick="poExportPdf('${V}')" title="Export a PDF of the ticked lines — the buy list for the field foreman">⤓ PDF</button>
+      <button class="btn sm po-pdf" onclick="poExportXlsx('${V}')" title="Fill out Arctic's Excel PO sheet and download it as an .xlsx">⤓ Excel</button>
+      <button class="btn sm po-pdf" onclick="poExportPdf('${V}')" title="A PDF of the PO form plus the marked-up vendor quote">⤓ PDF</button>
       <button class="po-xv" title="Remove vendor" onclick="poDelVendor('${V}')">🗑</button>
     </div>
     <div class="po-descwrap"><input class="po-desc" value="${esc(m.desc || '')}" placeholder="PO description (optional) — shows on the exported PDF header" oninput="poSetVmetaFor('${V}','desc',this.value)"></div>
@@ -23282,21 +23284,15 @@ function poLoadFormImage() {
   return _poFormImg;
 }
 /* one row per quote (per vendor entry): its folder, and the total of everything ticked on it */
-function poEntryBuyTotal(vd) { return round2(((vd && vd.lines) || []).filter(l => l.buy).reduce((s, l) => s + poLineTotal(l), 0)); }
-function poQuoteRowsFrom(entries) {
-  const vn = {}; (entries || []).forEach(e => { if (e.vd && e.vd.name) vn[poNorm(e.vd.name)] = 1; });
-  const multi = Object.keys(vn).length > 1;
-  const rows = []; let total = 0;
-  for (const e of (entries || [])) {
-    const vd = e.vd, fd = e.fd || {};
-    if (!((vd.lines || []).some(l => l.buy))) continue;        // nothing bought on this quote → skip it
-    const amt = poEntryBuyTotal(vd);
-    const label = multi ? ((vd.name || '') + ' — ' + (fd.name || '')) : (fd.name || vd.name || '');
-    rows.push({ label: label, amount: amt });
-    total = round2(total + amt);
-  }
-  return { rows: rows, total: total };
+/* How a bought line maps onto a PO form row: Quantity, Unit Price and Total. Arctic enters each line
+   as quantity × unit price (a lump-sum scope is quantity 1, its total in the unit price). */
+function poFormLine(l) {
+  const qty = poNum(l.qty) || 1;
+  const total = round2(poNum(l.total));
+  const unit = poNum(l.price) || (qty ? round2(total / qty) : total);
+  return { qty: qty, unit: unit, total: total, desc: l.item || '' };
 }
+function poPlainNum(n) { n = round2(n); return Number.isInteger(n) ? String(n) : n.toFixed(2); }
 async function poArcticForm(spec) {
   const jspdf = await ensureJsPDF();
   const form = await poLoadFormImage();
@@ -23311,8 +23307,8 @@ async function poArcticForm(spec) {
     if (o.max) { const parts = doc.splitTextToSize(String(t), o.max); s = parts[0] + (parts.length > 1 ? '…' : ''); }
     doc.text(s, x, y, { align: o.align || 'left' });
   };
-  const rows = spec.quoteRows || [];
-  const total = (spec.total != null) ? spec.total : rows.reduce((s, r) => round2(s + (Number(r.amount) || 0)), 0);
+  const lines = spec.lines || [];
+  const total = (spec.total != null) ? spec.total : round2(lines.reduce((s, l) => s + poLineTotal(l), 0));
   const dateOrdered = blank(spec.dateOrdered) || csvDate(today());
   // header + fields (coordinates measured from the rendered form)
   put(spec.po, 348, 93, { size: 12.5 });
@@ -23322,16 +23318,47 @@ async function poArcticForm(spec) {
   put(dateOrdered, 408, 198, { size: 10.5 });                       // Date Ordered
   put(spec.dateRequired, 408, 211, { size: 10.5 });                 // Date Required
   put(spec.name, 180, 223, { size: 11, max: 330 });                 // Vendor
-  // body: one line per quote with its total (no line items)
+  // body: the line items — Quantity · Description · Unit Price · Total · Cost Code
   const rowY0 = 300.4, rowH = 16.94;
-  rows.forEach((r, i) => {
+  lines.forEach((l, i) => {
     if (i > 13) return;                                             // the form has 14 body rows
-    const y = rowY0 + i * rowH;
-    put(r.label, 180, y, { size: 10, max: 192 });                   // Description cell
-    put(fmtMoney(r.amount) || '$0.00', 545, y, { size: 10, align: 'right' });   // Total cell
+    const y = rowY0 + i * rowH, fl = poFormLine(l);
+    put(String(fl.qty), 140, y, { size: 10, align: 'center' });                 // Quantity
+    put(fl.desc, 180, y, { size: 10, max: 192 });                               // Description
+    put(poPlainNum(fl.unit), 423, y, { size: 10, align: 'center' });            // Unit Price
+    put(fmtMoney(fl.total) || '', 545, y, { size: 10, align: 'right' });        // Total
+    put(spec.costCode, 565, y, { size: 9, align: 'center' });                   // Cost Code
   });
   put(fmtMoney(total) || '$0.00', 545, 533, { size: 11, align: 'right' });      // Grand Total
   return { doc, total };
+}
+/* Fill Arctic's actual Excel PO sheet (po-template.xlsx) with this PO's values and return it as an
+   .xlsx blob — byte-for-byte the real form, so saving it to PDF from Excel looks exactly right. */
+async function poBuildXlsx(spec) {
+  const XJ = await ensureExcelJS();
+  const buf = await (await fetch((typeof tplUrl === 'function') ? tplUrl('po-template.xlsx') : 'po-template.xlsx')).arrayBuffer();
+  const wb = new XJ.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.getWorksheet(1);
+  ws.pageSetup = Object.assign({}, ws.pageSetup, { fitToPage: true, fitToWidth: 1, fitToHeight: 1, printArea: 'A1:J43', orientation: 'portrait' });
+  const S = (ref, v) => { if (v == null || String(v).trim() === '') return; ws.getCell(ref).value = v; };
+  S('G2', spec.po); S('H7', job && job.number); S('H8', spec.requestedBy);
+  S('H9', job && job.name); S('H10', spec.dateOrdered || csvDate(today())); S('H11', spec.dateRequired);
+  S('B12', spec.name);
+  const lines = spec.lines || [];
+  lines.forEach((l, i) => {
+    if (i > 13) return; const r = 17 + i, fl = poFormLine(l);
+    ws.getCell('B' + r).value = fl.qty;
+    ws.getCell('C' + r).value = fl.desc;
+    ws.getCell('G' + r).value = fl.unit;
+    ws.getCell('I' + r).value = { formula: 'B' + r + '*G' + r, result: fl.total };
+    if (spec.costCode) ws.getCell('J' + r).value = spec.costCode;
+  });
+  const total = round2(lines.reduce((s, l) => s + poLineTotal(l), 0));
+  ws.getCell('I31').value = { formula: 'SUM(I17:I30)', result: total };
+  const out = await wb.xlsx.writeBuffer();
+  return { blob: new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+    filename: (spec.filename || poFileBaseFrom(spec.name, spec.po, spec.desc)) + '.xlsx', total: total };
 }
 /* Build the whole PO document: Arctic's PO form, then each included vendor's quote PDF appended with
    the lines you did NOT buy struck through — one combined PDF, so a published PO keeps the form, the
@@ -23431,15 +23458,29 @@ async function poAppendOneQuote(doc, bytes, bought) {
     }
   } finally { try { pdf.destroy(); } catch (e) {} }
 }
-/* The combined PO PDF for a vendor name — everything ticked from them across all folders. */
-async function poBuildPdfForName(norm) {
+/* A standalone PDF of just the vendors' quotes with the un-bought lines struck through (no form page),
+   or null when none of them has a quote on hand. */
+async function poMarkedUpQuotePdf(vds) {
+  if (!(vds || []).some(vd => vd && vd.quote)) return null;
+  const jspdf = await ensureJsPDF();
+  const doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+  const before = doc.internal.getNumberOfPages();
+  await poAppendStruckQuotes(doc, vds);
+  if (doc.internal.getNumberOfPages() <= before) return null;   // nothing could be appended
+  doc.deletePage(1);                                            // drop the initial blank page
+  return doc;
+}
+/* The PO's values for a vendor name — the ticked lines across all its folders, with the header fields.
+   Shared by the Excel fill, the PDF form and the publish record so all three show the same thing. */
+function poSpecForName(norm) {
   const g = poVendorGroup(norm); const m = poVmeta(g.name);
   const lines = poGroupBuyLines(g).map(x => x.l);
   if (!lines.length) { toast('Tick the lines you’re buying from ' + (g.name || 'this vendor') + ' first', true); return null; }
-  const qr = poQuoteRowsFrom(g.entries);
-  return poBuildPdfSpec({ name: g.name, po: m.po, desc: m.desc, requestedBy: m.reqBy || '', dateRequired: m.dateReq || '',
-    quoteRows: qr.rows, total: qr.total, entries: g.entries.map(e => e.vd), filename: poFileBaseName(norm) });
+  return { name: g.name, po: m.po, desc: m.desc, requestedBy: m.reqBy || '', dateRequired: m.dateReq || '',
+    costCode: m.costCode || '', lines: lines, entries: g.entries.map(e => e.vd), filename: poFileBaseName(norm) };
 }
+/* The combined PO PDF for a vendor name — the form, then each vendor's marked-up quote. */
+async function poBuildPdfForName(norm) { const spec = poSpecForName(norm); return spec ? poBuildPdfSpec(spec) : null; }
 /* A single vendor entry still builds the same combined PO (one PO per vendor). */
 async function poBuildPdf(vid) { const vd = poFindVendor(vid); if (!vd) return null; return poBuildPdfForName(poNorm(vd.name)); }
 async function poExportPdf(vid) { const vd = poFindVendor(vid); if (vd) return poExportPdfName(poNorm(vd.name)); }
@@ -23450,6 +23491,20 @@ async function poExportPdfName(norm) {
     b.doc.save(b.filename);
     toast('PO PDF built for ' + (b.name || 'vendor'));
   } catch (e) { console.error(e); toast('Could not build the PO PDF: ' + (e.message || e), true); }
+}
+/* Export the vendor's PO as the real Excel sheet — fill it in, hand it over as an .xlsx to download. */
+async function poExportXlsx(vid) { const vd = poFindVendor(vid); if (vd) return poExportXlsxName(poNorm(vd.name)); }
+async function poExportXlsxName(norm) {
+  const spec = poSpecForName(norm); if (!spec) return;
+  stickyToast('Building the Excel PO…');
+  try {
+    const x = await poBuildXlsx(spec);
+    const url = URL.createObjectURL(x.blob);
+    const a = document.createElement('a'); a.href = url; a.download = x.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('Excel PO built for ' + (spec.name || 'vendor'));
+  } catch (e) { console.error(e); toast('Could not build the Excel PO: ' + (e.message || e), true); }
 }
 /* Publish the PO onto the website's PO's register — the ticked lines become the PO's line items and
    its amount, a copy of the PDF is filed on it, and from there you track changes to it (adds and
@@ -23480,15 +23535,16 @@ function poMembers(po) { const ids = (po.poOrigin && po.poOrigin.vendorIds) || [
 function poGatherBuys(po) { const out = []; for (const { vd } of poMembers(po)) for (const l of (vd.lines || [])) if (l.buy) out.push(l); return out; }
 function poPoNames(po) { const s = {}; poMembers(po).forEach(x => { if (x.vd.name) s[x.vd.name] = 1; }); return Object.keys(s); }
 function poFileBaseForPo(it) { return poFileBaseFrom(poPoNames(it).join(', ') || it.vendor, it.number, it.description); }
-async function poBuildPdfForPo(it) {
+function poSpecForPo(it) {
   const buys = poGatherBuys(it);
   if (!buys.length) return null;
   const members = poMembers(it);
-  const qr = poQuoteRowsFrom(members);
-  return poBuildPdfSpec({ name: poPoNames(it).join(', ') || it.vendor || '', po: it.number, desc: it.description,
-    requestedBy: it.requestedBy || '', dateRequired: it.dateRequired || '',
-    quoteRows: qr.rows, total: qr.total, entries: members.map(x => x.vd), filename: poFileBaseForPo(it) });
+  return { name: poPoNames(it).join(', ') || it.vendor || '', po: it.number, desc: it.description,
+    requestedBy: it.requestedBy || '', dateRequired: it.dateRequired || '', costCode: it.costCode || '',
+    lines: buys, entries: members.map(x => x.vd), filename: poFileBaseForPo(it) };
 }
+async function poBuildPdfForPo(it) { const spec = poSpecForPo(it); return spec ? poBuildPdfSpec(spec) : null; }
+async function poBuildXlsxForPo(it) { const spec = poSpecForPo(it); return spec ? poBuildXlsx(spec) : null; }
 /* Re-figure a PO's items from its current members, logging the difference as adds/deducts. */
 function poRecordItems(it, label) {
   const buys = poGatherBuys(it);
@@ -23538,18 +23594,31 @@ async function poDoPublish(opts) {
     if (opts.desc != null && opts.desc !== '') it.description = opts.desc;
     if (opts.requestedBy != null && opts.requestedBy !== '') it.requestedBy = opts.requestedBy;
     if (opts.dateRequired != null && opts.dateRequired !== '') it.dateRequired = opts.dateRequired;
+    if (opts.costCode != null && opts.costCode !== '') it.costCode = opts.costCode;
     if (!it.description) it.description = (it.lineItems || []).length + ' line item' + ((it.lineItems || []).length === 1 ? '' : 's') + ' · from PO starter';
     if (!it.date) it.date = today();
     it.updated = Date.now();
     if (isNew) ledgerData.pos = [it].concat(ledgerData.pos || []);
+    /* File the PO on the register: the Arctic Excel PO sheet (the deliverable), plus — when there is a
+       vendor quote — the marked-up quote PDF with the un-bought lines struck through. */
     try {
-      const b = await poBuildPdfForPo(it);
-      if (b && (onFirebase() || jobFolder)) {
-        const pdfName = sanitizeFileName(poFileBaseForPo(it));   // sanitizeFileName already adds .pdf
-        const f = new File([b.doc.output('blob')], pdfName, { type: 'application/pdf' });
-        const rec = await putFileInDir(f, ledgerDocDir('pos', it), pdfName, { overwrite: true });
+      if (onFirebase() || jobFolder) {
         it.docs = (it.docs || []).filter(d => !d.poAuto);
-        it.docs.push({ id: uid('doc'), name: pdfName, size: f.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, poAuto: true, added: Date.now() });
+        const base = sanitizeAnyName(poFileBaseForPo(it), 'Purchase Order');
+        const x = await poBuildXlsxForPo(it);
+        if (x) {
+          const xname = base + '.xlsx';
+          const xf = new File([x.blob], xname, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+          const rec = await putFileInDir(xf, ledgerDocDir('pos', it), xname, { overwrite: true });
+          it.docs.push({ id: uid('doc'), name: xname, size: xf.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, poAuto: true, added: Date.now() });
+        }
+        const markedUp = await poMarkedUpQuotePdf(poMembers(it).map(m => m.vd));
+        if (markedUp) {
+          const qname = base + ' - marked-up quote.pdf';
+          const qf = new File([markedUp.output('blob')], qname, { type: 'application/pdf' });
+          const rec = await putFileInDir(qf, ledgerDocDir('pos', it), qname, { overwrite: true });
+          it.docs.push({ id: uid('doc'), name: qname, size: qf.size, dir: rec.dir, file: rec.file, fb: rec.fb, blobId: rec.blobId, poAuto: true, added: Date.now() });
+        }
       }
     } catch (e) { console.error(e); }
     for (const { vd } of poMembers(it)) vd.publishedId = it.id;
@@ -23570,9 +23639,9 @@ function poOpenPubDialog(norm, preVids) {
   const pre = preVids && preVids.length ? preVids : g.vendorIds;
   const vids = {}; g.entries.forEach(({ vd }) => { vids[vd.id] = pre.indexOf(vd.id) >= 0; });
   const m = poVmeta(g.name);
-  let target = 'new', po = m.po || '', desc = m.desc || '', reqBy = m.reqBy || '', dateReq = m.dateReq || '';
-  for (const { vd } of g.entries) { const p = poOfVid(vd.id); if (p) { target = p.id; po = p.number || po; desc = p.description || desc; reqBy = p.requestedBy || reqBy; dateReq = p.dateRequired || dateReq; break; } }
-  _po.pub = { norm: norm, name: g.name, vids: vids, target: target, po: po, desc: desc, reqBy: reqBy, dateReq: dateReq };
+  let target = 'new', po = m.po || '', desc = m.desc || '', reqBy = m.reqBy || '', dateReq = m.dateReq || '', costCode = m.costCode || '';
+  for (const { vd } of g.entries) { const p = poOfVid(vd.id); if (p) { target = p.id; po = p.number || po; desc = p.description || desc; reqBy = p.requestedBy || reqBy; dateReq = p.dateRequired || dateReq; costCode = p.costCode || costCode; break; } }
+  _po.pub = { norm: norm, name: g.name, vids: vids, target: target, po: po, desc: desc, reqBy: reqBy, dateReq: dateReq, costCode: costCode };
   renderPo();
 }
 function poPubCancel() { if (_po) { _po.pub = null; renderPo(); } }
@@ -23581,9 +23650,9 @@ function poPubField(field, val) { if (_po && _po.pub) _po.pub[field] = val; }
 function poPubTarget(val) {
   if (!_po || !_po.pub) return;
   const n = document.getElementById('poPubNum'), d = document.getElementById('poPubDesc');
-  const rb = document.getElementById('poPubReqBy'), dr = document.getElementById('poPubDateReq');
+  const rb = document.getElementById('poPubReqBy'), dr = document.getElementById('poPubDateReq'), cc = document.getElementById('poPubCost');
   if (n) _po.pub.po = n.value; if (d) _po.pub.desc = d.value;    // keep what was typed across the redraw
-  if (rb) _po.pub.reqBy = rb.value; if (dr) _po.pub.dateReq = dr.value;
+  if (rb) _po.pub.reqBy = rb.value; if (dr) _po.pub.dateReq = dr.value; if (cc) _po.pub.costCode = cc.value;
   _po.pub.target = val; renderPo();
 }
 function poPubSelectedBuys() {
@@ -23602,10 +23671,11 @@ async function poPubConfirm() {
   if (!vids.length) { toast('Tick at least one folder to include', true); return; }
   const po = (document.getElementById('poPubNum') || {}).value; const desc = (document.getElementById('poPubDesc') || {}).value;
   const reqBy = (document.getElementById('poPubReqBy') || {}).value || ''; const dateReq = (document.getElementById('poPubDateReq') || {}).value || '';
-  const vm = poVmeta(p.name); vm.po = po || ''; vm.desc = desc || ''; vm.reqBy = reqBy; vm.dateReq = dateReq;
+  const costCode = (document.getElementById('poPubCost') || {}).value || '';
+  const vm = poVmeta(p.name); vm.po = po || ''; vm.desc = desc || ''; vm.reqBy = reqBy; vm.dateReq = dateReq; vm.costCode = costCode;
   const poId = p.target === 'new' ? null : p.target;
   _po.pub = null;
-  await poDoPublish({ poId: poId, vids: vids, number: po, desc: desc, name: p.name, requestedBy: reqBy, dateRequired: dateReq });
+  await poDoPublish({ poId: poId, vids: vids, number: po, desc: desc, name: p.name, requestedBy: reqBy, dateRequired: dateReq, costCode: costCode });
 }
 function poPubDialogHtml() {
   const p = _po.pub; if (!p) return '';
@@ -23629,6 +23699,7 @@ function poPubDialogHtml() {
       <label>Description<input id="poPubDesc" value="${esc(p.desc || '')}" placeholder="Optional — shows on the PDF"></label>
       <label>Requested by<input id="poPubReqBy" value="${esc(p.reqBy || '')}" placeholder="Optional — leave blank to fill in by hand"></label>
       <label>Date required<input id="poPubDateReq" value="${esc(p.dateReq || '')}" placeholder="Optional — leave blank to fill in by hand"></label>
+      <label>Cost code<input id="poPubCost" value="${esc(p.costCode || '')}" placeholder="Optional — goes on every line (e.g. 5-07)"></label>
     </div>
     <div class="po-pub-target">
       <label class="po-pub-opt"><input type="radio" name="poPubT" ${p.target === 'new' ? 'checked' : ''} onchange="poPubTarget('new')"> Publish as a new PO</label>
