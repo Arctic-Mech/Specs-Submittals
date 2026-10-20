@@ -1860,6 +1860,29 @@ const testCode = `
     poStrikeLine('Z999 Relabeled water heater 1 1800.00 EA 1800.00', bk) === false);
 }
 
+// ══ PO form: one row per quote with its total (no line items) ══════════════
+{
+  var entries = [
+    { fd: { name: 'Plumbing' }, vd: { name: 'ACME Supply', lines: [
+      { total: '250', buy: true }, { total: '120', buy: false }, { total: '1800', buy: true } ] } },
+    { fd: { name: 'Sheet Metal' }, vd: { name: 'ACME Supply', lines: [
+      { total: '300', buy: true } ] } },
+    { fd: { name: 'HVAC' }, vd: { name: 'ACME Supply', lines: [
+      { total: '99', buy: false } ] } } ];
+  var qr = poQuoteRowsFrom(entries);
+  ck('po totals: a row per quote that has something bought (the empty one is dropped)',
+    qr.rows.length === 2);
+  ck('po totals: each row is the quote folder with its bought total',
+    qr.rows[0].label === 'Plumbing' && qr.rows[0].amount === 2050 &&
+    qr.rows[1].label === 'Sheet Metal' && qr.rows[1].amount === 300);
+  ck('po totals: the grand total is the sum across quotes', qr.total === 2350);
+  var multi = poQuoteRowsFrom([
+    { fd: { name: 'Plumbing' }, vd: { name: 'Ferguson', lines: [ { total: '500', buy: true } ] } },
+    { fd: { name: 'Plumbing' }, vd: { name: 'Consolidated', lines: [ { total: '400', buy: true } ] } } ]);
+  ck('po totals: when more than one vendor is on the PO, the vendor is named on each row',
+    multi.rows[0].label === 'Ferguson — Plumbing' && multi.rows[1].label === 'Consolidated — Plumbing');
+}
+
 })();
 `;
 
