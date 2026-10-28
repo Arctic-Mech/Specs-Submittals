@@ -1722,6 +1722,13 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
 .pc-desc:focus { border-color: var(--accent); background: var(--surface); outline: none; }
 .pc-ck label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
 .pc-del { text-align: center; }
+.pc-pick-list { display: flex; flex-direction: column; gap: 14px; }
+.pc-pick-dh { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 13px; }
+.pc-pick-dh b { flex: 1; }
+.pc-pick { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+.pc-pick:hover { background: var(--surface-2); }
+.pc-pick-code { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 42px; }
+.pc-pick-desc { color: var(--text-2); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -1907,7 +1914,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.94';
+const APP_VERSION = 'v8.95';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4794,7 +4801,47 @@ async function phaseDownload(wb, baseName) {
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
 }
 const PHASE_HEAD_FILL = 'FF0E2E93';     // Arctic blue
-async function phaseExportMaterial() {
+/* Exporting the material sheet opens a picker — tick the phase codes to make an order form for. The
+   choice is saved back onto the codes (their Material flag) so it is the default next time. */
+function phaseExportMaterial() {
+  const codes = phaseCodes.codes || [];
+  if (!codes.length) { toast('Import a booking report first', true); return; }
+  const groups = phaseGrouped().map(g => {
+    const items = g.codes.map(c => `<label class="pc-pick"><input type="checkbox" data-code="${esc(c.code)}" data-div="${esc(g.div)}" ${c.mat ? 'checked' : ''}><span class="pc-pick-code">${esc(c.code)}</span><span class="pc-pick-desc">${esc(c.desc || '')}</span></label>`).join('');
+    return `<div class="pc-pick-div"><div class="pc-pick-dh"><b>Division ${esc(g.div)}${g.name ? ' — ' + esc(g.name) : ''}</b> <button class="btn sm ghost" onclick="phaseMatDiv('${esc(g.div)}')">All / none</button></div>${items}</div>`;
+  }).join('');
+  $('modalHost').innerHTML = `
+    <div class="modal-scrim" onclick="if(event.target===this)closePdf()"><div class="modal" style="max-width:560px">
+      <div class="modal-head"><h3>Material order sheet</h3><button class="icon-btn" onclick="closePdf()">✕</button></div>
+      <div class="modal-body">
+        <p class="muted" style="margin:0 0 12px">Pick the phase codes to make an order form for — one tab each. Your choice is saved as the default for next time.</p>
+        <div class="pc-pick-list">${groups}</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" onclick="phaseMatAll(true)">Select all</button>
+        <button class="btn ghost" onclick="phaseMatAll(false)">Clear</button>
+        <span style="flex:1"></span>
+        <button class="btn" onclick="closePdf()">Cancel</button>
+        <button class="btn primary" onclick="phaseMatConfirm()">▦ Export</button>
+      </div>
+    </div></div>`;
+}
+function phaseMatDiv(div) {
+  const boxes = Array.from(document.querySelectorAll('.pc-pick-list input[data-div="' + div + '"]'));
+  const allOn = boxes.length && boxes.every(b => b.checked);
+  boxes.forEach(b => b.checked = !allOn);
+}
+function phaseMatAll(on) { document.querySelectorAll('.pc-pick-list input[data-code]').forEach(b => b.checked = !!on); }
+function phaseMatConfirm() {
+  let n = 0;
+  document.querySelectorAll('.pc-pick-list input[data-code]').forEach(b => {
+    const c = phaseFind(b.getAttribute('data-code')); if (c) { c.mat = b.checked; if (b.checked) n++; }
+  });
+  if (!n) { toast('Pick at least one phase code', true); return; }
+  savePhase(); closePdf(); phaseRefreshCounts();
+  phaseBuildMaterial();
+}
+async function phaseBuildMaterial() {
   const codes = (phaseCodes.codes || []).filter(c => c.mat);
   if (!codes.length) { toast('Tick at least one phase code for the material sheet', true); return; }
   stickyToast('Building the material order sheet…');
@@ -4826,41 +4873,48 @@ async function phaseExportMaterial() {
     toast('Material order sheet built — ' + codes.length + ' phase tab' + (codes.length === 1 ? '' : 's'));
   } catch (e) { console.error(e); toast('Could not build the material order sheet: ' + (e.message || e), true); }
 }
+/* The time entry sheet — the whole pay week (Tue–Mon) on one landscape page: the phase codes down the
+   side, a column per day to break out the hours, a row total and a day total, all on one page. */
 async function phaseExportTime() {
   const codes = (phaseCodes.codes || []).filter(c => c.time);
   if (!codes.length) { toast('Tick at least one phase code for the time sheet', true); return; }
   stickyToast('Building the time entry sheet…');
   try {
     const XJ = await ensureExcelJS(); const wb = new XJ.Workbook(); wb.creator = 'Arctic Mechanical'; wb.created = new Date();
-    const days = [['Tue', 'Tuesday'], ['Wed', 'Wednesday'], ['Thu', 'Thursday'], ['Fri', 'Friday'], ['Sat', 'Saturday'], ['Sun', 'Sunday'], ['Mon', 'Monday']];
-    const used = {};
-    for (const d of days) {
-      const ws = wb.addWorksheet(phaseTabName(d[0], used), {
-        pageSetup: { orientation: 'portrait', fitToWidth: 1, fitToHeight: 1, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
-      });
-      ws.columns = [{ width: 13 }, { width: 44 }, { width: 14 }];
-      phaseCell(ws, 1, 1, 'ARCTIC SHEET METAL', { bold: true, size: 12 }); phaseMerge(ws, 1, 1, 1, 2);
-      phaseCell(ws, 1, 3, 'TIME ENTRY', { bold: true, size: 12, align: 'right' });
-      phaseCell(ws, 2, 1, 'Employee', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 2, 2, 2, 3);
-      phaseCell(ws, 3, 1, 'Week ending', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 3, 2, 3, 3);
-      phaseCell(ws, 4, 1, 'Job', { bold: true, color: 'FF6B7280' }); phaseCell(ws, 4, 2, phaseJobTitle()); phaseMerge(ws, 4, 2, 4, 3);
-      phaseCell(ws, 5, 1, d[1], { bold: true, size: 12 }); phaseMerge(ws, 5, 1, 5, 3);
-      const hr = 7;
-      ['Phase', 'Description', 'Hours'].forEach((h, i) => phaseCell(ws, hr, i + 1, h, { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: i === 2 ? 'center' : 'left', border: true }));
-      ws.getRow(hr).height = 18;
-      let r = hr + 1;
-      for (const c of codes) {
-        phaseCell(ws, r, 1, c.code, { align: 'center', border: true });
-        phaseCell(ws, r, 2, c.desc || '', { border: true });
-        const h = ws.getCell(r, 3); h.border = phaseBorder(); h.alignment = { horizontal: 'center', vertical: 'middle' }; h.numFmt = '0.00';
-        ws.getRow(r).height = 18; r++;
-      }
-      phaseCell(ws, r, 1, 'Day total', { bold: true, align: 'right', border: true }); phaseMerge(ws, r, 1, r, 2);
-      const tot = ws.getCell(r, 3); tot.value = { formula: 'SUM(C' + (hr + 1) + ':C' + (r - 1) + ')' }; tot.font = { bold: true }; tot.numFmt = '0.00'; tot.border = phaseBorder(); tot.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.views = [{ state: 'frozen', ySplit: hr }];
+    const days = ['Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Mon'];
+    const D0 = 3, DN = D0 + days.length - 1, NC = DN + 1;          // day cols C..I, total col J
+    const L = n => String.fromCharCode(64 + n);                     // 1→A … 10→J
+    const ws = wb.addWorksheet('Time Entry', {
+      pageSetup: { orientation: 'landscape', fitToWidth: 1, fitToHeight: 1, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
+    });
+    ws.columns = [{ width: 12 }, { width: 32 }].concat(days.map(() => ({ width: 8 }))).concat([{ width: 10 }]);
+    phaseCell(ws, 1, 1, 'ARCTIC SHEET METAL', { bold: true, size: 12 }); phaseMerge(ws, 1, 1, 1, 4);
+    phaseCell(ws, 1, NC - 2, 'TIME ENTRY', { bold: true, size: 12, align: 'right' }); phaseMerge(ws, 1, NC - 2, 1, NC);
+    phaseCell(ws, 2, 1, 'Employee', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 2, 2, 2, 5);
+    phaseCell(ws, 2, 6, 'Week ending', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 2, 6, 2, 7); phaseMerge(ws, 2, 8, 2, NC);
+    phaseCell(ws, 3, 1, 'Job', { bold: true, color: 'FF6B7280' }); phaseCell(ws, 3, 2, phaseJobTitle()); phaseMerge(ws, 3, 2, 3, NC);
+    const hr = 5;
+    phaseCell(ws, hr, 1, 'Phase', { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: 'left', border: true });
+    phaseCell(ws, hr, 2, 'Description', { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: 'left', border: true });
+    days.forEach((d, i) => phaseCell(ws, hr, D0 + i, d, { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: 'center', border: true }));
+    phaseCell(ws, hr, NC, 'Total', { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: 'center', border: true });
+    ws.getRow(hr).height = 18;
+    let r = hr + 1;
+    for (const c of codes) {
+      phaseCell(ws, r, 1, c.code, { align: 'center', border: true });
+      phaseCell(ws, r, 2, c.desc || '', { border: true });
+      for (let i = 0; i < days.length; i++) { const cell = ws.getCell(r, D0 + i); cell.border = phaseBorder(); cell.alignment = { horizontal: 'center', vertical: 'middle' }; cell.numFmt = '0.00'; }
+      const rt = ws.getCell(r, NC); rt.value = { formula: 'SUM(' + L(D0) + r + ':' + L(DN) + r + ')' }; rt.numFmt = '0.00'; rt.font = { bold: true }; rt.border = phaseBorder(); rt.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(r).height = 17; r++;
     }
+    phaseCell(ws, r, 1, 'Totals', { bold: true, align: 'right', border: true }); phaseMerge(ws, r, 1, r, 2);
+    for (let col = D0; col <= NC; col++) {
+      const cell = ws.getCell(r, col); cell.value = { formula: 'SUM(' + L(col) + (hr + 1) + ':' + L(col) + (r - 1) + ')' };
+      cell.numFmt = '0.00'; cell.font = { bold: true }; cell.border = phaseBorder(); cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+    ws.views = [{ state: 'frozen', xSplit: 2, ySplit: hr }];
     await phaseDownload(wb, ((job && job.number) ? job.number + ' - ' : '') + 'Time Entry');
-    toast('Time entry sheet built — ' + days.length + ' day tabs (Tue–Mon)');
+    toast('Time entry sheet built — the whole week (Tue–Mon) on one page');
   } catch (e) { console.error(e); toast('Could not build the time entry sheet: ' + (e.message || e), true); }
 }
 function watchCos(jobId) {
