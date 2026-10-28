@@ -1914,7 +1914,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.95';
+const APP_VERSION = 'v8.96';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4841,36 +4841,49 @@ function phaseMatConfirm() {
   savePhase(); closePdf(); phaseRefreshCounts();
   phaseBuildMaterial();
 }
+/* The material order sheet — one tab per division/category (Sheet Metal Shop, Sheet Metal Field,
+   Plumbing…). On each tab the foreman writes orders and picks which phase code within that division
+   each one goes under (a dropdown of that division's codes), with a spot for the PO number. One page
+   per division. */
 async function phaseBuildMaterial() {
-  const codes = (phaseCodes.codes || []).filter(c => c.mat);
-  if (!codes.length) { toast('Tick at least one phase code for the material sheet', true); return; }
+  const sel = (phaseCodes.codes || []).filter(c => c.mat);
+  if (!sel.length) { toast('Pick at least one phase code for the material sheet', true); return; }
   stickyToast('Building the material order sheet…');
   try {
     const XJ = await ensureExcelJS(); const wb = new XJ.Workbook(); wb.creator = 'Arctic Mechanical'; wb.created = new Date();
+    const order = [], byDiv = {};        // the picked codes, grouped by division, in booking order
+    for (const c of sel) { const d = String(c.div || (c.code || '').split('-')[0] || ''); if (!byDiv[d]) { byDiv[d] = []; order.push(d); } byDiv[d].push(c); }
     const used = {};
-    for (const c of codes) {
-      const ws = wb.addWorksheet(phaseTabName(c.code + (c.desc ? ' ' + c.desc : ''), used), {
-        pageSetup: { orientation: 'portrait', fitToWidth: 1, fitToHeight: 1, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
+    for (const d of order) {
+      const codes = byDiv[d], divName = phaseDivName(d) || ('Division ' + d);
+      const ws = wb.addWorksheet(phaseTabName(d + ' ' + divName, used), {
+        pageSetup: { orientation: 'landscape', fitToWidth: 1, fitToHeight: 1, margins: { left: .4, right: .4, top: .5, bottom: .5, header: .3, footer: .3 } }
       });
-      ws.columns = [{ width: 8 }, { width: 8 }, { width: 46 }, { width: 22 }, { width: 14 }, { width: 30 }];
-      phaseCell(ws, 1, 1, 'ARCTIC SHEET METAL', { bold: true, size: 12 }); phaseMerge(ws, 1, 1, 1, 3);
-      phaseCell(ws, 1, 4, 'MATERIAL ORDER', { bold: true, size: 12, align: 'right' }); phaseMerge(ws, 1, 4, 1, 6);
-      phaseCell(ws, 2, 1, 'Job', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 2, 1, 2, 2); phaseCell(ws, 2, 3, phaseJobTitle()); phaseMerge(ws, 2, 3, 2, 6);
-      phaseCell(ws, 3, 1, 'Phase', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 3, 1, 3, 2); phaseCell(ws, 3, 3, c.code + (c.desc ? '  —  ' + c.desc : ''), { bold: true }); phaseMerge(ws, 3, 3, 3, 4);
-      phaseCell(ws, 3, 5, 'Division', { bold: true, color: 'FF6B7280' }); phaseCell(ws, 3, 6, String(c.divName || c.div || ''));
-      phaseCell(ws, 4, 1, 'Ordered by', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 4, 1, 4, 2); phaseMerge(ws, 4, 3, 4, 4);
-      phaseCell(ws, 4, 5, 'Date', { bold: true, color: 'FF6B7280' });
-      const hr = 6, H = ['Qty', 'Unit', 'Description', 'Vendor', 'Needed by', 'Notes'];
-      H.forEach((h, i) => phaseCell(ws, hr, i + 1, h, { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: i < 2 ? 'center' : 'left', border: true }));
+      ws.columns = [{ width: 14 }, { width: 6 }, { width: 6 }, { width: 34 }, { width: 20 }, { width: 14 }, { width: 13 }, { width: 24 }];
+      phaseCell(ws, 1, 1, 'ARCTIC SHEET METAL', { bold: true, size: 12 }); phaseMerge(ws, 1, 1, 1, 4);
+      phaseCell(ws, 1, 5, 'MATERIAL ORDER', { bold: true, size: 12, align: 'right' }); phaseMerge(ws, 1, 5, 1, 8);
+      phaseCell(ws, 2, 1, 'Job', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 2, 1, 2, 2); phaseCell(ws, 2, 3, phaseJobTitle()); phaseMerge(ws, 2, 3, 2, 8);
+      phaseCell(ws, 3, 1, 'Division', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 3, 1, 3, 2); phaseCell(ws, 3, 3, d + ' — ' + divName, { bold: true }); phaseMerge(ws, 3, 3, 3, 8);
+      phaseCell(ws, 4, 1, 'Ordered by', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 4, 1, 4, 2); phaseMerge(ws, 4, 3, 4, 5);
+      phaseCell(ws, 4, 6, 'Date', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 4, 7, 4, 8);
+      // a reference legend of this division's phase codes, so the foreman knows what each code is
+      phaseCell(ws, 5, 1, 'Phase codes', { bold: true, color: 'FF6B7280' }); phaseMerge(ws, 5, 1, 5, 2);
+      const legend = codes.map(c => c.code + '  ' + (c.desc || '')).join('      ');
+      phaseCell(ws, 5, 3, legend, { wrap: true, size: 10 }); phaseMerge(ws, 5, 3, 5, 8);
+      ws.getRow(5).height = Math.min(90, Math.max(16, Math.ceil(legend.length / 115) * 13 + 4));
+      const hr = 7, H = ['Phase', 'Qty', 'Unit', 'Description', 'Vendor', 'PO #', 'Needed by', 'Notes'];
+      H.forEach((h, i) => phaseCell(ws, hr, i + 1, h, { bold: true, fill: PHASE_HEAD_FILL, color: 'FFFFFFFF', align: i <= 2 ? 'center' : 'left', border: true }));
       ws.getRow(hr).height = 18;
-      for (let r = hr + 1; r <= hr + 24; r++) {
-        for (let col = 1; col <= 6; col++) { const cell = ws.getCell(r, col); cell.border = phaseBorder(); if (col <= 2) cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
+      const list = '"' + codes.map(c => c.code).join(',') + '"';     // dropdown of this division's codes
+      for (let r = hr + 1; r <= hr + 22; r++) {
+        for (let col = 1; col <= 8; col++) { const cell = ws.getCell(r, col); cell.border = phaseBorder(); if (col <= 3) cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
+        if (list.length <= 257) ws.getCell(r, 1).dataValidation = { type: 'list', allowBlank: true, formulae: [list] };
         ws.getRow(r).height = 20;
       }
       ws.views = [{ state: 'frozen', ySplit: hr }];
     }
     await phaseDownload(wb, ((job && job.number) ? job.number + ' - ' : '') + 'Material Order');
-    toast('Material order sheet built — ' + codes.length + ' phase tab' + (codes.length === 1 ? '' : 's'));
+    toast('Material order sheet built — ' + order.length + ' division tab' + (order.length === 1 ? '' : 's'));
   } catch (e) { console.error(e); toast('Could not build the material order sheet: ' + (e.message || e), true); }
 }
 /* The time entry sheet — the whole pay week (Tue–Mon) on one landscape page: the phase codes down the
