@@ -1876,6 +1876,35 @@ const testCode = `
     poPlainNum(31400.33) === '31400.33' && poPlainNum(5299.6) === '5299.60' && poPlainNum(100) === '100');
 }
 
+// ══ Phase codes: reading a booking report line ═════════════════════════════
+{
+  ck('phase: a division header is recognised, with or without the spaces',
+    (phaseParseDiv('3-Sheet Metal Field') || {}).name === 'Sheet Metal Field' &&
+    (phaseParseDiv('1 - GCs') || {}).num === '1' &&
+    phaseParseDiv('Total Sheet Metal Field 3163.71') === null);
+  var a = phaseParsePhase('3-07     Miscellaneous     2594.96 $ 237,620.03    $ 4,595.00 M 3');
+  ck('phase: a labour line keeps code + description and is flagged as having hours',
+    a && a.code === '3-07' && a.desc === 'Miscellaneous' && a.div === '3' && a.hasHours === true);
+  var b = phaseParsePhase('3-40     JAP equipment     $ - $ 113,485.00');
+  ck('phase: a non-labour (equipment) line has no hours', b && b.desc === 'JAP equipment' && b.hasHours === false);
+  var c = phaseParsePhase('3-08     Equity Fund     ($92,165.00) $ -');
+  ck('phase: a negative-cost line drops the cost and reads as no hours', c && c.desc === 'Equity Fund' && c.hasHours === false);
+  var d = phaseParsePhase('7-18     Weather Barrier (Architectural)     $ - $ 9,178.00 S 4');
+  ck('phase: a parenthetical in the description is kept, the costs are dropped',
+    d && d.desc === 'Weather Barrier (Architectural)' && d.hasHours === false);
+  ck('phase: the division/phase table header is not mistaken for a phase',
+    phaseParsePhase('Div/Phase Description Hours Labor Cost') === null);
+  // grouping keeps divisions in first-seen order
+  phaseCodes = { codes: [
+    { code: '3-01', div: '3', divName: 'Sheet Metal Field' },
+    { code: '5-07', div: '5', divName: 'Plumbing Field' },
+    { code: '3-07', div: '3', divName: 'Sheet Metal Field' } ], jobNumber: '', source: '' };
+  var g = phaseGrouped();
+  ck('phase: codes group by division in the order the divisions first appear',
+    g.length === 2 && g[0].div === '3' && g[0].codes.length === 2 && g[1].div === '5' && g[1].name === 'Plumbing Field');
+  phaseCodes = { codes: [], jobNumber: '', source: '' };
+}
+
 })();
 `;
 
