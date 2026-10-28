@@ -1914,7 +1914,7 @@ tbody tr.row-na .c-num { text-decoration: line-through; }
    this browser (IndexedDB).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 'v8.97';
+const APP_VERSION = 'v8.98';
 document.getElementById('verLabel').textContent = APP_VERSION;
 
 /* A network-first service worker so a reopened tab always loads the latest
@@ -4659,7 +4659,8 @@ function renderPhaseCodes() {
       <button class="btn" data-pc="mat" onclick="phaseExportMaterial()" ${matN ? '' : 'disabled'} title="One tab per phase code — the foreman writes orders against it and it is already coded">▦ Material order sheet${matN ? ' (' + matN + ')' : ''}</button>
       <button class="btn" data-pc="time" onclick="phaseExportTime()" ${timeN ? '' : 'disabled'} title="A tab per day of the week, the phase codes down the side to break out the hours">▦ Time entry sheet${timeN ? ' (' + timeN + ')' : ''}</button>
       <span style="flex:1"></span>
-      ${codes.length ? `<button class="btn sm ghost" onclick="phaseAddCode()">+ Add code</button>` : ''}
+      ${codes.length ? `<button class="btn sm ghost" onclick="phaseAddCode()">+ Add code</button>
+      <button class="btn sm ghost" onclick="phaseClear()" title="Remove every phase code and start over">🗑 Clear all</button>` : ''}
     </div>`;
   if (!codes.length) {
     host.innerHTML = toolbar +
@@ -4702,9 +4703,16 @@ function phaseAddCode() {
   if (phaseFind(code)) { toast('That code is already here', true); return; }
   const desc = (prompt('Description for ' + code + ':') || '').trim();
   const div = String(code).split('-')[0] || '';
-  phaseCodes.codes = (phaseCodes.codes || []).concat([{ code, desc, div, divName: phaseDivName(div), hasHours: true, mat: div !== '1', time: div !== '1' }]);
+  phaseCodes.codes = (phaseCodes.codes || []).concat([{ code, desc, div, divName: phaseDivName(div), hasHours: true, manual: true, mat: div !== '1', time: div !== '1' }]);
   phaseCodes.codes.sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
   savePhase(); renderPhaseCodes();
+}
+function phaseClear() {
+  if (!(phaseCodes.codes || []).length) return;
+  if (!confirm('Clear all phase codes and start over? This removes every code on this tab. Your Material/Time choices go with them.')) return;
+  phaseCodes = { codes: [], jobNumber: '', source: '' };
+  savePhase(); renderPhaseCodes(); renderJobTabs();
+  toast('Phase codes cleared — import a booking report to start fresh');
 }
 /* Read the phase codes off a booking report (the Job Setup Sheet). Each division is a header like
    "3-Sheet Metal Field"; each phase is a "3-07  Miscellaneous  <hours/costs…>" row — we keep the code
@@ -4723,6 +4731,25 @@ function phaseParsePhase(line) {
   const desc = m[3].replace(/\s+(\$|\(\$|[\d,]+\.\d).*$/, '').trim();
   const m2 = m[3].match(/\s+(\$|\(\$|[\d,]+\.\d)/);
   return { code: m[1] + '-' + m[2], desc, div: m[1], hasHours: !!m2 && !/^[($]/.test(m2[1]) };
+}
+/* Fold a freshly-read booking into the existing list. The new booking's codes win — a revised booking
+   updates cleanly instead of leaving stale codes behind. A code keeps the Material/Time choice you made
+   only while its description is unchanged (a repurposed code — same number, new description — is treated
+   as new and gets fresh defaults). Codes you added by hand are kept even if the booking does not list
+   them. Defaults: on for everything but Division 1 (office coding); on the timesheet only for labour
+   codes (the ones that carry hours). */
+function phaseMergeImport(existing, parsed) {
+  const prev = {}; (existing || []).forEach(c => { prev[c.code + '|' + (c.desc || '')] = c; });
+  const merged = (parsed || []).map(c => {
+    const p = prev[c.code + '|' + (c.desc || '')], office = String(c.div) === '1';
+    return { code: c.code, desc: c.desc, div: c.div, divName: c.divName, hasHours: c.hasHours,
+      mat: p ? !!p.mat : !office,
+      time: p ? !!p.time : (!office && c.hasHours) };
+  });
+  const got = {}; (parsed || []).forEach(c => { got[c.code] = 1; });
+  (existing || []).forEach(c => { if (c.manual && !got[c.code]) merged.push(c); });   // keep only hand-added codes
+  merged.sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+  return merged;
 }
 async function parseBookingPhases(bytes) {
   await loadPdfJs();
@@ -4755,18 +4782,7 @@ function phaseImportBooking() {
       stickyToast('Reading the booking report…');
       const parsed = await parseBookingPhases(new Uint8Array(await f.arrayBuffer()));
       if (!parsed.codes.length) { toast('No phase codes could be read from that PDF — check it is the Job Setup Sheet', true); return; }
-      /* Merge: carry a code's Material/Time choices across a re-import, and keep any codes you added by
-         hand that the booking does not list. New codes default on, except Division 1 (office coding). */
-      const prev = {}; (phaseCodes.codes || []).forEach(c => prev[c.code] = c);
-      const merged = parsed.codes.map(c => {
-        const p = prev[c.code], office = String(c.div) === '1';
-        return { code: c.code, desc: c.desc, div: c.div, divName: c.divName, hasHours: c.hasHours,
-          mat: p ? !!p.mat : !office,                        // material: everything but office coding, by default
-          time: p ? !!p.time : (!office && c.hasHours) };    // time: labour codes only (the ones with hours)
-      });
-      const got = {}; parsed.codes.forEach(c => got[c.code] = 1);
-      (phaseCodes.codes || []).forEach(c => { if (!got[c.code]) merged.push(c); });
-      phaseCodes.codes = merged;
+      phaseCodes.codes = phaseMergeImport(phaseCodes.codes, parsed.codes);
       phaseCodes.jobNumber = parsed.jobNumber || phaseCodes.jobNumber || '';
       phaseCodes.source = f.name;
       savePhase(); renderPhaseCodes(); renderJobTabs();

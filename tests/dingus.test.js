@@ -1905,6 +1905,31 @@ const testCode = `
   phaseCodes = { codes: [], jobNumber: '', source: '' };
 }
 
+// ══ Phase codes: re-importing a revised booking ════════════════════════════
+{
+  var existing = [
+    { code: '3-07', desc: 'Miscellaneous', div: '3', hasHours: true, mat: true, time: false },  // user unchecked Time
+    { code: '3-40', desc: 'JAP equipment', div: '3', hasHours: false, mat: true, time: false },  // was non-labour
+    { code: '5-30', desc: 'Demolition', div: '5', hasHours: true, mat: true, time: true },        // gone in new booking
+    { code: '9-99', desc: 'Hand added', div: '9', hasHours: true, manual: true, mat: true, time: true } ];
+  var parsed = [
+    { code: '3-07', desc: 'Miscellaneous', div: '3', hasHours: true },     // unchanged → keep choices
+    { code: '3-40', desc: 'ED Penthouse', div: '3', hasHours: true },      // repurposed → fresh defaults
+    { code: '3-55', desc: 'New scope', div: '3', hasHours: true },         // brand new
+    { code: '1-01', desc: 'PM Time', div: '1', hasHours: true } ];         // office coding
+  var m = phaseMergeImport(existing, parsed);
+  var by = {}; m.forEach(x => by[x.code] = x);
+  ck('reimport: stale codes the new booking does not list are dropped', !by['5-30']);
+  ck('reimport: a hand-added code is kept even when the booking omits it', !!by['9-99']);
+  ck('reimport: an unchanged code keeps the Material/Time choice you made',
+    by['3-07'].mat === true && by['3-07'].time === false);
+  ck('reimport: a repurposed code (same number, new description) gets fresh labour defaults',
+    by['3-40'].desc === 'ED Penthouse' && by['3-40'].time === true);
+  ck('reimport: a brand-new labour code defaults on for both sheets', by['3-55'].mat === true && by['3-55'].time === true);
+  ck('reimport: division 1 (office coding) defaults off both sheets', by['1-01'].mat === false && by['1-01'].time === false);
+  ck('reimport: the result is exactly the new booking plus kept hand-adds', m.length === 5);
+}
+
 })();
 `;
 
